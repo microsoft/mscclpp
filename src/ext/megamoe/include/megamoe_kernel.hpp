@@ -17,6 +17,8 @@ namespace mscclpp::megamoe {
 enum class WeightDtype : int32_t {
   Mxfp4 = 0,
   Mxfp8 = 1,
+  // fp8_nv: FP8 E4M3 values with one FP32 scale per weight matrix. Single local W8A8 experts only.
+  Fp8Nv = 2,
 };
 
 enum class ActivationDtype : int32_t {
@@ -65,6 +67,9 @@ struct PackedWeights {
   uint8_t* fc1Scale = nullptr;
   uint8_t* fc2 = nullptr;
   uint8_t* fc2Scale = nullptr;
+  // Host copies of the per-matrix fp8_nv weight scales, applied in the W8A8 epilogue; 1 for block-scaled weights.
+  float fc1TensorScale = 1.0f;
+  float fc2TensorScale = 1.0f;
 };
 
 struct KernelResources {
@@ -102,8 +107,10 @@ void launchNativeW4A8(const std::shared_ptr<KernelPlan>& plan, const void* input
                       uint32_t* kernelEntrySignal);
 void launchNativeW8A16(const std::shared_ptr<KernelPlan>& plan, const int32_t* ids, const float* scores, int numTokens,
                        void* output, cudaStream_t stream, uint32_t* kernelEntrySignal);
-void launchNativeSharedExpert(const std::shared_ptr<KernelPlan>& plan, int numTokens, void* output,
-                              cudaStream_t stream);
+// Runs the single local expert unweighted. A W8A8 plan quantizes `input` (16-byte aligned BF16) or, when null, the
+// staged symmetric input; a W8A16 plan always reads the staged symmetric input.
+void launchNativeSharedExpert(const std::shared_ptr<KernelPlan>& plan, int numTokens, void* output, cudaStream_t stream,
+                              const void* input = nullptr);
 
 }  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE
 

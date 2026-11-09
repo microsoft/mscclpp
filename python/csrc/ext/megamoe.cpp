@@ -58,7 +58,8 @@ void register_megamoe(nb::module_& m) {
   m.def("megamoe_available", []() { return true; });
   nb::enum_<WeightDtype>(m, "CppMegaMoeWeightDtype")
       .value("Mxfp4", WeightDtype::Mxfp4)
-      .value("Mxfp8", WeightDtype::Mxfp8);
+      .value("Mxfp8", WeightDtype::Mxfp8)
+      .value("Fp8Nv", WeightDtype::Fp8Nv);
   nb::enum_<ActivationDtype>(m, "CppMegaMoeActivationDtype")
       .value("Mxfp8", ActivationDtype::Mxfp8)
       .value("Fp8Static", ActivationDtype::Fp8Static)

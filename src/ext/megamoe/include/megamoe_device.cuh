@@ -180,7 +180,7 @@ struct alignas(1024) W4A8SharedStorageT {
   uint32_t tmem;
   cutlass::arch::ClusterBarrier tmemReady;
   EpilogueStorage<Types::EpilogueTokens> epilogue;
-  W4DispatchStorageT<Types> dispatch;
+  std::conditional_t<Types::LocalExpert, EmptyStorage, W4DispatchStorageT<Types>> dispatch;
 };
 
 using W4A8SharedStorage = W4A8SharedStorageT<W4A8CollectiveTypes>;
@@ -210,6 +210,12 @@ struct KernelParameters {
 using W4A8Parameters = KernelParameters<W4A8CollectiveTypes>;
 using W8A16Parameters = KernelParameters<W8A16CollectiveTypesT<false>, false, ActivationDtype::Bf16>;
 using W8A16LocalParameters = KernelParameters<W8A16CollectiveTypesT<true>, false, ActivationDtype::Bf16>;
+// Routed parameter layouts stay unchanged: only the local W8A8 kernel carries per-matrix weight scales (fp8_nv),
+// which its epilogue multiplies into the static-FP8 dequantization. They are 1 for block-scaled MXFP8 weights.
+struct W8A8LocalParameters : KernelParameters<W8A8LocalCollectiveTypes, false, ActivationDtype::Fp8Static> {
+  float fc1WeightScale;
+  float fc2WeightScale;
+};
 
 template <ActivationDtype ActDtype = ActivationDtype::Mxfp8, class P>
 __device__ __forceinline__ auto w4a8ParameterView(const P& p, NativeConfig config) {
@@ -226,6 +232,9 @@ using W8A16KernelEntry = void (*)(std::conditional_t<LocalMode != 0, W8A16LocalP
 
 template <int LocalMode = 0>
 W8A16KernelEntry<LocalMode> w8a16KernelEntry();
+
+using W8A8LocalKernelEntry = void (*)(W8A8LocalParameters, int, __bfloat16*);
+W8A8LocalKernelEntry w8a8LocalKernelEntry();
 
 // Routing scratch words ahead of the cached routes: two per-expert arrays, three per-rank arrays, a batch of
 // RouteSegmentBatch segment bounds and bases, and three CTA words, rounded up to an even count so the 8-byte cached

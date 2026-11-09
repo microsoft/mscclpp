@@ -67,8 +67,8 @@ class MegaMoEConfig:
             raise ValueError("gate_up_clamp must be finite; negative disables clamping")
         if not isinstance(self.combine_route_weights, bool):
             raise ValueError("combine_route_weights must be a bool")
-        if not isinstance(self.weight_dtype, str) or self.weight_dtype not in ("mxfp4", "mxfp8"):
-            raise ValueError("weight_dtype must be 'mxfp4' or 'mxfp8'")
+        if not isinstance(self.weight_dtype, str) or self.weight_dtype not in ("mxfp4", "mxfp8", "fp8_nv"):
+            raise ValueError("weight_dtype must be 'mxfp4', 'mxfp8', or 'fp8_nv'")
         if not isinstance(self.activation_dtype, str) or self.activation_dtype not in (
             "mxfp8",
             "fp8_static",
@@ -79,9 +79,23 @@ class MegaMoEConfig:
             object.__setattr__(self, "activation_dtype", "bf16")
         elif self.activation_dtype == "bf16" and self.weight_dtype == "mxfp4":
             object.__setattr__(self, "weight_dtype", "mxfp8")
-        if self.weight_dtype == "mxfp8":
-            if self.activation_dtype != "bf16" or self.activation_scale is not None:
-                raise ValueError("weight_dtype='mxfp8' requires activation_dtype='bf16' without activation_scale")
+        if self.weight_dtype in ("mxfp8", "fp8_nv"):
+            static = self.activation_dtype == "fp8_static" or (
+                self.activation_dtype == "mxfp8" and self.activation_scale is not None
+            )
+            if static:
+                if (self.world_size, self.num_experts, self.top_k) != (1, 1, 1) or self.combine_route_weights:
+                    raise ValueError(
+                        f"weight_dtype='{self.weight_dtype}' with static FP8 activations (W8A8) supports a single "
+                        "local expert only: world_size=1, num_experts=1, top_k=1, combine_route_weights=False"
+                    )
+            elif self.weight_dtype == "fp8_nv":
+                raise ValueError("weight_dtype='fp8_nv' requires activation_dtype='fp8_static' (W8A8)")
+            elif self.activation_dtype != "bf16" or self.activation_scale is not None:
+                raise ValueError(
+                    "weight_dtype='mxfp8' requires activation_dtype='bf16' without activation_scale, "
+                    "or activation_dtype='fp8_static' for a single local expert"
+                )
         else:
             if self.hidden < 4096:
                 raise ValueError("MXFP4/MXFP8 requires hidden >= 4096")
@@ -104,7 +118,12 @@ class MegaMoEConfig:
     @property
     def is_w8a16(self) -> bool:
         """Whether weights use MXFP8 (E4M3 + E8M0 K32) and activations use BF16."""
-        return self.weight_dtype == "mxfp8"
+        return self.weight_dtype == "mxfp8" and self.activation_dtype == "bf16"
+
+    @property
+    def is_w8a8(self) -> bool:
+        """Whether a single local expert uses FP8 weights (MXFP8 or fp8_nv) and static-FP8 E4M3 activations."""
+        return self.weight_dtype in ("mxfp8", "fp8_nv") and self.activation_dtype == "fp8_static"
 
     @property
     def is_static_fp8(self) -> bool:
@@ -142,7 +161,10 @@ class MegaMoE:
     [local_experts, 2*I, H//2] and
     [local_experts, H, I//2], with the even K element in the lower nibble. The
     first I FC1 rows are gate and the second I rows are up. Scales are canonical
-    uint8 E8M0 tensors [local_experts, M, K//32]. Weights are packed into
+    uint8 E8M0 tensors [local_experts, M, K//32]. MXFP8 weights are float8_e4m3fn
+    [local_experts, 2*I, H] and [local_experts, H, I] with the same E8M0 scales;
+    ``fp8_nv`` weights use those value tensors with one float32 scale per matrix,
+    ``fc1_scale``/``fc2_scale`` of shape [local_experts]. Weights are packed into
     context-owned allocations, so original tensors may be released after construction.
 
     Contexts and input views must outlive all ranks' outstanding launches and
@@ -205,21 +227,27 @@ class MegaMoE:
             if torch.cuda.is_current_stream_capturing():
                 raise RuntimeError("Construct MegaMoE before CUDA Graph capture")
         e, h, i = config.local_experts, config.hidden, config.intermediate
-        fc1_shape = (e, 2 * i, h if config.is_w8a16 else h // 2)
-        fc2_shape = (e, h, i if config.is_w8a16 else i // 2)
-        weight_dtype = torch.float8_e4m3fn if config.is_w8a16 else torch.uint8
+        mxfp8_weights = config.weight_dtype in ("mxfp8", "fp8_nv")
+        fc1_shape = (e, 2 * i, h if mxfp8_weights else h // 2)
+        fc2_shape = (e, h, i if mxfp8_weights else i // 2)
+        weight_dtype = torch.float8_e4m3fn if mxfp8_weights else torch.uint8
         _tensor(fc1, "fc1", fc1_shape, weight_dtype, self.device)
-        _tensor(fc1_scale, "fc1_scale", (e, 2 * i, h // 32), torch.uint8, self.device)
         _tensor(fc2, "fc2", fc2_shape, weight_dtype, self.device)
-        _tensor(fc2_scale, "fc2_scale", (e, h, i // 32), torch.uint8, self.device)
+        if config.weight_dtype == "fp8_nv":
+            # One FP32 scale per weight matrix: dequantized weight = fp8 value * scale.
+            _tensor(fc1_scale, "fc1_scale", (e,), torch.float32, self.device)
+            _tensor(fc2_scale, "fc2_scale", (e,), torch.float32, self.device)
+        else:
+            _tensor(fc1_scale, "fc1_scale", (e, 2 * i, h // 32), torch.uint8, self.device)
+            _tensor(fc2_scale, "fc2_scale", (e, h, i // 32), torch.uint8, self.device)
         if kernel is None:
             kernel = load_cached_kernel("builtin")
         if not isinstance(kernel, (W4A8KernelConfig, CompiledKernel)):
             raise TypeError("kernel must be W4A8KernelConfig, CompiledKernel, or None")
-        if config.is_w8a16 and (isinstance(kernel, W4A8KernelConfig) or kernel.key != "builtin"):
+        if mxfp8_weights and (isinstance(kernel, W4A8KernelConfig) or kernel.key != "builtin"):
             raise ValueError("W4A8KernelConfig requires weight_dtype='mxfp4'")
         selected = kernel if isinstance(kernel, W4A8KernelConfig) else kernel.config
-        cluster_size = 2 if config.is_w8a16 else selected.cluster_size
+        cluster_size = 2 if mxfp8_weights else selected.cluster_size
         if config.sm_margin > torch.cuda.get_device_properties(self.device).multi_processor_count - cluster_size:
             raise ValueError(f"sm_margin must leave at least {cluster_size} SMs for the selected cluster")
         if isinstance(kernel, W4A8KernelConfig):
@@ -239,8 +267,9 @@ class MegaMoE:
             "combine_route_weights",
         ):
             setattr(native_config, name, getattr(config, name))
-        native_config.weight_dtype = (
-            _mscclpp.CppMegaMoeWeightDtype.Mxfp8 if config.is_w8a16 else _mscclpp.CppMegaMoeWeightDtype.Mxfp4
+        native_config.weight_dtype = getattr(
+            _mscclpp.CppMegaMoeWeightDtype,
+            {"mxfp4": "Mxfp4", "mxfp8": "Mxfp8", "fp8_nv": "Fp8Nv"}[config.weight_dtype],
         )
         native_config.activation_dtype = (
             _mscclpp.CppMegaMoeActivationDtype.Bf16
@@ -372,11 +401,16 @@ class MegaMoE:
             self._native.wait_until_started(stream.cuda_stream)
 
     def forward_shared(self, inputs, *, output=None, stream=None):
-        """Enqueue one unweighted local W8A16 expert and return BF16 [T,H] output on ``stream``."""
+        """Enqueue one unweighted local expert and return BF16 [T,H] output on ``stream``.
+
+        The expert uses MXFP8 weights with BF16 activations (W8A16), or MXFP8/fp8_nv weights with static-FP8
+        activations (W8A8). W8A8 quantizes a 16-byte-aligned ``inputs`` directly; otherwise ``inputs`` is first
+        staged into the context.
+        """
         import torch
 
         if (
-            not self.config.is_w8a16
+            self.config.weight_dtype not in ("mxfp8", "fp8_nv")
             or self.config.combine_route_weights
             or (
                 self.config.world_size,
@@ -385,7 +419,9 @@ class MegaMoE:
             )
             != (1, 1, 1)
         ):
-            raise ValueError("forward_shared requires weight_dtype='mxfp8', world_size=1, num_experts=1, and top_k=1")
+            raise ValueError(
+                "forward_shared requires weight_dtype='mxfp8' or 'fp8_nv', world_size=1, num_experts=1, and top_k=1"
+            )
         stream = self._stream(stream)
         if not isinstance(inputs, torch.Tensor) or inputs.ndim != 2:
             raise ValueError("inputs must be a rank-2 torch.Tensor")
@@ -426,6 +462,10 @@ class MegaMoE:
         """
         import torch
 
+        if self.config.is_w8a8:
+            raise ValueError(
+                "W8A8 (weight_dtype='mxfp8' or 'fp8_nv', activation_dtype='fp8_static') supports forward_shared only"
+            )
         stream = self._stream(stream)
         if not isinstance(signal_start, bool):
             raise TypeError("signal_start must be bool")

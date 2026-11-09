@@ -47,17 +47,20 @@ __device__ __forceinline__ auto makeW4A8LoadPipeline(Storage& storage, int warp,
 
 template <class KernelParams>
 MSCCLPP_DEVICE_INLINE bool cacheExpertWeights(const KernelParams& params, int expert) {
+  // A local expert reads each weight tile once per token block and has no routing cursors.
+  if constexpr (KernelParams::LocalExpert) return false;
   // After prepareRoutes, each cursor is the expert's total routed row count for this launch.
   return params.workspace.cursors[expert] > KernelParams::Tiles::N;
 }
 
+// Local experts pass their token count (no routing workspace) and find FC1 inputs ready at kernel entry.
 template <class P, class Storage>
 __device__ __forceinline__ void runW4A8LoadRole(const P& p, Storage& s, typename P::Collective::Load& loadPipeline,
                                                 typename P::Collective::Load& activationPipeline,
                                                 typename P::Collective::Mainloop& fc1,
                                                 typename P::Collective::Mainloop& fc2, const ProblemShape& shape1,
                                                 const ProblemShape& shape2, int hidden, int intermediate, int warp,
-                                                int lane, int cta, int cluster, int tasks) {
+                                                int lane, int cta, int cluster, int tasks, int tokens = 0) {
   using namespace cute;
   using Types = typename P::Collective;
   using Load = typename P::Collective::Load;
@@ -68,7 +71,7 @@ __device__ __forceinline__ void runW4A8LoadRole(const P& p, Storage& s, typename
   auto load1 = fc1.load_init(shape1, s.tensors);
   auto load2 = fc2.load_init(shape2, s.tensors);
   for (int i = cluster; i < tasks; i += gridDim.x / P::Tiles::ClusterSize) {
-    Task task = taskAt(p, i, hidden, intermediate);
+    Task task = taskAt(p, i, hidden, intermediate, tokens);
     const bool cacheWeights =
         (Types::LoadWarps == 1 || warp == Schedule::LoadWarp) && cacheExpertWeights(p, task.tokens.expert);
     if (!task.fc1 && (Types::LoadWarps == 1 || warp == Schedule::ActivationLoadWarp)) {
@@ -106,7 +109,7 @@ __device__ __forceinline__ void runW4A8LoadRole(const P& p, Storage& s, typename
       }(fc1, fc2);
       state = get<0>(result);
     };
-    if (task.fc1 && (Types::LoadWarps == 1 || warp == Schedule::ActivationLoadWarp)) {
+    if (!P::LocalExpert && task.fc1 && (Types::LoadWarps == 1 || warp == Schedule::ActivationLoadWarp)) {
       constexpr int TilesPerChunk = Types::DispatchChunk / P::Tiles::K;
       for (int first = 0; first < kTiles; first += TilesPerChunk) {
         traceKernel(KernelTracePhase::TokenReady, true, first / TilesPerChunk);

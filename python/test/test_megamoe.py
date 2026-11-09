@@ -63,7 +63,7 @@ def mocked_workspace_api(monkeypatch):
     native = SimpleNamespace(
         CppMegaMoeConfig=SimpleNamespace,
         CppMegaMoeContext=SimpleNamespace(create=create),
-        CppMegaMoeWeightDtype=SimpleNamespace(Mxfp4=0, Mxfp8=1),
+        CppMegaMoeWeightDtype=SimpleNamespace(Mxfp4=0, Mxfp8=1, Fp8Nv=2),
         CppMegaMoeActivationDtype=SimpleNamespace(Mxfp8=0, Fp8Static=1, Bf16=2),
     )
     monkeypatch.setattr(mscclpp, "_mscclpp", native, raising=False)
@@ -149,6 +149,8 @@ def test_shared_workspace_native_validation_is_not_silenced(mocked_workspace_api
         {"weight_dtype": "fp8"},
         {"weight_dtype": "mxfp8", "activation_dtype": "fp8_static"},
         {"weight_dtype": "mxfp8", "activation_scale": 1.0},
+        {"weight_dtype": "fp8_nv"},
+        {"weight_dtype": "fp8_nv", "activation_dtype": "fp8_static"},
         {"activation_scale": 0.0},
         {"activation_scale": -1.0},
         {"activation_scale": float("nan")},
@@ -178,6 +180,24 @@ def test_w8a16_config_and_local_expert():
         weight_dtype="mxfp8",
     )
     assert local_cfg.is_w8a16 and local_cfg.local_experts == 1
+
+
+def test_w8a8_local_config():
+    local = dict(world_size=1, max_tokens=16, hidden=128, intermediate=128, num_experts=1, top_k=1)
+    cfg = _config(**local, weight_dtype="mxfp8", activation_dtype="fp8_static")
+    assert cfg.is_w8a8 and cfg.is_static_fp8 and not cfg.is_w8a16
+    assert cfg.activation_scale == 1.0
+    scaled = _config(**local, weight_dtype="mxfp8", activation_scale=0.5)
+    assert scaled.is_w8a8 and scaled.activation_dtype == "fp8_static" and scaled.activation_scale == 0.5
+    with pytest.raises(ValueError):
+        _config(**local, weight_dtype="mxfp8", activation_dtype="fp8_static", combine_route_weights=True)
+    with pytest.raises(ValueError):
+        _config(**{**local, "num_experts": 2}, weight_dtype="mxfp8", activation_dtype="fp8_static")
+    nv = _config(**local, weight_dtype="fp8_nv", activation_scale=0.25)
+    assert nv.is_w8a8 and nv.activation_dtype == "fp8_static" and nv.activation_scale == 0.25
+    for activation_dtype in ("bf16", "mxfp8"):
+        with pytest.raises(ValueError):
+            _config(**local, weight_dtype="fp8_nv", activation_dtype=activation_dtype)
 
 
 def test_static_fp8_config_and_roundtrip():
@@ -311,6 +331,89 @@ def test_native_w8a16_local_and_shared_expert_graph():
     out_local = context(inputs, ids, scores)
     torch.cuda.synchronize()
     torch.testing.assert_close(out_local, expected_local, rtol=0.02, atol=0.001)
+    del context
+
+
+@pytest.mark.parametrize("weight_dtype", ["mxfp8", "fp8_nv"])
+def test_native_w8a8_shared_expert_graph(weight_dtype):
+    from mscclpp import Communicator, TcpBootstrap
+    from mscclpp.ext.megamoe import MegaMoE, is_available
+
+    torch = pytest.importorskip("torch")
+    if (
+        not is_available()
+        or not torch.cuda.is_available()
+        or torch.cuda.get_device_capability() not in ((10, 0), (10, 3), (10, 7))
+    ):
+        pytest.skip("requires native MegaMoE on an SM100-family GPU")
+    device = torch.device("cuda", torch.cuda.current_device())
+    hidden, intermediate, scale = 384, 256, 0.0625
+    config = _config(
+        world_size=1,
+        max_tokens=130,
+        hidden=hidden,
+        intermediate=intermediate,
+        num_experts=1,
+        top_k=1,
+        sm_margin=32,
+        weight_dtype=weight_dtype,
+        activation_dtype="fp8_static",
+        activation_scale=scale,
+    )
+    bootstrap = TcpBootstrap.create(0, 1)
+    bootstrap.initialize(TcpBootstrap.create_unique_id())
+    communicator = Communicator(bootstrap)
+    generator = torch.Generator(device=device).manual_seed(1729)
+    source1 = torch.randn((1, 2 * intermediate, hidden), generator=generator, device=device) / hidden**0.5
+    source2 = torch.randn((1, hidden, intermediate), generator=generator, device=device) / intermediate**0.5
+    if weight_dtype == "fp8_nv":
+        # One FP32 scale per matrix (amax / 448); far from 1, so the epilogue weight-scale multipliers matter.
+        scale1 = (source1.abs().amax() / 448).reshape(1)
+        scale2 = (source2.abs().amax() / 448).reshape(1)
+        fc1 = (source1 / scale1).to(torch.float8_e4m3fn)
+        fc2 = (source2 / scale2).to(torch.float8_e4m3fn)
+        first = fc1[0].float() * scale1
+        second = fc2[0].float() * scale2
+        for bad in (0.0, float("nan")):
+            with pytest.raises(Exception, match="fp8_nv weight scales"):
+                MegaMoE(config, communicator, fc1, torch.full_like(scale1, bad), fc2, scale2)
+    else:
+        fc1, scale1 = quantize_mxfp8(source1)
+        fc2, scale2 = quantize_mxfp8(source2)
+        first = dequantize_mxfp8(fc1, scale1, dtype=torch.float32)[0]
+        second = dequantize_mxfp8(fc2, scale2, dtype=torch.float32)[0]
+    context = MegaMoE(config, communicator, fc1, scale1, fc2, scale2)
+    assert context.effective_kernel_config["cluster_size"] == 2
+
+    def expected(inputs):
+        quantized = quantize_fp8_static(inputs.float(), scale).float()
+        gate, up = ((quantized @ first.T) * scale).chunk(2, dim=-1)
+        hidden_fp8 = quantize_fp8_static(torch.nn.functional.silu(gate) * up, scale).float()
+        return ((hidden_fp8 @ second.T) * scale).to(torch.bfloat16)
+
+    inputs = torch.randn((130, hidden), generator=generator, device=device, dtype=torch.bfloat16)
+    unaligned = torch.empty(130 * hidden + 1, device=device, dtype=torch.bfloat16)[1:].view(130, hidden)
+    unaligned.copy_(inputs)
+    # Multiple token blocks, the 64- and 32-row activation boxes, and the staged unaligned-input path.
+    for tokens in (130, 33, 16, 1):
+        for source in (inputs[:tokens], unaligned[:tokens]):
+            out = context.forward_shared(source)
+            torch.cuda.synchronize()
+            torch.testing.assert_close(out, expected(source), rtol=0.03, atol=0.01)
+    with pytest.raises(ValueError):
+        context(inputs[:16], torch.zeros((16, 1), dtype=torch.int32, device=device), torch.ones((16, 1), device=device))
+
+    stream = torch.cuda.Stream(device=device)
+    output = torch.empty((16, hidden), device=device, dtype=torch.bfloat16)
+    stream.wait_stream(torch.cuda.current_stream(device))
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph, stream=stream):
+        context.forward_shared(inputs[:16], output=output, stream=stream)
+    for _ in range(3):
+        output.zero_()
+        graph.replay()
+    torch.cuda.synchronize()
+    torch.testing.assert_close(output, expected(inputs[:16]), rtol=0.03, atol=0.01)
     del context
 
 

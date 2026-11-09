@@ -26,6 +26,17 @@ MSCCLPP_DEVICE_INLINE float2 swigluPair(float2 gate, float2 up) {
   return __fmul2_rn(product, inverse);
 }
 
+// Static-FP8 dequantization multiplier of the FC1 (Fc == 1) or FC2 (Fc == 2) accumulator. The local W8A8 kernel
+// also folds in its per-matrix weight scale (fp8_nv); routed kernels use the activation scale alone.
+template <int Fc, class KernelParams>
+MSCCLPP_DEVICE_INLINE float staticDequantScale(const KernelParams& params) {
+  static_assert(Fc == 1 || Fc == 2);
+  if constexpr (std::is_same_v<KernelParams, W8A8LocalParameters>)
+    return params.config.activationScale * (Fc == 1 ? params.fc1WeightScale : params.fc2WeightScale);
+  else
+    return params.config.activationScale;
+}
+
 // Token-major post-SwiGLU FC1 scratch [ChunkTokens, 64].
 template <int CtaFc1M>
 MSCCLPP_DEVICE_INLINE int fc1ScratchIndex(int token, int feature) {
@@ -84,7 +95,7 @@ MSCCLPP_DEVICE_INLINE void activateFc1Chunk(const KernelParams& params, const Ta
       up[i] = isUp ? values(i + HalfTokens) : other;
     }
     if constexpr (KernelParams::Activation == ActivationDtype::Fp8Static) {
-      const float actScale = params.config.activationScale;
+      const float actScale = staticDequantScale<1>(params);
 #pragma unroll
       for (int i = 0; i < HalfTokens; ++i) {
         gate[i] *= actScale;
@@ -212,6 +223,7 @@ MSCCLPP_DEVICE_INLINE float2 fc2RouteWeights(const KernelParams& params, const T
                                              int validRows, int firstToken, int token) {
   constexpr int KernelTileN = KernelParams::Tiles::N;
   int row = task.block * KernelTileN + tokenOffset + firstToken + token;
+  if constexpr (LocalMode == 2) return make_float2(1.0f, 1.0f);
   if constexpr (LocalMode == 1) {
     const int* ids = at<int>(params.local, params.symmetric.topkIds);
     return make_float2(firstToken + token < validRows && ids[row] == 0 ? 1.0f : 0.0f,
@@ -232,7 +244,7 @@ MSCCLPP_DEVICE_INLINE void packFc2Chunk(const KernelParams& params, const Task& 
   static_assert(KernelParams::Tiles::CtaM == 128 && ReadTokens % 8 == 0);
   int lane = threadIdx.x % 32;
   int firstToken = readerGroup * ReadTokens;
-  if constexpr (KernelParams::Activation == ActivationDtype::Fp8Static) {
+  if constexpr (KernelParams::Activation == ActivationDtype::Fp8Static && LocalMode == 0) {
     const int warpFeatureBase = (threadIdx.x / 32 % 4) * 32;
 #pragma unroll
     for (int group = 0; group < ReadTokens / 8; ++group) {
@@ -255,6 +267,11 @@ MSCCLPP_DEVICE_INLINE void packFc2Chunk(const KernelParams& params, const Task& 
   for (int group = 0; group < ReadTokens / 8; ++group) {
     int token = group * 8 + lane % 4 * 2;
     float2 weights = fc2RouteWeights<LocalMode>(params, task, tokenOffset, validRows, firstToken, token);
+    if constexpr (KernelParams::Activation == ActivationDtype::Fp8Static) {
+      // A local static-FP8 expert stores BF16 directly, so it undoes the static hidden scale here, not in combine.
+      const float scale = staticDequantScale<2>(params);
+      weights = make_float2(weights.x * scale, weights.y * scale);
+    }
     uint32_t words[4];
 #pragma unroll
     for (int i = 0; i < 4; ++i) {

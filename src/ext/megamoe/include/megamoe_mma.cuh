@@ -127,7 +127,8 @@ __device__ __forceinline__ void runMmaRole(const P& p, Storage& s, typename P::C
                                            typename P::Collective::Load& activationPipeline,
                                            typename P::Collective::Accumulate& accumulatePipeline,
                                            typename P::Collective::Mainloop& fc1, TmemStorage tmemStorage, int hidden,
-                                           int intermediate, int warp, int cta, int cluster, int tasks) {
+                                           int intermediate, int warp, int cta, int cluster, int tasks,
+                                           int tokens = 0) {
   using namespace cute;
   using Mainloop = typename P::Collective::Mainloop;
   using Load = typename P::Collective::Load;
@@ -141,7 +142,7 @@ __device__ __forceinline__ void runMmaRole(const P& p, Storage& s, typename P::C
       if (elect_one_sync()) copy(get<8>(mmaInputs), get<9>(mmaInputs)(_, _, _, _, 0), get<10>(mmaInputs));
     }
     for (int i = cluster; i < tasks; i += gridDim.x / P::Tiles::ClusterSize) {
-      Task task = taskAt(p, i, hidden, intermediate);
+      Task task = taskAt(p, i, hidden, intermediate, tokens);
       auto coord = taskCoord(p, task, cta);
       int kTiles = taskKTiles(p, task, hidden, intermediate);
       auto accumulator = Mainloop::slice_accumulator(tmemStorage, accumulateState.index());

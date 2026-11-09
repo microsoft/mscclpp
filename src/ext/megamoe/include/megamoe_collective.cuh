@@ -67,9 +67,14 @@ struct W8A16CollectiveTypesT {
   using Accumulate = typename Mainloop::Mma2AccumPipeline;
 };
 
+// Block-scaled (kind::mxf8f6f4) pipeline types. Routed W4A8 uses the defaults; the local W8A8 shared expert
+// sets Mxfp8Weights_ and Local_, which removes routing, dispatch, and combine. WeightMxfp4 marks this
+// block-scaled kernel family for shared storage and parameter selection, not the weight element type.
+// The weight switch is a bool, not a defaulted type parameter: the latter changed routed W4A8 register allocation
+// (more spills, ~1.4 us slower) although the type was identical; with the bool, routed SASS is unchanged.
 template <int TileN_, int TileK_, int LoadStages_, int NumWarps_, int TransferRegisters_, int LoadWarps_,
           bool SplitPipelines_, int EpilogueTokens_, int EpilogueWarps_, int EpilogueRegisters_, int DispatchChunk_,
-          int DispatchWarps_, int DispatchStages_>
+          int DispatchWarps_, int DispatchStages_, bool Mxfp8Weights_ = false, bool Local_ = false>
 struct W4A8CollectiveTypesT {
   static constexpr int NumWarps = NumWarps_;
   static constexpr int EpilogueWarps = EpilogueWarps_;
@@ -82,12 +87,13 @@ struct W4A8CollectiveTypesT {
   static constexpr int DispatchWarps = DispatchWarps_;
   static constexpr int DispatchStages = DispatchStages_;
   static constexpr bool WeightMxfp4 = true;
-  static constexpr bool LocalExpert = false;
+  static constexpr bool LocalExpert = Local_;
   using ClusterShape = cute::Shape<cute::Int<W4ClusterSize>, cute::_1, cute::_1>;
   using WarpSchedule = W4A8WarpScheduleT<NumWarps, EpilogueWarps, DispatchWarps>;
   using Tiles = TilePolicy<TileN_, TileK_>;
   using W4TileShape = cute::Shape<cute::Int<W4TileM>, cute::Int<(TileN_ < 64 ? 64 : TileN_)>, cute::Int<TileK_>>;
-  using Weight = cutlass::mx_float4_t<cutlass::float_e2m1_t>;
+  using Weight = std::conditional_t<Mxfp8Weights_, cutlass::mx_float8_t<cutlass::float_e4m3_t>,
+                                    cutlass::mx_float4_t<cutlass::float_e2m1_t>>;
   using Activation = cutlass::mx_float8_t<cutlass::float_e4m3_t>;
   using Scale = cutlass::float_ue8m0_t;
   using KernelSchedule =
@@ -121,6 +127,12 @@ using W4A8CollectiveTypes =
                          W4DispatchStages>;
 
 static_assert(W4A8CollectiveTypes::Load::Stages == W4LoadStages);
+
+// Local shared expert: MXFP8 (E4M3 + E8M0 K32) weights x static-FP8 activations on the W4A8 pipeline policy.
+using W8A8LocalCollectiveTypes =
+    W4A8CollectiveTypesT<W4TileN, W4TileK, W4LoadStages, W4NumWarps, W4TransferRegisters, W4LoadWarps, W4SplitPipelines,
+                         W4EpilogueTokens, W4EpilogueWarps, W4EpilogueRegisters, W4DispatchChunk, W4DispatchWarps,
+                         W4DispatchStages, true, true>;
 
 __device__ __forceinline__ uint32_t decodeScaledPair(uint16_t weights, uint16_t scales) {
   uint32_t decoded, expanded, result;

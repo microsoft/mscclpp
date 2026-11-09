@@ -18,8 +18,13 @@ namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE {
 namespace detail {
 
 constexpr bool isLocalExpert(const NativeConfig& c) {
-  return !c.combineRouteWeights && c.weightDtype == WeightDtype::Mxfp8 && c.worldSize == 1 && c.numExperts == 1 &&
-         c.topK == 1;
+  return !c.combineRouteWeights && (c.weightDtype == WeightDtype::Mxfp8 || c.weightDtype == WeightDtype::Fp8Nv) &&
+         c.worldSize == 1 && c.numExperts == 1 && c.topK == 1;
+}
+
+// A local FP8-weight (MXFP8 or fp8_nv) expert with static-FP8 activations runs on the block-scaled W4A8 pipeline.
+constexpr bool isW8A8Local(const NativeConfig& c) {
+  return isLocalExpert(c) && c.activationDtype == ActivationDtype::Fp8Static;
 }
 
 size_t aligned(size_t n, size_t alignment = 256) { return (n + alignment - 1) / alignment * alignment; }
@@ -50,7 +55,17 @@ Workspace localWorkspaceLayout(const NativeConfig& c, void* base, size_t& bytes)
           size_t(std::numeric_limits<int>::max()))
     throw std::invalid_argument("MegaMoE local workspace exceeds 32-bit tile indexing");
   w.hiddenReady = at<int>(base, appendRegion(bytes, rows / W4TileN * W4ReadyCounterStride * sizeof(int)));
-  w.quantizedHidden = at<uint8_t>(base, appendRegion(bytes, rows * c.intermediate * sizeof(__bfloat16)));
+  if (isW8A8Local(c)) {
+    // FP8 input and hidden rows; static activations never read the scale regions, which only back the TMA
+    // descriptors of the block-scaled mainloop.
+    const size_t activationRows = rows / W4TileN * W4TokenStride;
+    w.quantizedInput = at<uint8_t>(base, appendRegion(bytes, activationRows * c.hidden));
+    w.inputScale = at<uint8_t>(base, appendRegion(bytes, blockScaleBytes(activationRows, c.hidden)));
+    w.quantizedHidden = at<uint8_t>(base, appendRegion(bytes, activationRows * c.intermediate));
+    w.hiddenScale = at<uint8_t>(base, appendRegion(bytes, blockScaleBytes(activationRows, c.intermediate)));
+  } else {
+    w.quantizedHidden = at<uint8_t>(base, appendRegion(bytes, rows * c.intermediate * sizeof(__bfloat16)));
+  }
   w.poolRows = int(rows);
   bytes = aligned(bytes);
   return w;
@@ -145,7 +160,8 @@ __global__ void packWeightsKernel(NativeConfig c, PackedWeights src, PackedWeigh
 template <class Types>
 using W4ScaleLayout = typename Types::Mainloop::LayoutSFA;
 
-template <class Types>
+// UnitScales writes E8M0 1.0 block scales without reading the source scales (fp8_nv weights scale per matrix).
+template <class Types, int ValuesPerByte = 2, bool UnitScales = false>
 __global__ void packW4A8WeightsKernel(NativeConfig c, PackedWeights src, PackedWeights dst,
                                       W4ScaleLayout<Types> fc1ScaleLayout, W4ScaleLayout<Types> fc2ScaleLayout) {
   size_t idx = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
@@ -153,7 +169,7 @@ __global__ void packW4A8WeightsKernel(NativeConfig c, PackedWeights src, PackedW
   int experts = c.numExperts / c.worldSize;
   size_t fc1Rows = size_t(experts) * 2 * c.intermediate;
   size_t fc2Rows = size_t(experts) * c.hidden;
-  packWeightValues<2>(c, src, dst, idx, stride);
+  packWeightValues<ValuesPerByte>(c, src, dst, idx, stride);
   size_t fc1Scales = fc1Rows * (c.hidden / 32);
   for (size_t i = idx; i < fc1Scales; i += stride) {
     int k = i % (c.hidden / 32);
@@ -162,7 +178,9 @@ __global__ void packW4A8WeightsKernel(NativeConfig c, PackedWeights src, PackedW
     int expert = row / (2 * c.intermediate);
     int canonical = canonicalFc1Row(m, c.intermediate);
     size_t destination = fc1ScaleLayout(cute::make_coord(m, k * 32, expert));
-    dst.fc1Scale[destination] = src.fc1Scale[(size_t(expert) * 2 * c.intermediate + canonical) * (c.hidden / 32) + k];
+    dst.fc1Scale[destination] =
+        UnitScales ? uint8_t(127)
+                   : src.fc1Scale[(size_t(expert) * 2 * c.intermediate + canonical) * (c.hidden / 32) + k];
   }
   size_t fc2Scales = fc2Rows * (c.intermediate / 32);
   for (size_t i = idx; i < fc2Scales; i += stride) {
@@ -171,7 +189,7 @@ __global__ void packW4A8WeightsKernel(NativeConfig c, PackedWeights src, PackedW
     int m = row % c.hidden;
     int expert = row / c.hidden;
     size_t destination = fc2ScaleLayout(cute::make_coord(m, k * 32, expert));
-    dst.fc2Scale[destination] = src.fc2Scale[i];
+    dst.fc2Scale[destination] = UnitScales ? uint8_t(127) : src.fc2Scale[i];
   }
 }
 
@@ -314,7 +332,9 @@ cudaLaunchConfig_t makeLaunchConfig(int ctas, int threads, size_t sharedBytes, c
 }  // namespace detail
 
 struct KernelPlan {
-  std::variant<detail::W4A8Parameters, detail::W8A16Parameters, detail::W8A16LocalParameters> params;
+  std::variant<detail::W4A8Parameters, detail::W8A16Parameters, detail::W8A16LocalParameters,
+               detail::W8A8LocalParameters>
+      params;
   int ctas;
   int device;
   size_t sharedBytes = 0;
@@ -324,8 +344,8 @@ struct KernelPlan {
 void validateNativeConfig(const NativeConfig& c) {
   if (c.worldSize < 1 || c.worldSize > 72 || c.rank < 0 || c.rank >= c.worldSize)
     throw std::invalid_argument("MegaMoE requires 1 <= worldSize <= 72 and rank in [0, worldSize)");
-  if (c.weightDtype != WeightDtype::Mxfp4 && c.weightDtype != WeightDtype::Mxfp8)
-    throw std::invalid_argument("MegaMoE weightDtype must be Mxfp4 or Mxfp8");
+  if (c.weightDtype != WeightDtype::Mxfp4 && c.weightDtype != WeightDtype::Mxfp8 && c.weightDtype != WeightDtype::Fp8Nv)
+    throw std::invalid_argument("MegaMoE weightDtype must be Mxfp4, Mxfp8, or Fp8Nv");
   const int minHidden = c.weightDtype == WeightDtype::Mxfp4 ? 4096 : 128;
   if (c.maxTokens < 1 || c.hidden < minHidden || c.intermediate < 128 || c.hidden % 128 || c.intermediate % 128)
     throw std::invalid_argument("MegaMoE requires positive capacity, hidden >= " + std::to_string(minHidden) +
@@ -336,9 +356,18 @@ void validateNativeConfig(const NativeConfig& c) {
     throw std::invalid_argument("MegaMoE requires evenly partitioned experts and 1 <= topK <= min(32, experts)");
   if (c.smMargin < 0 || !std::isfinite(c.gateUpClamp))
     throw std::invalid_argument("MegaMoE smMargin must be nonnegative and gateUpClamp must be finite");
-  if (c.weightDtype == WeightDtype::Mxfp8) {
-    if (c.activationDtype != ActivationDtype::Bf16)
-      throw std::invalid_argument("MegaMoE W8A16 (weightDtype=Mxfp8) requires activationDtype=Bf16");
+  if (c.weightDtype == WeightDtype::Fp8Nv && !detail::isW8A8Local(c))
+    throw std::invalid_argument(
+        "MegaMoE weightDtype=Fp8Nv requires activationDtype=Fp8Static and a single local expert (W8A8)");
+  if (c.weightDtype != WeightDtype::Mxfp4) {
+    if (detail::isW8A8Local(c)) {
+      if (!std::isfinite(c.activationScale) || c.activationScale <= 0.0f)
+        throw std::invalid_argument("MegaMoE static FP8 activationScale must be a finite positive float");
+    } else if (c.activationDtype != ActivationDtype::Bf16) {
+      throw std::invalid_argument(
+          "MegaMoE weightDtype=Mxfp8 requires activationDtype=Bf16 (W8A16), or Fp8Static for a single local "
+          "expert (W8A8)");
+    }
   } else {
     if (c.activationDtype != ActivationDtype::Mxfp8 && c.activationDtype != ActivationDtype::Fp8Static)
       throw std::invalid_argument("MegaMoE W4A8 requires activationDtype=Mxfp8 or Fp8Static");
@@ -417,6 +446,25 @@ void packNativeWeights(const NativeConfig& c, const PackedWeights& source, const
     MSCCLPP_CUDATHROW(cudaGetLastError());
     return;
   }
+#if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
+  if (detail::isW8A8Local(c)) {
+    // FP8 bytes in the W4A8 row order with block-scaled (SFA) scale layouts; fp8_nv gets unit block scales.
+    using Types = detail::W8A8LocalCollectiveTypes;
+    auto fc1ScaleLayout = detail::makeW4ScaleLayout<Types>(2 * c.intermediate, 1, c.hidden, 1, false);
+    auto fc2ScaleLayout = detail::makeW4ScaleLayout<Types>(c.hidden, 1, c.intermediate, 1, false);
+    if (size_t(cute::cosize(fc1ScaleLayout)) != size_t(2) * c.intermediate * (c.hidden / 32) ||
+        size_t(cute::cosize(fc2ScaleLayout)) != size_t(c.hidden) * (c.intermediate / 32))
+      throw std::invalid_argument("MegaMoE W8A8 weight-scale layout size is unsupported");
+    if (c.weightDtype == WeightDtype::Fp8Nv)
+      detail::packW4A8WeightsKernel<Types, 1, true>
+          <<<256, 256, 0, stream>>>(c, source, destination, fc1ScaleLayout, fc2ScaleLayout);
+    else
+      detail::packW4A8WeightsKernel<Types, 1>
+          <<<256, 256, 0, stream>>>(c, source, destination, fc1ScaleLayout, fc2ScaleLayout);
+    MSCCLPP_CUDATHROW(cudaGetLastError());
+    return;
+  }
+#endif
   detail::packWeightsKernel<<<256, 256, 0, stream>>>(c, source, destination);
   MSCCLPP_CUDATHROW(cudaGetLastError());
 }
@@ -429,11 +477,13 @@ KernelResources preflightKernel(const NativeConfig& c) {
   MSCCLPP_CUDATHROW(cudaGetDeviceProperties(&properties, resources.device));
   if (properties.major != 10 || (properties.minor != 0 && properties.minor != 3 && properties.minor != 7))
     throw std::invalid_argument("Native MegaMoE currently requires an SM100-family GPU");
-  const int clusterSize = c.weightDtype == WeightDtype::Mxfp4 ? detail::W4ClusterSize : 2;
+  const bool w8a8Local = detail::isW8A8Local(c);
+  const int clusterSize = c.weightDtype == WeightDtype::Mxfp4 || w8a8Local ? detail::W4ClusterSize : 2;
   if (c.smMargin > properties.multiProcessorCount - clusterSize)
     throw std::invalid_argument("MegaMoE smMargin must leave enough SMs for the selected cluster");
   resources.ctas = (properties.multiProcessorCount - c.smMargin) / clusterSize * clusterSize;
-  const std::string name = c.weightDtype == WeightDtype::Mxfp4 ? "MegaMoE W4A8" : "MegaMoE W8A16";
+  const std::string name =
+      c.weightDtype == WeightDtype::Mxfp4 ? "MegaMoE W4A8" : (w8a8Local ? "MegaMoE W8A8" : "MegaMoE W8A16");
   auto configure = [&](auto kernel, int threads, int entryRegisters, size_t sharedBytes) {
     resources.sharedBytes = std::max(resources.sharedBytes, sharedBytes);
     cudaFuncAttributes attributes{};
@@ -460,7 +510,10 @@ KernelResources preflightKernel(const NativeConfig& c) {
     return resources;
   }
 #if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
-  if (detail::isLocalExpert(c)) {
+  if (w8a8Local) {
+    configure(detail::w8a8LocalKernelEntry(), detail::W8A8LocalParameters::ThreadCount, detail::EntryRegisters,
+              sizeof(detail::W8A8LocalParameters::SharedStorage));
+  } else if (detail::isLocalExpert(c)) {
     configure(detail::w8a16KernelEntry<1>(), detail::W8A16LocalParameters::ThreadCount, detail::LocalEntryRegisters,
               sizeof(detail::W8A16LocalParameters::SharedStorage));
     configure(detail::w8a16KernelEntry<2>(), detail::W8A16LocalParameters::ThreadCount, detail::LocalEntryRegisters,
@@ -485,6 +538,11 @@ std::shared_ptr<KernelPlan> createKernelPlan(const NativeConfig& c, void* symmet
   plan->localExpert = detail::isLocalExpert(c);
   if (c.weightDtype == WeightDtype::Mxfp4) {
     plan->params = detail::makeParameters<detail::W4A8Parameters>(c, symmetric, peers, workspace, weights);
+  } else if (detail::isW8A8Local(c)) {
+    auto params = detail::makeParameters<detail::W8A8LocalParameters>(c, symmetric, peers, workspace, weights);
+    params.fc1WeightScale = weights.fc1TensorScale;
+    params.fc2WeightScale = weights.fc2TensorScale;
+    plan->params = params;
   } else if (plan->localExpert) {
     plan->params = detail::makeParameters<detail::W8A16LocalParameters>(c, symmetric, peers, workspace, weights);
   } else {
@@ -559,6 +617,8 @@ void launchW8A16Mode(const std::shared_ptr<KernelPlan>& plan, const int32_t* ids
 
 void launchNativeW8A16(const std::shared_ptr<KernelPlan>& plan, const int32_t* ids, const float* scores, int tokens,
                        void* output, cudaStream_t stream, uint32_t* kernelEntrySignal) {
+  if (plan && std::holds_alternative<detail::W8A8LocalParameters>(plan->params))
+    throw std::invalid_argument("MegaMoE W8A8 local expert supports shared forward only");
   if (plan && plan->localExpert) {
     launchW8A16Mode<1>(plan, ids, scores, tokens, output, stream, kernelEntrySignal);
     return;
@@ -566,8 +626,41 @@ void launchNativeW8A16(const std::shared_ptr<KernelPlan>& plan, const int32_t* i
   launchW8A16Mode<0>(plan, ids, scores, tokens, output, stream, kernelEntrySignal);
 }
 
-void launchNativeSharedExpert(const std::shared_ptr<KernelPlan>& plan, int tokens, void* output, cudaStream_t stream) {
-  if (!plan || !plan->localExpert) throw std::invalid_argument("Shared forward requires a single local W8A16 expert");
+// Quantizes the BF16 input with the static scale, then runs FC1 -> SwiGLU -> FC2 of one unweighted local expert.
+void launchW8A8Local(const std::shared_ptr<KernelPlan>& plan, const void* input, int tokens, void* output,
+                     cudaStream_t stream) {
+  int device;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&device));
+  if (device != plan->device) throw std::invalid_argument("MegaMoE must launch on the device owning its workspace");
+  auto& params = std::get<detail::W8A8LocalParameters>(plan->params);
+  if (tokens < 0 || tokens > params.config.maxTokens || (tokens && !output))
+    throw std::invalid_argument("MegaMoE token count or output pointer is invalid");
+  if (!tokens) return;
+  const size_t tokenBlocks = (tokens + detail::W4TileN - 1) / detail::W4TileN;
+  MSCCLPP_CUDATHROW(cudaMemsetAsync(params.workspace.hiddenReady, 0,
+                                    tokenBlocks * detail::W4ReadyCounterStride * sizeof(int), stream));
+  const auto* source =
+      input ? static_cast<const __bfloat16*>(input) : detail::at<__bfloat16>(params.local, params.symmetric.input);
+  dim3 threads(128);
+  dim3 blocks((params.config.hidden / 32 + 31) / 32, std::min(tokens, 65535));
+  detail::quantizeInputStaticKernel<<<blocks, threads, 0, stream>>>(
+      source, params.workspace.quantizedInput, params.config.activationScale, tokens, params.config.hidden);
+  MSCCLPP_CUDATHROW(cudaGetLastError());
+  std::array<cudaLaunchAttribute, 2> launchAttributes{};
+  auto launch = detail::makeLaunchConfig(plan->ctas, detail::W8A8LocalParameters::ThreadCount, plan->sharedBytes,
+                                         stream, launchAttributes, detail::W4ClusterSize);
+  MSCCLPP_CUDATHROW(
+      cudaLaunchKernelEx(&launch, detail::w8a8LocalKernelEntry(), params, tokens, static_cast<__bfloat16*>(output)));
+}
+
+void launchNativeSharedExpert(const std::shared_ptr<KernelPlan>& plan, int tokens, void* output, cudaStream_t stream,
+                              const void* input) {
+  if (!plan || !plan->localExpert)
+    throw std::invalid_argument("Shared forward requires a single local MXFP8-weight expert");
+  if (std::holds_alternative<detail::W8A8LocalParameters>(plan->params)) {
+    launchW8A8Local(plan, input, tokens, output, stream);
+    return;
+  }
   launchW8A16Mode<2>(plan, nullptr, nullptr, tokens, output, stream);
 }
 #endif

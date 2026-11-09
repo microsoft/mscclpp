@@ -232,7 +232,8 @@ def _trace_kernel_summary(path):
         for event in events
         if event.get("cat") == "user_annotation" and "-replay" in event["name"]
     )
-    durations = {}
+    labelled = []
+    shared_streams = set()
     for event in sorted((event for event in events if event.get("cat") == "kernel"), key=lambda event: event["ts"]):
         # GPU work follows its replay's launch and every replay is synchronized before the next one.
         label = None
@@ -242,15 +243,23 @@ def _trace_kernel_summary(path):
         if label is None or label.endswith("-replay0"):
             continue
         name = event["name"]
-        if "megaMoeW8A16<1" in name or "megaMoeW8A16<2" in name:
+        stream = (label, event.get("args", {}).get("stream"))
+        if "megaMoeW8A16<1" in name or "megaMoeW8A16<2" in name or "megaMoeW8A8Local" in name:
             kind = "shared_kernel"
+            shared_streams.add(stream)
         elif "megaMoeW" in name:
             kind = "routed_kernel"
         elif "quantize" in name:
             kind = "quantize"
         else:
             continue
-        durations.setdefault(label.rsplit("-", 1)[0], {}).setdefault(kind, []).append(event["dur"])
+        labelled.append((label.rsplit("-", 1)[0], kind, stream, event["dur"]))
+    durations = {}
+    for label, kind, stream, duration in labelled:
+        # The W8A8 shared expert quantizes its own input on the shared stream.
+        if kind == "quantize" and stream in shared_streams:
+            kind = "shared_quantize"
+        durations.setdefault(label, {}).setdefault(kind, []).append(duration)
     return {
         label: {kind: statistics.median(values) for kind, values in kinds.items()} for label, kinds in durations.items()
     }
@@ -260,17 +269,27 @@ def _weights(config, device):
     import torch
     from .quantization import quantize_mxfp4, quantize_mxfp8
 
+    fp8_nv = config.weight_dtype == "fp8_nv"
+    mxfp8_weights = config.weight_dtype == "mxfp8" or fp8_nv
     tensors = []
     for m, k in ((2 * config.intermediate, config.hidden), (config.hidden, config.intermediate)):
         values = torch.empty(
-            (config.local_experts, m, k if config.is_w8a16 else k // 2),
-            dtype=torch.float8_e4m3fn if config.is_w8a16 else torch.uint8,
+            (config.local_experts, m, k if mxfp8_weights else k // 2),
+            dtype=torch.float8_e4m3fn if mxfp8_weights else torch.uint8,
             device=device,
         )
-        scales = torch.empty((config.local_experts, m, k // 32), dtype=torch.uint8, device=device)
+        if fp8_nv:
+            scales = torch.empty((config.local_experts,), dtype=torch.float32, device=device)
+        else:
+            scales = torch.empty((config.local_experts, m, k // 32), dtype=torch.uint8, device=device)
         for expert in range(config.local_experts):
             source = torch.randn((m, k), dtype=torch.float32, device=device) / k**0.5
-            quantized, scale = quantize_mxfp8(source) if config.is_w8a16 else quantize_mxfp4(source)
+            if fp8_nv:
+                # One FP32 scale per matrix, amax / 448, as fp8_nv checkpoints store the shared expert.
+                scale = source.abs().amax() / torch.finfo(torch.float8_e4m3fn).max
+                quantized = (source / scale).to(torch.float8_e4m3fn)
+            else:
+                quantized, scale = quantize_mxfp8(source) if mxfp8_weights else quantize_mxfp4(source)
             values[expert].copy_(quantized)
             scales[expert].copy_(scale)
         tensors.extend((values, scales))
@@ -304,6 +323,23 @@ def _reference(config, inputs, ids, scores, weights):
     for expert in range(config.local_experts):
         token, slot = torch.where(all_ids == config.rank * config.local_experts + expert)
         if not token.numel():
+            continue
+        if config.is_w8a8:
+            # Static-FP8 input and hidden with MXFP8 or fp8_nv weights; the shared output scale is applied after
+            # the sum.
+            if config.weight_dtype == "fp8_nv":
+                first = fc1[expert].float() * fc1_scale[expert]
+                second = fc2[expert].float() * fc2_scale[expert]
+            else:
+                first = dequantize_mxfp8(fc1[expert], fc1_scale[expert], dtype=torch.float32)
+                second = dequantize_mxfp8(fc2[expert], fc2_scale[expert], dtype=torch.float32)
+            expert_input = quantize_fp8_static(all_inputs[token].float(), config.activation_scale).float()
+            gate, up = ((expert_input @ first.T) * config.activation_scale).chunk(2, dim=-1)
+            if config.gate_up_clamp >= 0:
+                gate = gate.clamp(max=config.gate_up_clamp)
+                up = up.clamp(-config.gate_up_clamp, config.gate_up_clamp)
+            hidden = quantize_fp8_static(functional.silu(gate) * up, config.activation_scale).float()
+            partial[token, slot] = (hidden @ second.T) * all_scores[token, slot, None]
             continue
         if config.is_w8a16:
             first = dequantize_mxfp8(fc1[expert], fc1_scale[expert], dtype=torch.bfloat16).float()
@@ -371,7 +407,7 @@ def main():
         "--overlap-shared-expert",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="overlap one local W8A16 shared expert with routed MegaMoE",
+        help="overlap one local W8A16 or W8A8 shared expert with routed MegaMoE",
     )
     parser.add_argument("--shared-hidden", type=int, default=8704)
     parser.add_argument("--shared-intermediate", type=int, default=2048)
@@ -379,9 +415,29 @@ def main():
         "--shared-sm-count",
         type=int,
         default=16,
-        help="persistent CTAs reserved for the W8A16 shared expert",
+        help="persistent CTAs reserved for the shared expert",
     )
     parser.add_argument("--shared-gate-up-clamp", type=float, default=-1.0)
+    parser.add_argument(
+        "--shared-activation-dtype",
+        choices=("bf16", "fp8_static"),
+        default="bf16",
+        help="shared-expert activations: bf16 runs the W8A16 kernel, fp8_static the W8A8 kernel "
+        "(FP8 weights on the block-scaled W4A8 pipeline; see --shared-weight-dtype)",
+    )
+    parser.add_argument(
+        "--shared-activation-scale",
+        type=float,
+        default=None,
+        help="static FP8 per-tensor scale for --shared-activation-dtype fp8_static (default 1.0)",
+    )
+    parser.add_argument(
+        "--shared-weight-dtype",
+        choices=("mxfp8", "fp8_nv"),
+        default="mxfp8",
+        help="shared-expert FP8 weights: mxfp8 (E8M0 K32 block scales) or fp8_nv (one FP32 scale per FC1/FC2 "
+        "matrix, requires --shared-activation-dtype fp8_static)",
+    )
     parser.add_argument(
         "--shared-weight-banks",
         type=int,
@@ -394,6 +450,12 @@ def main():
         action=argparse.BooleanOptionalAction,
         default=True,
         help="admit shared work only after the routed kernel signals entry",
+    )
+    parser.add_argument(
+        "--allow-sm-oversubscription",
+        action="store_true",
+        help="diagnostic: allow routed + shared CTAs to exceed the SM count; each CTA fills an SM, so shared CTAs "
+        "then only start on SMs the routed kernel has released",
     )
     parser.add_argument(
         "--shared-join",
@@ -543,6 +605,10 @@ def main():
         )
     if not math.isfinite(args.shared_gate_up_clamp):
         parser.error("--shared-gate-up-clamp must be finite")
+    if args.shared_activation_scale is not None and args.shared_activation_dtype != "fp8_static":
+        parser.error("--shared-activation-scale requires --shared-activation-dtype fp8_static")
+    if args.shared_weight_dtype == "fp8_nv" and args.shared_activation_dtype != "fp8_static":
+        parser.error("--shared-weight-dtype fp8_nv requires --shared-activation-dtype fp8_static")
 
     import torch
     import torch.distributed as dist
@@ -623,7 +689,7 @@ def main():
         # the shared kernel only runs on SMs the routed kernel leaves free and effectively serializes.
         routed_cluster = 2 if config.is_w8a16 else kernel_config.cluster_size
         routed_cta_bound = (sm_count - args.sm_margin) // routed_cluster * routed_cluster
-        if routed_cta_bound + args.shared_sm_count > sm_count:
+        if routed_cta_bound + args.shared_sm_count > sm_count and not args.allow_sm_oversubscription:
             parser.error(
                 f"routed MegaMoE may keep {routed_cta_bound} CTAs resident (--sm-margin {args.sm_margin}) and the "
                 f"shared expert needs {args.shared_sm_count}, exceeding {sm_count} SMs; the cooperative launches "
@@ -660,8 +726,9 @@ def main():
             sm_margin=sm_count - args.shared_sm_count,
             gate_up_clamp=args.shared_gate_up_clamp,
             combine_route_weights=False,
-            weight_dtype="mxfp8",
-            activation_dtype="bf16",
+            weight_dtype=args.shared_weight_dtype,
+            activation_dtype=args.shared_activation_dtype,
+            activation_scale=args.shared_activation_scale,
         )
         shared_bootstrap = TcpBootstrap.create(0, 1)
         shared_bootstrap.initialize(TcpBootstrap.create_unique_id())
@@ -684,7 +751,7 @@ def main():
             raise RuntimeError(
                 f"shared CTA cap mismatch: requested {args.shared_sm_count}, got {shared_context.cta_count}"
             )
-        if context.cta_count + shared_context.cta_count > sm_count:
+        if context.cta_count + shared_context.cta_count > sm_count and not args.allow_sm_oversubscription:
             raise RuntimeError(
                 f"routed ({context.cta_count}) and shared ({shared_context.cta_count}) CTAs exceed {sm_count} SMs"
             )
@@ -773,6 +840,9 @@ def main():
         if args.atol is not None
         else (max(0.02, 2.5 * config.activation_scale) if config.is_static_fp8 else 0.01)
     )
+    # The shared reference models W8A8 static-FP8 rounding too, so both shared variants keep the tight tolerance.
+    shared_rtol = args.rtol if args.rtol is not None else 0.03
+    shared_atol = args.atol if args.atol is not None else 0.01
     correctness = None
     shared_correctness = None
     if args.check:
@@ -799,12 +869,7 @@ def main():
                 "max_abs_error": shared_error.max().item(),
                 "mean_abs_error": shared_error.mean().item(),
             }
-            torch.testing.assert_close(
-                shared_output,
-                shared_reference,
-                rtol=args.rtol if args.rtol is not None else 0.03,
-                atol=args.atol if args.atol is not None else 0.01,
-            )
+            torch.testing.assert_close(shared_output, shared_reference, rtol=shared_rtol, atol=shared_atol)
     del weights
     del shared_weights
     routed_graph = None
@@ -861,12 +926,7 @@ def main():
                 torch.cuda.synchronize(device)
             if args.check:
                 torch.testing.assert_close(output, reference, rtol=rtol, atol=atol)
-                torch.testing.assert_close(
-                    shared_output,
-                    shared_reference,
-                    rtol=args.rtol if args.rtol is not None else 0.03,
-                    atol=args.atol if args.atol is not None else 0.01,
-                )
+                torch.testing.assert_close(shared_output, shared_reference, rtol=shared_rtol, atol=shared_atol)
     routed_control_samples = []
     repetitions = args.graph_batch if routed_graph else 1
     begin, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
@@ -1008,6 +1068,9 @@ def main():
                 else {
                     "cta_count": shared_context.cta_count,
                     "weight_banks": len(shared_contexts),
+                    "weight_dtype": shared_config.weight_dtype,
+                    "activation_dtype": shared_config.activation_dtype,
+                    "activation_scale": shared_config.activation_scale,
                     "workspace_bytes": shared_context.workspace_bytes,
                     "initialization_ms": shared_initialization_ms,
                     "kernel_id": shared_context.kernel_id,
