@@ -114,8 +114,10 @@ throughput requires an even token count per GPU.
 
 Expert computation uses FlashInfer CuTe grouped GEMMs with MXFP8 activations
 and MXFP4 weights (`--compute-backend cutlass_flashinfer`, the only compute
-backend). It requires Blackwell SM100/SM103, CUDA 13 PyTorch, and model
-dimensions divisible by 128. Communication remains BF16; activation
+backend). Each expert is a SwiGLU MLP: the first GEMM computes the up and gate
+projections and applies `up * silu(gate)` in its epilogue, then the second GEMM
+projects back to `d_model`. It requires Blackwell SM100/SM103, CUDA 13 PyTorch,
+and model dimensions divisible by 128. Communication remains BF16; activation
 quantization is included in compute timing.
 
 ### Optional NCCL-EP setup

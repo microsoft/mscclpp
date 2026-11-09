@@ -20,6 +20,7 @@ import yaml
 if __package__:
     from ..compute_backends import create_mlp
     from ..compute_backends.flashinfer import (
+        fc1_activation,
         fc1_weight,
         make_schedule,
         preflight,
@@ -34,7 +35,14 @@ if __package__:
 else:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from compute_backends import create_mlp
-    from compute_backends.flashinfer import fc1_weight, make_schedule, preflight, quantize_activations, quantize_weights
+    from compute_backends.flashinfer import (
+        fc1_activation,
+        fc1_weight,
+        make_schedule,
+        preflight,
+        quantize_activations,
+        quantize_weights,
+    )
     from config import SUPPORTED_LAYOUTS, load_config, validate_config
     from memory import estimate_tensor_bytes
     from reference import decode, decoded_expert_weights, expert_output, quantize_mxfp8, relative_error, unswizzle
@@ -251,6 +259,16 @@ def test_preflight_rejects_versions_and_devices(monkeypatch):
         preflight(mx_config(), 0)
 
 
+def test_fc1_activation_is_explicit_plain_swiglu():
+    with pytest.raises(ValueError, match="Unsupported expert activation"):
+        fc1_activation("gelu")
+    fused_moe = pytest.importorskip("flashinfer.fused_moe")
+    options = fc1_activation("swiglu")
+    assert options["activation_type"] == fused_moe.ActivationType.Swiglu.value
+    assert (options["swiglu_alpha"], options["swiglu_beta"]) == (1.0, 0.0)
+    assert options["swiglu_limit"] == torch.finfo(torch.float32).max
+
+
 def test_schedule_and_weight_orientation():
     counts = [7, 0, 129]
     slots, experts, limits, tiles = make_schedule(counts, "cpu")
@@ -317,6 +335,8 @@ def multitile_reference(rank, device):
     assert mlp.metadata["native_mixed_mma"]
     assert mlp.metadata["initial_activation_quantization_timed"]
     assert mlp.metadata["communication_dtype"] == "bf16"
+    assert mlp.metadata["fc1_activation"].startswith("swiglu")
+    assert mlp.fc1_activation == fc1_activation("swiglu")
     generator = torch.Generator(device=device).manual_seed(8107 + rank)
     tokens = torch.randn(3, 130, mlp.hidden, device=device, dtype=torch.bfloat16, generator=generator)
     out = torch.full_like(tokens, float("nan"))

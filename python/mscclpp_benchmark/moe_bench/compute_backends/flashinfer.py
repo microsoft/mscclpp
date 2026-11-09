@@ -54,6 +54,21 @@ def quantize_weights(x):
     )
 
 
+def fc1_activation(activation):
+    """FlashInfer options for the activation fused into the FC1 GEMM epilogue."""
+    if activation != "swiglu":
+        raise ValueError(f"Unsupported expert activation: {activation!r}")
+    from flashinfer.fused_moe import ActivationType
+
+    # Plain SwiGLU, up * silu(gate): no sigmoid scale, up bias, or clamp.
+    return dict(
+        activation_type=ActivationType.Swiglu.value,
+        swiglu_alpha=1.0,
+        swiglu_beta=0.0,
+        swiglu_limit=torch.finfo(torch.float32).max,
+    )
+
+
 def fc1_weight(gate, up):
     """Convert Torch [K,N] weights to the kernel's [N,K] SwiGLU row ordering."""
     # CuTe consumes alternating groups of 64 up rows and 64 gate rows.
@@ -111,9 +126,10 @@ class FlashInferMLP:
             "weight_scale_layout": "128x4_mma_swizzled",
             "activation_scale_layout": "input_linear; intermediate_128x4_mma_swizzled",
             "fc1_row_order": "up64_gate64_interleaved",
+            "fc1_activation": f"{model['activation']} (up * silu(gate)), fused into the FC1 GEMM epilogue",
             "compute_routing": "topk1_unit_weights_per_compact_expert_slot; native_combine_applies_routing_weights",
-            "mlp_timed_operations": "pack, input quantization, quantized-buffer copies, grouped GEMMs, SwiGLU, "
-            "intermediate quantization, output zeroing/scatter, unpack, launch gaps",
+            "mlp_timed_operations": "pack, input quantization, quantized-buffer copies, FC1 grouped GEMM with fused "
+            "SwiGLU and intermediate quantization, FC2 grouped GEMM, output zeroing/scatter, unpack, launch gaps",
             "weight_quantization_timed": False,
             "initial_activation_quantization_timed": True,
         }
@@ -148,6 +164,7 @@ class FlashInferMLP:
         )
 
         self.fc1 = blockscaled_contiguous_gather_grouped_gemm_act_fusion
+        self.fc1_activation = fc1_activation(model["activation"])
         self.fc2 = blockscaled_contiguous_grouped_gemm_finalize_fusion
         padded = self.schedule[0].numel()
         self.activation = torch.empty(padded, self.inter, dtype=torch.float8_e4m3fn, device=device)
@@ -179,6 +196,8 @@ class FlashInferMLP:
         qx, sx = quantize_activations(self.packed)
         self.qx.copy_(qx)
         self.sx.copy_(sx)
+        # FC1 computes the interleaved up/gate projection, applies SwiGLU in
+        # its epilogue, and writes the MXFP8 activation consumed by FC2.
         self.fc1(
             self.qx,
             self.weights[0],
@@ -194,6 +213,7 @@ class FlashInferMLP:
             topk=1,
             c_dtype="float8_e4m3fn",
             quantize_output=True,
+            **self.fc1_activation,
             **self.common,
         )
         self.result.zero_()
