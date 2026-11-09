@@ -128,11 +128,6 @@ struct BasePortChannel {
   explicit BasePortChannel(std::shared_ptr<PortDevice2DeviceSemaphore> semaphore)
     requires(Backend == PortChannelBackend::Device);
 
-  /// Constructor for a channel in device mode (PortChannelBackend::Device).
-  /// @param semaphore The semaphore of a PortChannel device-mode connection.
-  explicit BasePortChannel(const Semaphore& semaphore)
-    requires(Backend == PortChannelBackend::Device);
-
   /// Constructor.
   /// @param semaphoreId The ID of the semaphore.
   /// @param semaphore The semaphore used to synchronize the communication.
@@ -172,7 +167,6 @@ BasePortChannel(SemaphoreId, std::shared_ptr<Host2DeviceSemaphore>,
                 std::shared_ptr<Proxy>) -> BasePortChannel<PortChannelBackend::Host>;
 BasePortChannel(SemaphoreId, const Semaphore&, std::shared_ptr<Proxy>) -> BasePortChannel<PortChannelBackend::Host>;
 BasePortChannel(std::shared_ptr<PortDevice2DeviceSemaphore>) -> BasePortChannel<PortChannelBackend::Device>;
-BasePortChannel(const Semaphore&) -> BasePortChannel<PortChannelBackend::Device>;
 
 /// Port channel.
 template <PortChannelBackend Backend>
@@ -202,13 +196,6 @@ struct PortChannel : public BasePortChannel<Backend> {
   /// @param dst The destination registered memory.
   /// @param src The source registered memory.
   PortChannel(std::shared_ptr<PortDevice2DeviceSemaphore> semaphore, RegisteredMemory dst, RegisteredMemory src)
-    requires(Backend == PortChannelBackend::Device);
-
-  /// Constructor for a channel in device mode (PortChannelBackend::Device).
-  /// @param semaphore The semaphore of a PortChannel device-mode connection.
-  /// @param dst The destination registered memory.
-  /// @param src The source registered memory.
-  PortChannel(const Semaphore& semaphore, RegisteredMemory dst, RegisteredMemory src)
     requires(Backend == PortChannelBackend::Device);
 
   /// Constructor.
@@ -255,7 +242,6 @@ PortChannel(SemaphoreId, const Semaphore&, std::shared_ptr<Proxy>, MemoryId,
             MemoryId) -> PortChannel<PortChannelBackend::Host>;
 PortChannel(std::shared_ptr<PortDevice2DeviceSemaphore>, RegisteredMemory,
             RegisteredMemory) -> PortChannel<PortChannelBackend::Device>;
-PortChannel(const Semaphore&, RegisteredMemory, RegisteredMemory) -> PortChannel<PortChannelBackend::Device>;
 
 /// @deprecated Use BasePortChannel instead.
 [[deprecated("Use BasePortChannel instead.")]] typedef BasePortChannel<> BaseProxyChannel;

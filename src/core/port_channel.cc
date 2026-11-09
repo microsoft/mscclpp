@@ -45,11 +45,6 @@ MSCCLPP_API_CPP BasePortChannel<Backend>::BasePortChannel(std::shared_ptr<PortDe
 }
 
 template <PortChannelBackend Backend>
-MSCCLPP_API_CPP BasePortChannel<Backend>::BasePortChannel(const Semaphore& semaphore)
-  requires(Backend == PortChannelBackend::Device)
-    : BasePortChannel(std::make_shared<PortDevice2DeviceSemaphore>(semaphore)) {}
-
-template <PortChannelBackend Backend>
 MSCCLPP_API_CPP BasePortChannel<Backend>::BasePortChannel(SemaphoreId semaphoreId, const Semaphore& semaphore,
                                                           std::shared_ptr<Proxy> proxy)
   requires(Backend == PortChannelBackend::Host)
@@ -71,12 +66,6 @@ MSCCLPP_API_CPP PortChannel<Backend>::PortChannel(std::shared_ptr<PortDevice2Dev
       src_(0),
       dstMemory_(std::move(dst)),
       srcMemory_(std::move(src)) {}
-
-template <PortChannelBackend Backend>
-MSCCLPP_API_CPP PortChannel<Backend>::PortChannel(const Semaphore& semaphore, RegisteredMemory dst,
-                                                  RegisteredMemory src)
-  requires(Backend == PortChannelBackend::Device)
-    : PortChannel(std::make_shared<PortDevice2DeviceSemaphore>(semaphore), std::move(dst), std::move(src)) {}
 
 template <PortChannelBackend Backend>
 MSCCLPP_API_CPP PortChannel<Backend>::PortChannel(SemaphoreId semaphoreId, const Semaphore& semaphore,
