@@ -401,3 +401,98 @@ def test_uniform_and_hotspot_distribution():
 def test_invalid_rank(rank):
     with pytest.raises(ValueError, match="rank"):
         make_routing(_config(), rank)
+
+
+PROFILES = ("zipf", "zipf_skewed", "hot_experts", "lognormal")
+
+
+def _global_routing(config):
+    world = config["environment"]["num_gpus"]
+    parts = [make_routing(config, rank) for rank in range(world)]
+    return torch.cat([ids for ids, _ in parts]), torch.cat([weights for _, weights in parts])
+
+
+@pytest.mark.parametrize("routing", PROFILES)
+@pytest.mark.parametrize("num_gpus,model,input_name", [(4, "small", "decode"), (16, "large", "decode")])
+def test_profile_routing_is_valid_and_matches_counts(routing, num_gpus, model, input_name):
+    from ..routing import expert_load_weights, profile_routing, scale_counts
+
+    config = _config(num_gpus=num_gpus, model=model, input_name=input_name, routing=routing)
+    experts, top_k = config["model"]["num_experts"], config["model"]["top_k"]
+    ids, weights = _global_routing(config)
+    tokens = num_gpus * config["input"]["tokens_per_rank"]
+    assert ids.shape == (tokens, top_k) and ids.dtype == torch.int64
+    assert ((ids >= 0) & (ids < experts)).all()
+    assert all(len(set(row)) == top_k for row in ids.tolist())
+    torch.testing.assert_close(weights.sum(dim=1), torch.ones(tokens))
+    expected = scale_counts(
+        expert_load_weights(config["routing"], num_gpus, experts // num_gpus, config["benchmark"]["seed"]),
+        tokens * top_k,
+        tokens,
+    )
+    assert torch.bincount(ids.flatten(), minlength=experts).tolist() == expected
+    # Every rank slices the same deterministic global plan.
+    assert torch.equal(ids, profile_routing(config)) and torch.equal(ids, _global_routing(config)[0])
+
+
+def test_profile_shapes_match_megamoe_semantics():
+    from ..routing import expert_load_weights
+
+    world, local = 16, 32
+    zipf = expert_load_weights({"kind": "zipf"}, world, local, 7)
+    for rank in range(world):
+        rank_weights = zipf[rank * local : (rank + 1) * local]
+        assert rank_weights.count(0.0) == local - int(local * 0.85)
+        assert max(rank_weights) == 1.0  # the rank's hottest expert, before shuffling
+    skewed = expert_load_weights({"kind": "zipf_skewed"}, world, local, 7)
+    loads = [sum(skewed[rank * local : (rank + 1) * local]) for rank in range(world)]
+    assert loads == sorted(loads, reverse=True) and loads[0] > 5 * loads[-1]
+    hot = expert_load_weights({"kind": "hot_experts"}, world, local, 7)
+    for rank in range(world):
+        rank_weights = sorted(hot[rank * local : (rank + 1) * local], reverse=True)
+        assert rank_weights.count(0.0) == local // 4
+        assert rank_weights[local // 16 - 1] > 10 * rank_weights[local // 16]
+    lognormal = expert_load_weights({"kind": "lognormal", "sigma": 0.85}, world, local, 7)
+    assert min(lognormal) > 0 and max(lognormal) / min(lognormal) > 10
+    assert expert_load_weights({"kind": "lognormal", "sigma": 0.0}, world, local, 7) == [1.0] * (world * local)
+
+
+def test_scale_counts_caps_each_expert_at_one_route_per_token():
+    from ..routing import scale_counts
+
+    # One dominant expert is capped; the excess goes to other weighted experts.
+    counts = scale_counts([1000.0, 1.0, 1.0, 0.0], 30, 10)
+    assert sum(counts) == 30 and max(counts) == 10 and counts[0] == 10
+    # When weighted experts are full, the remainder spills onto unused experts.
+    counts = scale_counts([1.0, 0.0, 0.0, 0.0], 25, 10)
+    assert sum(counts) == 25 and max(counts) <= 10
+    with pytest.raises(ValueError, match="capacity"):
+        scale_counts([1.0, 1.0], 21, 10)
+
+
+def test_profile_routing_options_validation():
+    for routing in ("zipf", "zipf_skewed", "hot_experts", "lognormal", "hot_pair"):
+        assert _config(routing=routing)["routing"]["kind"] in ("zipf", "zipf_skewed", "hot_experts", "lognormal")
+    config = _config(routing="zipf")
+    for alpha in (-1, float("nan"), float("inf"), "1.2", True):
+        config["routing"]["alpha"] = alpha
+        with pytest.raises(ValueError, match="alpha"):
+            validate_config(config)
+    config["routing"] = {"kind": "zipf", "sigma": 1.0}
+    with pytest.raises(ValueError, match="unknown fields: sigma"):
+        validate_config(config)
+    config["routing"] = {"kind": "lognormal", "sigma": -0.1}
+    with pytest.raises(ValueError, match="sigma"):
+        validate_config(config)
+    config["routing"] = {"kind": "hot_experts", "expert_ids": [0, 1]}
+    with pytest.raises(ValueError, match="requires both expert_ids and probability_mass"):
+        validate_config(config)
+    config["routing"] = {"alpha": 1.0}
+    with pytest.raises(ValueError, match="missing fields: kind"):
+        validate_config(config)
+    # Explicit hot experts can place the hotspot on any rank, e.g. the last one.
+    config = _config(routing="hot_pair")
+    config["routing"]["expert_ids"] = [6, 7]
+    ids, _ = _global_routing(config)
+    per_rank = torch.bincount(ids.flatten() // 2, minlength=4)
+    assert per_rank.argmax().item() == 3

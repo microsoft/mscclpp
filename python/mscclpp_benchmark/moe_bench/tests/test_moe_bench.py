@@ -549,9 +549,9 @@ def test_check_before_timing_uses_changed_input_and_restores_it(monkeypatch):
 
     pipeline = SimpleNamespace(x=x, ids="ids", weights="weights", step=step, output=None)
     monkeypatch.setattr(torch.cuda, "synchronize", lambda: None)
-    monkeypatch.setattr(reference, "reference_output", lambda config, x, ids, weights: x * 2)
+    monkeypatch.setattr(reference, "reference_output", lambda config, x, ids, weights, magnitude: (x * 2, x.abs()))
 
-    def check(actual, expected, rank, world, rtol, atol, label):
+    def check(actual, expected, rank, world, rtol, atol, label, magnitude):
         seen.append((label, torch.equal(actual, expected), x.clone()))
         return {"label": label}
 
@@ -560,7 +560,8 @@ def test_check_before_timing_uses_changed_input_and_restores_it(monkeypatch):
     assert [label for label, _, _ in seen] == ["initial input", "changed input"]
     assert all(matched for _, matched, _ in seen)
     assert torch.equal(seen[0][2], original) and not torch.equal(seen[1][2], original)
-    assert torch.equal(x, original) and torch.equal(expected, original * 2)
+    assert torch.equal(x, original) and torch.equal(expected[0], original * 2)
+    assert torch.equal(expected[1], original.abs())
     assert set(checks) == {"initial", "changed_input"}
 
 
@@ -601,3 +602,21 @@ def test_identity_encoding_is_exact_in_bf16():
     assert torch.equal((rows.float() * 0.5).bfloat16().float() * 2, rows.float())
     out = torch.empty_like(rows)
     assert IdentityExperts()(rows, out) is out and torch.equal(out, rows)
+
+
+def test_rounding_slack_covers_cancelling_bf16_partials():
+    from ..reference import ROUNDING_SLACK, compare_outputs
+
+    # Two destination partials of about 3 nearly cancel; a one-ULP (2**-6) difference
+    # in one BF16 partial is large relative to the result but small relative to the terms.
+    partials = torch.tensor([[3.0, -2.90625]])
+    expected = partials.sum(dim=1, keepdim=True)
+    actual = expected + 2.0**-6
+    magnitude = partials.abs().sum(dim=1, keepdim=True)
+    assert compare_outputs(actual, expected)[0]["mismatched_elements"] == 1
+    stats, _ = compare_outputs(actual, expected, magnitude=magnitude)
+    assert stats["mismatched_elements"] == 0 and stats["max_tolerance_fraction"] < 1
+    assert ROUNDING_SLACK * magnitude.item() >= 2.0**-6
+    # A wrong result of the terms' own size still fails with the slack.
+    stats, _ = compare_outputs(expected + 1.0, expected, magnitude=magnitude)
+    assert stats["mismatched_elements"] == 1

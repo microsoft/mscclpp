@@ -51,9 +51,17 @@ With `--check`, each GPU computes its expected output locally with plain PyTorch
 it regenerates the routed experts' weights, applies the kernels' MXFP4 weight and
 MXFP8 activation rounding, runs SwiGLU, and combines routes as the selected
 communication backend does. No dispatch, combine, or FlashInfer kernel is used.
-Every element must satisfy `|actual - expected| <= atol + rtol * |expected|`
+Every element must satisfy
+
+```text
+|actual - expected| <= atol + rtol * |expected| + 2**-6 * sum_k |w_k * y_k|
+```
+
+where `w_k` and `y_k` are the routing weight and expert output of route `k`
 (defaults `rtol=0.05`, `atol=0.01`; override with `--rtol` and `--atol`), and
-non-finite values fail. All GPUs agree on the result; a failure reports the
+non-finite values fail. The last term allows one BF16 rounding step in each
+expert output and destination partial sum, which matters when partial sums
+nearly cancel; a wrong or missing route still exceeds it. All GPUs agree on the result; a failure reports the
 first mismatching rank, token, and column.
 
 The output is checked three times:
@@ -89,7 +97,7 @@ Choose presets from [configs.yaml](configs.yaml):
 |---|---|
 | `--model` | `small`, `medium`, `large`, `scaled_small`, `scaled_medium`, `scaled_large` |
 | `--input` | `decode` (16 tokens/GPU), `prefill` (1024 tokens/GPU) |
-| `--routing` | `balanced`, `uniform`, `hot_pair` |
+| `--routing` | `balanced`, `uniform`, `hot_pair`, `zipf`, `zipf_skewed`, `hot_experts`, `lognormal` |
 | `--backend` | `mscclpp` (default), `nccl` |
 | `--mode` | `latency` (default), `throughput` |
 | `--graph` | `none` (default), `mlp` (expert compute only), `layer` (whole layer) |
@@ -123,6 +131,40 @@ not support 5120, so the `medium` and `scaled_medium` presets require
 `--mode throughput` or `--backend nccl`. MSCCL++ throughput supports at most 128
 experts per GPU. Token counts and intermediate dimensions must be positive and
 fit available memory and backend limits.
+
+### Routing distributions
+
+Routing is fixed for each run and identical on every launch with the same seed.
+Each token always uses `top_k` distinct experts.
+
+| Preset | Expert load |
+|---|---|
+| `balanced` | Every expert receives the same number of routes (within one) |
+| `uniform` | Each token picks `top_k` experts uniformly at random |
+| `hot_pair` | Experts 0 and 1 share 80% of the probability (a hotspot on rank 0) |
+| `zipf` | Per-rank Zipf popularity (`alpha`, default 1.2): hot, warm, and tail experts, with 15% of each rank's experts unused; ranks stay roughly balanced |
+| `zipf_skewed` | Zipf within ranks (20% unused) plus cross-rank skew: rank `r` carries `1 / (r + 1)^0.7` of the load, so rank 0 is heaviest |
+| `hot_experts` | Bimodal: about one in sixteen experts per rank is hot, a quarter are unused, and the rest receive small loads |
+| `lognormal` | Global long-tail popularity, `LogNormal(0, sigma)` per expert (`sigma`, default 0.85) |
+
+`zipf`, `zipf_skewed`, `hot_experts`, and `lognormal` adapt the MegaMoE
+benchmark's distributions (`python/mscclpp/ext/megamoe/benchmark.py` on
+`feature/megamoe`). They fix the global number of routes per expert, capped at
+one route per token so experts stay distinct, then spread those routes across
+all GPUs' tokens. Custom presets can set `alpha` or `sigma`. A `hot_experts`
+preset with `expert_ids` and `probability_mass` instead makes the listed experts
+hot, which places a hotspot on any rank:
+
+```yaml
+routing:
+  hot_last_rank:
+    kind: hot_experts
+    expert_ids: [6, 7]
+    probability_mass: 0.8
+```
+
+`run.json` records the realized `assignments_per_expert`, `assignments_per_rank`,
+and `rank_max_over_mean`.
 
 ### Backends and layouts
 

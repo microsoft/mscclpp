@@ -15,9 +15,15 @@ if __package__:
 else:
     from workload import make_expert_weights
 
-# Element-wise |actual - expected| <= atol + rtol * |expected|, as in MegaMoE's check.
+# Element-wise |actual - expected| <= atol + rtol * |expected|, as in MegaMoE's check,
+# plus ROUNDING_SLACK * sum_k |w_k * y_k| when the routed contributions are known.
 CHECK_RTOL = 0.05
 CHECK_ATOL = 0.01
+# Expert outputs and each destination's weighted partial are rounded to BF16
+# before the final sum. A one-ULP difference in either is at most 2**-7 of that
+# value, so together they stay within 2**-6 of the summed contribution magnitudes,
+# even when partials nearly cancel.
+ROUNDING_SLACK = 2.0**-6
 E2M1_VALUES = (0, 0.5, 1, 1.5, 2, 3, 4, 6, -0.0, -0.5, -1, -1.5, -2, -3, -4, -6)
 
 
@@ -89,14 +95,21 @@ def relative_error(actual, expected):
     return ((actual.float() - expected.float()).norm() / expected.float().norm().clamp_min(1e-30)).item()
 
 
-def compare_outputs(actual, expected, rtol=CHECK_RTOL, atol=CHECK_ATOL):
-    """Element-wise comparison statistics, plus the first out-of-tolerance element."""
+def compare_outputs(actual, expected, rtol=CHECK_RTOL, atol=CHECK_ATOL, magnitude=None):
+    """Element-wise comparison statistics, plus the first out-of-tolerance element.
+
+    ``magnitude`` is ``sum_k |w_k * y_k|`` per element; it adds rounding slack for
+    BF16 partial sums that nearly cancel.
+    """
     actual, expected = actual.float(), expected.float()
     finite = torch.isfinite(actual)
-    mismatched = ~torch.isclose(actual, expected, rtol=rtol, atol=atol)
-    error = (actual - expected).abs()[finite]
+    allowed = atol + rtol * expected.abs()
+    if magnitude is not None:
+        allowed = allowed + ROUNDING_SLACK * magnitude.float()
+    difference = (actual - expected).abs()
+    mismatched = ~finite | (difference > allowed)
+    error, allowed = difference[finite], allowed[finite]
     # Fraction of the allowed error used by the worst element; above 1.0 fails.
-    allowed = atol + rtol * expected.abs()[finite]
     used = torch.where(allowed > 0, error / allowed, (error > 0).float() * float("inf"))
     stats = {
         "max_tolerance_fraction": used.max().item() if used.numel() else 0.0,
@@ -120,8 +133,11 @@ def compare_outputs(actual, expected, rtol=CHECK_RTOL, atol=CHECK_ATOL):
 
 
 @torch.inference_mode()
-def reference_output(config, x, ids, weights):
-    """Compute this rank's routed layer output independently of dispatch/combine."""
+def reference_output(config, x, ids, weights, with_magnitude=False):
+    """Compute this rank's routed layer output independently of dispatch/combine.
+
+    With ``with_magnitude``, also return ``sum_k |w_k * y_k|`` for rounding slack.
+    """
     model = config["model"]
     world = config["environment"]["num_gpus"]
     local_experts = model["num_experts"] // world
@@ -143,4 +159,9 @@ def reference_output(config, x, ids, weights):
                 weight = weights[:, slot].masked_fill(~selected, 0).unsqueeze(-1)
                 partial.addcmul_(routes[:, slot].float(), weight)
             expected.add_(partial.to(torch.bfloat16).float())
-    return expected.to(torch.bfloat16)
+    if not with_magnitude:
+        return expected.to(torch.bfloat16)
+    magnitude = torch.zeros_like(expected)
+    for slot in range(model["top_k"]):
+        magnitude.addcmul_(routes[:, slot].float().abs(), weights[:, slot].abs().unsqueeze(-1))
+    return expected.to(torch.bfloat16), magnitude

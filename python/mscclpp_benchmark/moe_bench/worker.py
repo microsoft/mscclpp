@@ -246,13 +246,13 @@ def make_timing_events(iterations):
     return events
 
 
-def check_output(actual, expected, rank, world, rtol, atol, label):
+def check_output(actual, expected, rank, world, rtol, atol, label, magnitude=None):
     """Compare every rank's output element-wise; all ranks agree on the verdict."""
     if __package__:
         from .reference import compare_outputs
     else:
         from reference import compare_outputs
-    stats, first = compare_outputs(actual, expected, rtol, atol)
+    stats, first = compare_outputs(actual, expected, rtol, atol, magnitude)
     ranks = [None] * world
     dist.all_gather_object(ranks, {"rank": rank, **stats, "first_mismatch": first})
     total = sum(item["total_elements"] for item in ranks)
@@ -290,7 +290,8 @@ def check_before_timing(pipeline, config, rank, world, rtol, atol):
     """Check the configured input, then a changed input, and restore the original.
 
     A changed input catches stale dispatch buffers that a fixed input would hide.
-    Returns the original input's reference for the check after timing.
+    Returns the original input's reference and contribution magnitudes for the
+    check after timing.
     """
     if __package__:
         from .reference import reference_output
@@ -298,17 +299,19 @@ def check_before_timing(pipeline, config, rank, world, rtol, atol):
         from reference import reference_output
     pipeline.step()
     torch.cuda.synchronize()
-    expected = reference_output(config, pipeline.x, pipeline.ids, pipeline.weights)
-    checks = {"initial": check_output(pipeline.output, expected, rank, world, rtol, atol, "initial input")}
+    expected, magnitude = reference_output(config, pipeline.x, pipeline.ids, pipeline.weights, True)
+    checks = {"initial": check_output(pipeline.output, expected, rank, world, rtol, atol, "initial input", magnitude)}
     original = pipeline.x.clone()
     pipeline.x.mul_(0.61).add_(0.17)
     pipeline.step()
     torch.cuda.synchronize()
-    changed = reference_output(config, pipeline.x, pipeline.ids, pipeline.weights)
-    checks["changed_input"] = check_output(pipeline.output, changed, rank, world, rtol, atol, "changed input")
+    changed, changed_magnitude = reference_output(config, pipeline.x, pipeline.ids, pipeline.weights, True)
+    checks["changed_input"] = check_output(
+        pipeline.output, changed, rank, world, rtol, atol, "changed input", changed_magnitude
+    )
     pipeline.x.copy_(original)
     torch.cuda.synchronize()
-    return expected, checks
+    return (expected, magnitude), checks
 
 
 def run(config, run_dir, check=False, rtol=None, atol=None):
@@ -320,12 +323,12 @@ def run(config, run_dir, check=False, rtol=None, atol=None):
         correctness = None
         if check:
             if __package__:
-                from .reference import CHECK_ATOL, CHECK_RTOL
+                from .reference import CHECK_ATOL, CHECK_RTOL, ROUNDING_SLACK
             else:
-                from reference import CHECK_ATOL, CHECK_RTOL
+                from reference import CHECK_ATOL, CHECK_RTOL, ROUNDING_SLACK
             rtol = CHECK_RTOL if rtol is None else rtol
             atol = CHECK_ATOL if atol is None else atol
-            expected, checks = check_before_timing(pipeline, config, rank, world, rtol, atol)
+            (expected, magnitude), checks = check_before_timing(pipeline, config, rank, world, rtol, atol)
         settings = config["benchmark"]
         events = make_timing_events(settings["iterations"])
         stream = torch.cuda.current_stream()
@@ -344,13 +347,14 @@ def run(config, run_dir, check=False, rtol=None, atol=None):
         if check:
             # The input is restored, so the last timed iteration must match the original reference.
             checks["after_timing"] = check_output(
-                pipeline.output, expected, rank, world, rtol, atol, "last timed iteration"
+                pipeline.output, expected, rank, world, rtol, atol, "last timed iteration", magnitude
             )
-            del expected
+            del expected, magnitude
             correctness = {
                 "status": "passed",
                 "rtol": rtol,
                 "atol": atol,
+                "rounding_slack": ROUNDING_SLACK,
                 "max_tolerance_fraction": max(item["max_tolerance_fraction"] for item in checks.values()),
                 "max_abs_error": max(item["max_abs_error"] for item in checks.values()),
                 "checks": checks,

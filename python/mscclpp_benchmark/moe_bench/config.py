@@ -4,6 +4,7 @@
 """Strict named-preset configuration for the MoE benchmark."""
 
 from copy import deepcopy
+import math
 from pathlib import Path
 
 import yaml
@@ -26,6 +27,13 @@ _FIELDS = {
     "benchmark": set(BENCHMARK_DEFAULTS),
 }
 _CATEGORIES = {"models": "model", "inputs": "input", "routing": "routing"}
+ROUTING_KINDS = ("balanced", "uniform", "hot_experts", "zipf", "zipf_skewed", "lognormal")
+_ROUTING_OPTIONS = {
+    "hot_experts": {"expert_ids", "probability_mass"},
+    "zipf": {"alpha"},
+    "zipf_skewed": {"alpha"},
+    "lognormal": {"sigma"},
+}
 
 
 def _mapping(value, path):
@@ -58,9 +66,14 @@ def _validate_section(section, value, path):
         _mapping(value, path)
         value = {**COMMUNICATION_DEFAULTS, **value}
     fields = _FIELDS[section]
-    if section == "routing" and isinstance(value, dict) and value.get("kind") == "hot_experts":
-        fields = fields | {"expert_ids", "probability_mass"}
-    _fields(value, fields, path)
+    if section == "routing":
+        _mapping(value, path)
+        if "kind" not in value:
+            raise ValueError(f"{path}: missing fields: kind")
+        _choice(value["kind"], ROUTING_KINDS, f"{path}.kind")
+        _fields(value, fields | _ROUTING_OPTIONS.get(value["kind"], set()), path, required=False)
+    else:
+        _fields(value, fields, path)
     if section == "model":
         for name in ("d_model", "num_experts", "top_k", "intermediate_size"):
             _integer(value[name], f"{path}.{name}")
@@ -79,8 +92,15 @@ def _validate_section(section, value, path):
         _choice(value["mode"], ("latency", "throughput"), f"{path}.mode")
         _choice(value["layout"], ("expert_major", "rank_major", "token_major"), f"{path}.layout")
     elif section == "routing":
-        _choice(value["kind"], ("balanced", "uniform", "hot_experts"), f"{path}.kind")
-        if value["kind"] == "hot_experts":
+        for option in ("alpha", "sigma"):
+            if option in value:
+                number = value[option]
+                if type(number) not in (float, int) or not math.isfinite(number) or number < 0:
+                    raise ValueError(f"{path}.{option} must be a finite number >= 0")
+        explicit = {"expert_ids", "probability_mass"} & set(value)
+        if value["kind"] == "hot_experts" and explicit and len(explicit) != 2:
+            raise ValueError(f"{path}: explicit hot_experts requires both expert_ids and probability_mass")
+        if value["kind"] == "hot_experts" and explicit:
             ids = value["expert_ids"]
             if not isinstance(ids, list) or not ids:
                 raise ValueError(f"{path}.expert_ids must be a nonempty list")
@@ -143,7 +163,7 @@ def validate_config(config: dict) -> None:
     if config["input"]["tokens_per_rank"] * config["model"]["top_k"] > 2**31 - 1:
         raise ValueError("input.tokens_per_rank * model.top_k must fit in int32")
     route = config["routing"]
-    if route["kind"] == "hot_experts":
+    if route["kind"] == "hot_experts" and "expert_ids" in route:
         if len(route["expert_ids"]) >= experts or any(expert >= experts for expert in route["expert_ids"]):
             raise ValueError("routing.expert_ids must be a strict subset of valid expert IDs [0, num_experts)")
 

@@ -68,6 +68,18 @@ routing:
     kind: hot_experts
     expert_ids: [0, 1]
     probability_mass: 0.8
+  # Global expert-load profiles adapted from the MegaMoE benchmark.
+  zipf:
+    kind: zipf
+    alpha: 1.2
+  zipf_skewed:
+    kind: zipf_skewed
+    alpha: 1.2
+  hot_experts:
+    kind: hot_experts
+  lognormal:
+    kind: lognormal
+    sigma: 0.85
 
 benchmark:
   warmup: 10

@@ -513,7 +513,11 @@ def distributed_reference(backend):
                             weight = weight.masked_fill(pipeline.ids[:, slot] // len(mlp.counts) != destination, 0)
                         partial.addcmul_(routes[:, slot].float(), weight[:, None])
                     expected.add_(partial.bfloat16().float() if backend == "mscclpp" else partial)
-                stats, first = compare_outputs(graph_result, expected.bfloat16())
+                magnitude = sum(
+                    routes[:, slot].float().abs() * pipeline.weights[:, slot, None]
+                    for slot in range(config["model"]["top_k"])
+                )
+                stats, first = compare_outputs(graph_result, expected.bfloat16(), magnitude=magnitude)
                 assert stats["mismatched_elements"] == stats["non_finite_elements"] == 0, (stats, first)
                 worst = max(worst, stats["max_tolerance_fraction"])
                 if previous is not None:
