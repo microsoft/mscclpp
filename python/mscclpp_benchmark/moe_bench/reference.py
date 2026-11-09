@@ -96,7 +96,8 @@ def compare_outputs(actual, expected, rtol=CHECK_RTOL, atol=CHECK_ATOL):
     mismatched = ~torch.isclose(actual, expected, rtol=rtol, atol=atol)
     error = (actual - expected).abs()[finite]
     # Fraction of the allowed error used by the worst element; above 1.0 fails.
-    used = error / (atol + rtol * expected.abs()[finite])
+    allowed = atol + rtol * expected.abs()[finite]
+    used = torch.where(allowed > 0, error / allowed, (error > 0).float() * float("inf"))
     stats = {
         "max_tolerance_fraction": used.max().item() if used.numel() else 0.0,
         "max_abs_error": error.max().item() if error.numel() else 0.0,

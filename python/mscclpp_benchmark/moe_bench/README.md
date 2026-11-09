@@ -54,9 +54,20 @@ communication backend does. No dispatch, combine, or FlashInfer kernel is used.
 Every element must satisfy `|actual - expected| <= atol + rtol * |expected|`
 (defaults `rtol=0.05`, `atol=0.01`; override with `--rtol` and `--atol`), and
 non-finite values fail. All GPUs agree on the result; a failure reports the
-first mismatching rank, token, and column. `run.json` records `correctness`:
-maximum and mean absolute error, mismatched elements, and
-`max_tolerance_fraction` (how much of its tolerance the worst element used).
+first mismatching rank, token, and column.
+
+The output is checked three times:
+
+1. **Initial input**, before warmup.
+2. **Changed input**: the input is scaled and shifted in place, checked against a
+   new reference, then restored. A fixed input could hide stale dispatch data.
+3. **Last timed iteration**, against the initial reference, so the measured
+   iterations (including graph replays) are covered.
+
+`run.json` records `correctness`, with per-check maximum and mean absolute error,
+mismatched elements, and `max_tolerance_fraction` (how much of its tolerance the
+worst element used). If a worker fails, for any reason, `run.json` records the
+lowest failing rank's exception under `failure`.
 
 ### CUDA graphs
 
@@ -228,3 +239,9 @@ GLOO_SOCKET_IFNAME=lo .venv/bin/python -m torch.distributed.run \
 It covers every mode and layout with eager, `mlp`, and `layer` graphs. Each
 `layer` graph is replayed three times with changed inputs, and every replay is
 compared against the reference. Replace `mscclpp` with `nccl` to test NCCL-EP.
+
+To check communication alone, bit-exactly and without FlashInfer, replace
+`test_compute_flashinfer.py` with `test_exact_communication.py`. Expert compute
+becomes an identity copy, each token row encodes its global ID, and routing
+weights are `1/top_k`, so every received row and combined output must match
+exactly (eager and `layer` graphs, two inputs each).

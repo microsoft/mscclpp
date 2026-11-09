@@ -507,8 +507,6 @@ def test_check_output_agrees_across_ranks(monkeypatch, failing_rank):
     from .. import reference, worker
 
     expected = torch.ones(4, 8)
-    pipeline = SimpleNamespace(x=None, ids=None, weights=None, output=expected.clone())
-    monkeypatch.setattr(reference, "reference_output", lambda *args: expected)
 
     def gather(values, value):
         for rank in range(2):
@@ -519,12 +517,13 @@ def test_check_output_agrees_across_ranks(monkeypatch, failing_rank):
 
     monkeypatch.setattr(worker.dist, "all_gather_object", gather)
     if failing_rank is None:
-        summary = worker.check_output(pipeline, {}, 0, 2, 0.05, 0.01)
-        assert summary["status"] == "passed" and summary["total_elements"] == 64
-        assert (summary["rtol"], summary["atol"], summary["mismatched_elements"]) == (0.05, 0.01, 0)
+        summary = worker.check_output(expected, expected, 0, 2, 0.05, 0.01, "initial input")
+        assert summary["total_elements"] == 64 and summary["mismatched_elements"] == 0
     else:
-        with pytest.raises(RuntimeError, match=r"1/64 elements .* rank 1: \{'token': 1, 'column': 1"):
-            worker.check_output(pipeline, {}, 0, 2, 0.05, 0.01)
+        with pytest.raises(
+            RuntimeError, match=r"\(changed input\).* 1/64 elements .* rank 1: \{'token': 1, 'column': 1"
+        ):
+            worker.check_output(expected, expected, 0, 2, 0.05, 0.01, "changed input")
 
 
 def test_check_tolerance_options():
@@ -536,3 +535,69 @@ def test_check_tolerance_options():
     for extra in (["--rtol", "0.1"], ["--check", "--atol", "-1"], ["--check", "--rtol", "nan"]):
         with pytest.raises(SystemExit):
             parse_args(base + extra)
+
+
+def test_check_before_timing_uses_changed_input_and_restores_it(monkeypatch):
+    from .. import reference, worker
+
+    x = torch.arange(6.0).reshape(2, 3)
+    original = x.clone()
+    seen = []
+
+    def step():
+        pipeline.output = x * 2
+
+    pipeline = SimpleNamespace(x=x, ids="ids", weights="weights", step=step, output=None)
+    monkeypatch.setattr(torch.cuda, "synchronize", lambda: None)
+    monkeypatch.setattr(reference, "reference_output", lambda config, x, ids, weights: x * 2)
+
+    def check(actual, expected, rank, world, rtol, atol, label):
+        seen.append((label, torch.equal(actual, expected), x.clone()))
+        return {"label": label}
+
+    monkeypatch.setattr(worker, "check_output", check)
+    expected, checks = worker.check_before_timing(pipeline, {}, 0, 1, 0.05, 0.01)
+    assert [label for label, _, _ in seen] == ["initial input", "changed input"]
+    assert all(matched for _, matched, _ in seen)
+    assert torch.equal(seen[0][2], original) and not torch.equal(seen[1][2], original)
+    assert torch.equal(x, original) and torch.equal(expected, original * 2)
+    assert set(checks) == {"initial", "changed_input"}
+
+
+def test_worker_failure_is_recorded_for_launcher(tmp_path, monkeypatch):
+    from .. import run as launcher
+    from .. import worker
+
+    write_json(tmp_path / "run.json", {"config": {}, "check_tolerance": {"rtol": 0.1, "atol": None}})
+    received = {}
+
+    def fail(config, run_dir, check, rtol, atol):
+        received.update(check=check, rtol=rtol, atol=atol)
+        raise RuntimeError("element mismatch on rank 1")
+
+    monkeypatch.setattr(worker, "run", fail)
+    monkeypatch.setenv("RANK", "1")
+    monkeypatch.setattr(sys, "argv", ["worker.py", "--run-dir", str(tmp_path), "--check"])
+    with pytest.raises(RuntimeError, match="element mismatch"):
+        worker.main()
+    assert received == {"check": True, "rtol": 0.1, "atol": None}
+    write_json(tmp_path / "worker-failure-rank3.json", {"rank": 3, "type": "ValueError", "message": "later"})
+    assert launcher.read_worker_failure(tmp_path) == {
+        "rank": 1,
+        "type": "RuntimeError",
+        "message": "element mismatch on rank 1",
+        "failed_ranks": [1, 3],
+    }
+    assert launcher.read_worker_failure(tmp_path / "missing") is None
+
+
+def test_identity_encoding_is_exact_in_bf16():
+    from .test_exact_communication import IdentityExperts, encoded_rows
+
+    ids = torch.arange(32)
+    rows = encoded_rows(ids, 64, "cpu")
+    assert torch.equal(rows.float(), (8 * ids[:, None] + torch.arange(64) % 8).float())
+    # Half-weighted BF16 partials and their sum stay exact.
+    assert torch.equal((rows.float() * 0.5).bfloat16().float() * 2, rows.float())
+    out = torch.empty_like(rows)
+    assert IdentityExperts()(rows, out) is out and torch.equal(out, rows)

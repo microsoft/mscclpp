@@ -20,7 +20,7 @@ if __package__:
     from .config import validate_config
     from .layout import LayoutMLP, assignment_counts, local_route_ids
     from .memory import estimate_tensor_bytes
-    from .results import save_results
+    from .results import save_results, write_json
     from .routing import make_routing
     from .workload import make_input
 else:
@@ -29,7 +29,7 @@ else:
     from config import validate_config
     from layout import LayoutMLP, assignment_counts, local_route_ids
     from memory import estimate_tensor_bytes
-    from results import save_results
+    from results import save_results, write_json
     from routing import make_routing
     from workload import make_input
 
@@ -246,21 +246,17 @@ def make_timing_events(iterations):
     return events
 
 
-def check_output(pipeline, config, rank, world, rtol, atol):
+def check_output(actual, expected, rank, world, rtol, atol, label):
     """Compare every rank's output element-wise; all ranks agree on the verdict."""
     if __package__:
-        from .reference import compare_outputs, reference_output
+        from .reference import compare_outputs
     else:
-        from reference import compare_outputs, reference_output
-    expected = reference_output(config, pipeline.x, pipeline.ids, pipeline.weights)
-    stats, first = compare_outputs(pipeline.output, expected, rtol, atol)
+        from reference import compare_outputs
+    stats, first = compare_outputs(actual, expected, rtol, atol)
     ranks = [None] * world
     dist.all_gather_object(ranks, {"rank": rank, **stats, "first_mismatch": first})
     total = sum(item["total_elements"] for item in ranks)
     summary = {
-        "status": "passed",
-        "rtol": rtol,
-        "atol": atol,
         "max_tolerance_fraction": max(item["max_tolerance_fraction"] for item in ranks),
         "max_abs_error": max(item["max_abs_error"] for item in ranks),
         "mean_abs_error": sum(item["mean_abs_error"] * item["total_elements"] for item in ranks) / total,
@@ -274,19 +270,45 @@ def check_output(pipeline, config, rank, world, rtol, atol):
     if summary["mismatched_elements"] or summary["non_finite_elements"]:
         failed = next(item for item in ranks if item["first_mismatch"] is not None or item["non_finite_elements"])
         raise RuntimeError(
-            f"Distributed output differs from the independent MXFP8/MXFP4 reference: "
+            f"Distributed output ({label}) differs from the independent MXFP8/MXFP4 reference: "
             f"{summary['mismatched_elements']}/{total} elements outside rtol={rtol}, atol={atol} "
             f"({summary['non_finite_elements']} non-finite); max_abs_error={summary['max_abs_error']:.4g}; "
             f"first mismatch on rank {failed['rank']}: {failed['first_mismatch']}"
         )
     if rank == 0:
         print(
-            f"Distributed MXFP8/MXFP4 reference check passed: 0/{total} elements outside "
-            f"rtol={rtol}, atol={atol}; worst element used {summary['max_tolerance_fraction']:.1%} of its "
-            f"tolerance; max_abs_error={summary['max_abs_error']:.4g}, mean_abs_error={summary['mean_abs_error']:.4g}",
+            f"Reference check passed ({label}): 0/{total} elements outside rtol={rtol}, atol={atol}; "
+            f"worst element used {summary['max_tolerance_fraction']:.1%} of its tolerance; "
+            f"max_abs_error={summary['max_abs_error']:.4g}, mean_abs_error={summary['mean_abs_error']:.4g}",
             flush=True,
         )
     return summary
+
+
+@torch.inference_mode()
+def check_before_timing(pipeline, config, rank, world, rtol, atol):
+    """Check the configured input, then a changed input, and restore the original.
+
+    A changed input catches stale dispatch buffers that a fixed input would hide.
+    Returns the original input's reference for the check after timing.
+    """
+    if __package__:
+        from .reference import reference_output
+    else:
+        from reference import reference_output
+    pipeline.step()
+    torch.cuda.synchronize()
+    expected = reference_output(config, pipeline.x, pipeline.ids, pipeline.weights)
+    checks = {"initial": check_output(pipeline.output, expected, rank, world, rtol, atol, "initial input")}
+    original = pipeline.x.clone()
+    pipeline.x.mul_(0.61).add_(0.17)
+    pipeline.step()
+    torch.cuda.synchronize()
+    changed = reference_output(config, pipeline.x, pipeline.ids, pipeline.weights)
+    checks["changed_input"] = check_output(pipeline.output, changed, rank, world, rtol, atol, "changed input")
+    pipeline.x.copy_(original)
+    torch.cuda.synchronize()
+    return expected, checks
 
 
 def run(config, run_dir, check=False, rtol=None, atol=None):
@@ -301,11 +323,9 @@ def run(config, run_dir, check=False, rtol=None, atol=None):
                 from .reference import CHECK_ATOL, CHECK_RTOL
             else:
                 from reference import CHECK_ATOL, CHECK_RTOL
-            pipeline.step()
-            torch.cuda.synchronize()
             rtol = CHECK_RTOL if rtol is None else rtol
             atol = CHECK_ATOL if atol is None else atol
-            correctness = check_output(pipeline, config, rank, world, rtol, atol)
+            expected, checks = check_before_timing(pipeline, config, rank, world, rtol, atol)
         settings = config["benchmark"]
         events = make_timing_events(settings["iterations"])
         stream = torch.cuda.current_stream()
@@ -321,6 +341,20 @@ def run(config, run_dir, check=False, rtol=None, atol=None):
             pipeline.step(boundaries)
             stream.synchronize()
             local_latencies.append(pipeline.read_latencies(boundaries))
+        if check:
+            # The input is restored, so the last timed iteration must match the original reference.
+            checks["after_timing"] = check_output(
+                pipeline.output, expected, rank, world, rtol, atol, "last timed iteration"
+            )
+            del expected
+            correctness = {
+                "status": "passed",
+                "rtol": rtol,
+                "atol": atol,
+                "max_tolerance_fraction": max(item["max_tolerance_fraction"] for item in checks.values()),
+                "max_abs_error": max(item["max_abs_error"] for item in checks.values()),
+                "checks": checks,
+            }
         latencies = [None] * world if rank == 0 else None
         dist.gather_object(local_latencies, latencies, dst=0)
         devices = [None] * world
@@ -380,7 +414,16 @@ def main():
     with (args.run_dir / "run.json").open() as stream:
         document = json.load(stream)
     tolerance = document.get("check_tolerance") or {}
-    run(document["config"], args.run_dir, args.check, tolerance.get("rtol"), tolerance.get("atol"))
+    try:
+        run(document["config"], args.run_dir, args.check, tolerance.get("rtol"), tolerance.get("atol"))
+    except Exception as error:
+        # The launcher only sees exit codes; leave the reason for run.json.
+        rank = int(os.environ.get("RANK", "0"))
+        write_json(
+            args.run_dir / f"worker-failure-rank{rank}.json",
+            {"rank": rank, "type": type(error).__name__, "message": str(error)},
+        )
+        raise
 
 
 if __name__ == "__main__":

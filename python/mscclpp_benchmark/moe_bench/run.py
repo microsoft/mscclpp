@@ -73,6 +73,21 @@ def parse_args(argv=None):
     return args
 
 
+def read_worker_failure(run_dir):
+    """Return the lowest failing rank's recorded exception, if any worker left one."""
+    failures = []
+    for path in run_dir.glob("worker-failure-rank*.json"):
+        try:
+            with path.open() as stream:
+                failures.append(json.load(stream))
+        except (OSError, ValueError):
+            continue
+    if not failures:
+        return None
+    first = min(failures, key=lambda item: item["rank"])
+    return {**first, "failed_ranks": sorted(item["rank"] for item in failures)}
+
+
 def main():
     args = parse_args()
 
@@ -188,6 +203,7 @@ def main():
         flush=True,
     )
     returncode = None
+    worker_failure = None
     try:
         if not nodes:
             if __package__:
@@ -201,6 +217,7 @@ def main():
         else:
             returncode = subprocess.run(command, check=False, env=worker_env).returncode
         if returncode != 0:
+            worker_failure = read_worker_failure(run_dir)
             raise SystemExit(returncode if returncode > 0 else 128 - returncode)
         for filename in ("summary.csv", "iterations.csv"):
             if not (run_dir / filename).is_file():
@@ -214,7 +231,7 @@ def main():
         run["finished_at"] = datetime.now(timezone.utc).isoformat()
         if returncode != 0:
             error = sys.exc_info()[1]
-            run["failure"] = {
+            run["failure"] = worker_failure or {
                 "type": type(error).__name__ if error is not None else "WorkerFailure",
                 "message": str(error) if error is not None else f"Worker exit code {returncode}",
             }
