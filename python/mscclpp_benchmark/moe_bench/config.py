@@ -75,7 +75,7 @@ def _validate_section(section, value, path):
         _integer(value["num_gpus"], f"{path}.num_gpus")
         _choice(value["communication_backend"], ("mscclpp", "nccl"), f"{path}.communication_backend")
         _choice(value["compute_backend"], ("cutlass_flashinfer",), f"{path}.compute_backend")
-        _choice(value["cuda_graph"], (False, "mlp"), f"{path}.cuda_graph")
+        _choice(value["cuda_graph"], (False, "mlp", "layer"), f"{path}.cuda_graph")
         _choice(value["mode"], ("latency", "throughput"), f"{path}.mode")
         _choice(value["layout"], ("expert_major", "rank_major", "token_major"), f"{path}.layout")
     elif section == "routing":
@@ -116,6 +116,8 @@ def validate_config(config: dict) -> None:
         raise ValueError(
             f"{communication} mode={mode} does not support layout={layout}; supported layouts: {supported}"
         )
+    if communication == "nccl" and mode == "throughput" and environment["cuda_graph"] == "layer":
+        raise ValueError("NCCL-EP throughput does not support cuda_graph=layer; use latency mode or cuda_graph=mlp")
     if communication == "nccl" and mode == "throughput" and config["input"]["tokens_per_rank"] % 2:
         raise ValueError("NCCL-EP throughput benchmark requires even tokens_per_rank for native S2D transfer alignment")
     if communication == "mscclpp":

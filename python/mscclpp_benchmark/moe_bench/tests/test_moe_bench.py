@@ -11,6 +11,7 @@ import shlex
 import subprocess
 import sys
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 import torch
@@ -87,6 +88,64 @@ def test_invalid_phase_sample(field):
 def test_zero_work_phase():
     rows = summarize([[timing(100, mlp=0)]], 10)
     assert rows[2]["mean_latency_us"] == 0
+
+
+class FakeEvent:
+    def __init__(self, time):
+        self.time = time
+
+    def elapsed_time(self, end):
+        return end.time - self.time
+
+
+def layer_pipeline(layer_graph):
+    from ..worker import Pipeline
+
+    pipeline = Pipeline.__new__(Pipeline)
+    pipeline.backend = SimpleNamespace(dispatch=Mock(), combine=Mock())
+    pipeline.mlp = Mock()
+    pipeline.mlp_graph = None
+    pipeline.layer_graph = layer_graph
+    pipeline.phase_events = [FakeEvent(time) for time in (1, 2, 4, 7)]
+    pipeline.output, pipeline.expert_output = "output", "expert_output"
+    return pipeline
+
+
+def test_layer_graph_step_replays_without_eager_collectives():
+    graph = SimpleNamespace(replay=Mock())
+    pipeline = layer_pipeline(graph)
+    outer = [FakeEvent(time) for time in (0, 10, 20, 30)]
+    for _ in range(3):
+        assert pipeline.step(outer) == "output"
+    assert graph.replay.call_count == 3
+    pipeline.backend.dispatch.assert_not_called()
+    pipeline.backend.combine.assert_not_called()
+    pipeline.mlp.assert_not_called()
+    # Phases come from the events captured inside the graph, not the eager events.
+    assert pipeline.read_latencies(outer) == {
+        "dispatch_us": 1000,
+        "mlp_us": 2000,
+        "combine_us": 3000,
+        "total_us": 6000,
+    }
+
+
+def test_eager_step_uses_iteration_events(monkeypatch):
+    pipeline = layer_pipeline(None)
+    pipeline.backend.dispatch.return_value = ("tokens", None)
+    stream = object()
+    monkeypatch.setattr(torch.cuda, "current_stream", lambda: stream)
+    recorded = []
+    events = [
+        SimpleNamespace(record=lambda target, index=index: recorded.append((index, target))) for index in range(4)
+    ]
+    assert pipeline.step(events) == "output"
+    assert recorded == [(index, stream) for index in range(4)]
+    pipeline.backend.dispatch.assert_called_once_with()
+    pipeline.mlp.assert_called_once_with("tokens", "expert_output")
+    pipeline.backend.combine.assert_called_once_with()
+    timed = [FakeEvent(time) for time in (0, 5, 6, 9)]
+    assert pipeline.read_latencies(timed)["total_us"] == 9000
 
 
 def test_timing_events_materialized_before_measurement(monkeypatch):
@@ -283,6 +342,15 @@ def test_cli_rejects_invalid_environment_options(flag, value):
         (["--mode", "throughput", "--layout", "token_major"], {"mode": "throughput", "layout": "token_major"}),
         (["--graph", "none"], {"cuda_graph": False}),
         (["--graph", "mlp"], {"cuda_graph": "mlp"}),
+        (["--graph", "layer"], {"cuda_graph": "layer"}),
+        (
+            ["--mode", "throughput", "--layout", "rank_major", "--graph", "layer"],
+            {"mode": "throughput", "layout": "rank_major", "cuda_graph": "layer"},
+        ),
+        (
+            ["--backend", "nccl", "--graph", "layer"],
+            {"communication_backend": "nccl", "cuda_graph": "layer"},
+        ),
         (
             ["--backend", "nccl", "--graph", "mlp"],
             {"communication_backend": "nccl", "cuda_graph": "mlp"},

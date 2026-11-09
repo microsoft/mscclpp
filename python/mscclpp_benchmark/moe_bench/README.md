@@ -45,6 +45,18 @@ CUDA-event timings exclude warmup but include launch gaps, waits for other GPUs,
 and any layout conversion or quantization. Global total is the maximum GPU
 duration per iteration, not the sum of GPU times.
 
+### CUDA graphs
+
+`--graph layer` captures dispatch, expert compute, and combine as one CUDA
+graph after an eager warmup, then replays it for `--check`, warmup, and every
+timed iteration. Phase events are recorded inside the graph, so results keep
+the dispatch, compute, combine, and total breakdown; graph launch overhead is
+outside the measured total. `run.json` records the scope as
+`cuda_graph_scope: dispatch_mlp_combine`. NCCL-EP supports `layer` only in
+latency mode.
+
+`--graph mlp` captures only expert compute; dispatch and combine stay eager.
+
 ## Configuration
 
 Choose presets from [configs.yaml](configs.yaml):
@@ -56,7 +68,7 @@ Choose presets from [configs.yaml](configs.yaml):
 | `--routing` | `balanced`, `uniform`, `hot_pair` |
 | `--backend` | `mscclpp` (default), `nccl` |
 | `--mode` | `latency` (default), `throughput` |
-| `--graph` | `none` (default), `mlp` (capture computation only) |
+| `--graph` | `none` (default), `mlp` (expert compute only), `layer` (whole layer) |
 
 Optional flags override YAML settings. Use `--config` for another YAML file and
 `--help` for the full option list. Defaults are 10 warmup iterations, 100 measured
@@ -197,3 +209,7 @@ GLOO_SOCKET_IFNAME=lo .venv/bin/python -m torch.distributed.run \
   --standalone --local-addr=127.0.0.1 --nnodes=1 --nproc-per-node=2 \
   python/mscclpp_benchmark/moe_bench/tests/test_compute_flashinfer.py mscclpp
 ```
+
+It covers every mode and layout with eager, `mlp`, and `layer` graphs. Each
+`layer` graph is replayed three times with changed inputs, and every replay is
+compared against the reference. Replace `mscclpp` with `nccl` to test NCCL-EP.

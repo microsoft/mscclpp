@@ -40,7 +40,10 @@ def parse_args(argv=None):
     parser.add_argument("--activation-dtype", choices=("mxfp8",), help="Internal compute activation format")
     parser.add_argument("--weight-dtype", choices=("mxfp4",), help="Internal compute weight format")
     parser.add_argument(
-        "--graph", choices=("none", "mlp"), help="Override environment.cuda_graph (none disables graphs)"
+        "--graph",
+        choices=("none", "mlp", "layer"),
+        help="Override environment.cuda_graph: none, mlp (expert compute only), or layer "
+        "(dispatch, expert compute, and combine in one graph)",
     )
     parser.add_argument("--routing", required=True)
     parser.add_argument("--warmup", type=int)

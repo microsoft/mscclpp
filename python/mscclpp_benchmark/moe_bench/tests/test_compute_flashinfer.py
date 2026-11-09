@@ -402,21 +402,27 @@ def distributed_reference(backend):
         layout_reference(device)
         multitile_reference(rank, device)
         combinations = [(mode, layout) for mode, layouts in SUPPORTED_LAYOUTS[backend].items() for layout in layouts]
+        pipelines = comparisons = 0
         for (mode, layout), graph, routing in itertools.product(
             combinations,
-            (False, "mlp"),
+            (False, "mlp", "layer"),
             (
                 {"kind": "balanced"},
                 {"kind": "uniform"},
                 {"kind": "hot_experts", "expert_ids": [0, 1], "probability_mass": 0.999},
             ),
         ):
+            if backend == "nccl" and mode == "throughput" and graph == "layer":
+                continue
             config = mx_config()
             config["environment"].update(communication_backend=backend, cuda_graph=graph, mode=mode, layout=layout)
             if backend == "nccl" and mode == "throughput":
                 config["input"]["tokens_per_rank"] = 4
             config["routing"] = routing
             pipeline = Pipeline(config, rank, device)
+            pipelines += 1
+            assert (pipeline.mlp_graph is not None) == (graph == "mlp")
+            assert (pipeline.layer_graph is not None) == (graph == "layer")
             mlp = getattr(pipeline.mlp, "mlp", pipeline.mlp)
             if rank == 0:
                 print(
@@ -431,10 +437,16 @@ def distributed_reference(backend):
                 for expert in range(config["model"]["num_experts"])
             ]
             previous = None
-            for revision in range(2):
+            # Full-layer graphs replay repeatedly; each replay must consume new input.
+            for revision in range(3 if graph == "layer" else 2):
                 pipeline.step()
                 torch.cuda.synchronize()
                 graph_result = pipeline.output.clone()
+                if graph == "layer":
+                    latencies = pipeline.read_latencies(None)
+                    phases = [latencies[key] for key in ("dispatch_us", "mlp_us", "combine_us")]
+                    assert all(value > 0 for value in phases)
+                    assert sum(phases) == pytest.approx(latencies["total_us"], abs=0.01)
                 for expert, count in enumerate(pipeline.counts):
                     if count:
                         expected = expert_output(pipeline.recv[expert, :count], decoded[expert])
@@ -468,6 +480,7 @@ def distributed_reference(backend):
                 if previous is not None:
                     assert not torch.equal(previous, graph_result)
                 previous = graph_result
+                comparisons += 1
                 pipeline.x.mul_(0.61).add_(0.17)
             if routing["kind"] == "hot_experts":
                 assert all(count == 0 for count in pipeline.global_counts[2:])
@@ -477,8 +490,7 @@ def distributed_reference(backend):
             pipeline = None
         if rank == 0:
             print(
-                f"MX distributed {backend}: {6 * len(combinations)} pipelines, "
-                f"{12 * len(combinations)} changed-input comparisons passed",
+                f"MX distributed {backend}: {pipelines} pipelines, {comparisons} changed-input comparisons passed",
                 flush=True,
             )
     finally:

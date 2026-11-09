@@ -192,6 +192,18 @@ def test_multinode_latency_world_size(num_gpus):
     assert config["environment"]["num_gpus"] == num_gpus
 
 
+@pytest.mark.parametrize("backend", ["mscclpp", "nccl"])
+@pytest.mark.parametrize("mode,layout", [("latency", "expert_major"), ("throughput", "token_major")])
+def test_layer_graph_support(backend, mode, layout):
+    config = _config(environment_overrides={"communication_backend": backend, "mode": mode, "layout": layout})
+    config["environment"]["cuda_graph"] = "layer"
+    if backend == "nccl" and mode == "throughput":
+        with pytest.raises(ValueError, match="cuda_graph=layer"):
+            validate_config(config)
+    else:
+        validate_config(config)
+
+
 @pytest.mark.parametrize("num_gpus", [2, 4, 8, 12, 16, 24])
 def test_multinode_throughput_world_size(num_gpus):
     document = yaml.safe_load(PRESETS.read_text())

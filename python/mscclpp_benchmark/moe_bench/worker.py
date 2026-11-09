@@ -43,6 +43,9 @@ def initialize():
     if torch.cuda.device_count() < local_world:
         raise ValueError("Local worker count exceeds visible GPUs")
     torch.cuda.set_device(local_rank)
+    # MSCCL++ binds each communicator to one stream, so setup, eager steps, and
+    # full-layer graph capture share this non-default stream.
+    torch.cuda.set_stream(torch.cuda.Stream())
     dist.init_process_group("gloo", timeout=timedelta(minutes=5))
     torch.set_num_threads(1)
     torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = False
@@ -95,6 +98,7 @@ class Pipeline:
         dist.all_gather_object(errors, error)
         if any(errors):
             raise RuntimeError(f"Runtime/compute initialization failed before communication: {errors}")
+        self.mlp_graph = self.layer_graph = self.phase_events = None
         with ExitStack() as resources:
             self.backend = create_backend(
                 config, rank, self.x, self.ids, self.weights, self.recv, self.expert_output, self.output
@@ -152,6 +156,19 @@ class Pipeline:
             with torch.cuda.graph(self.mlp_graph, stream=capture_stream):
                 self.mlp(self.native_recv, self.expert_output)
             torch.cuda.synchronize()
+        elif graph_mode == "layer":
+            stream = torch.cuda.current_stream()
+            # External events stay timing-capable when recorded inside the graph.
+            self.phase_events = [torch.cuda.Event(enable_timing=True, external=True) for _ in range(4)]
+            for event in self.phase_events:
+                event.record(stream)
+            torch.cuda.synchronize()
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph, stream=stream):
+                tokens = self._layer(self.phase_events)
+            if self._dispatch_signature(tokens) != self.native_signature:
+                raise RuntimeError("Captured dispatch buffers differ from the eager native buffers")
+            self.layer_graph = graph
 
     def _dispatch_signature(self, tokens):
         signature = (tokens.data_ptr(), tokens.shape, tokens.stride())
@@ -159,8 +176,7 @@ class Pipeline:
             signature += (self.backend.route_ids.data_ptr(), self.backend.route_weights.data_ptr())
         return signature
 
-    @torch.inference_mode()
-    def step(self, events=None):
+    def _layer(self, events=None):
         stream = torch.cuda.current_stream()
         if events is not None:
             events[0].record(stream)
@@ -178,10 +194,31 @@ class Pipeline:
         self.backend.combine()
         if events is not None:
             events[3].record(stream)
+        return tokens
+
+    @torch.inference_mode()
+    def step(self, events=None):
+        """Run one layer; with a layer graph, phase events are captured inside it."""
+        if self.layer_graph is None:
+            self._layer(events)
+        else:
+            self.layer_graph.replay()
         return self.output
 
+    def read_latencies(self, events):
+        """Return one iteration's phase latencies after its stream has completed."""
+        start, dispatched, computed, end = events if self.layer_graph is None else self.phase_events
+        return {
+            "dispatch_us": start.elapsed_time(dispatched) * 1000,
+            "mlp_us": dispatched.elapsed_time(computed) * 1000,
+            "combine_us": computed.elapsed_time(end) * 1000,
+            "total_us": start.elapsed_time(end) * 1000,
+        }
+
     def close(self):
-        self.mlp_graph = None
+        if getattr(self, "layer_graph", None) is not None:
+            torch.cuda.synchronize()
+        self.mlp_graph = self.layer_graph = self.phase_events = None
         self.native_recv = None
         self.backend.close()
 
@@ -231,25 +268,19 @@ def run(config, run_dir, check=False):
                 print("Distributed MXFP8/MXFP4 reference check passed", flush=True)
         settings = config["benchmark"]
         events = make_timing_events(settings["iterations"])
+        stream = torch.cuda.current_stream()
         for _ in range(settings["warmup"]):
             pipeline.step(events[0])
-            events[0][-1].synchronize()
+            stream.synchronize()
             dist.barrier()
 
+        local_latencies = []
         for boundaries in events:
             # Rank alignment and completion synchronization are outside events.
             dist.barrier()
             pipeline.step(boundaries)
-            boundaries[-1].synchronize()
-        local_latencies = [
-            {
-                "dispatch_us": start.elapsed_time(dispatched) * 1000,
-                "mlp_us": dispatched.elapsed_time(computed) * 1000,
-                "combine_us": computed.elapsed_time(end) * 1000,
-                "total_us": start.elapsed_time(end) * 1000,
-            }
-            for start, dispatched, computed, end in events
-        ]
+            stream.synchronize()
+            local_latencies.append(pipeline.read_latencies(boundaries))
         latencies = [None] * world if rank == 0 else None
         dist.gather_object(local_latencies, latencies, dst=0)
         devices = [None] * world
@@ -274,7 +305,11 @@ def run(config, run_dir, check=False):
                 "reference_check": "passed" if check else "not_requested",
                 **pipeline.backend.metadata,
                 **pipeline.mlp.metadata,
-                "cuda_graph_scope": "mlp_only" if pipeline.mlp_graph is not None else "none",
+                "cuda_graph_scope": (
+                    "dispatch_mlp_combine"
+                    if pipeline.layer_graph is not None
+                    else "mlp_only" if pipeline.mlp_graph is not None else "none"
+                ),
                 "bf16_reduced_precision_reduction": False,
                 "tensor_memory_estimates": pipeline.memory_estimates,
                 "environment": {

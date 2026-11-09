@@ -387,8 +387,12 @@ def test_multinode_worker_uses_local_device_and_global_rank(monkeypatch):
     monkeypatch.setattr(worker.dist, "get_world_size", lambda: 8)
     monkeypatch.setattr(torch, "set_num_threads", Mock())
     monkeypatch.setattr(torch.backends.cuda.matmul, "allow_bf16_reduced_precision_reduction", False)
+    monkeypatch.setattr(torch.cuda, "Stream", Mock(return_value="stream"))
+    set_stream = Mock()
+    monkeypatch.setattr(torch.cuda, "set_stream", set_stream)
     assert worker.initialize() == (5, 8, torch.device("cuda", 1))
     set_device.assert_called_once_with(1)
+    set_stream.assert_called_once_with("stream")
     assert initialize.call_args.args == ("gloo",)
 
 

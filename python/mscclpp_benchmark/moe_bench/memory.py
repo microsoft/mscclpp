@@ -20,7 +20,7 @@ def estimate_tensor_bytes(config, counts):
         # Native receive/combine, FP32 reduction, gather/weighted temporaries,
         # IDs/weights, per-expert sort indices and graph-private allocations.
         adapter_bytes = 24 * rows * hidden + 48 * rows * model["top_k"] * local_experts
-        if environment["cuda_graph"] == "mlp":
+        if environment["cuda_graph"] in ("mlp", "layer"):
             adapter_bytes *= 2
         dispatch_and_output += adapter_bytes
         if environment["communication_backend"] == "mscclpp" and mode == "throughput":
@@ -39,7 +39,7 @@ def estimate_tensor_bytes(config, counts):
     workspace += 2 * (rows * hidden + rows * hidden // 32)  # quant outputs + stable copies
     workspace += padded * intermediate + padded * intermediate // 32
     workspace += 32 * (padded + rows + local_experts)  # schedules, indices, unit weights
-    if environment["cuda_graph"] == "mlp":
+    if environment["cuda_graph"] in ("mlp", "layer"):
         workspace *= 2  # graph-private quant/elementwise allocations and warmup pool
     # Reserve compiler/kernel and allocator overhead; native comm remains extra.
     workspace += 64 * 1024**2
