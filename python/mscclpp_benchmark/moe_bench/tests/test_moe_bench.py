@@ -640,3 +640,75 @@ def test_node_locality_topology_is_filled_and_verified(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCAL_WORLD_SIZE", "8")
     with pytest.raises(ValueError, match="gpus_per_node=4 does not match the 8 GPUs launched per node"):
         worker.Pipeline(config, 0, "cpu")
+
+
+def test_traffic_counts_routes_tokens_locality_and_nodes():
+    from ..traffic import send_counts, traffic_summary
+
+    # 4 GPUs, 2 per node, 2 experts per GPU (experts 2r and 2r+1 live on GPU r).
+    sources = [
+        torch.tensor([[0, 1], [2, 4]]),  # GPU 0: token 0 hits GPU 0 twice (one copy), token 1 hits GPUs 1 and 2
+        torch.tensor([[6, 7], [6, 0]]),  # GPU 1: everything goes to GPU 3 or GPU 0
+        torch.tensor([[4, 5], [4, 5]]),  # GPU 2: stays local
+        torch.tensor([[0, 2], [6, 3]]),  # GPU 3
+    ]
+    sends = [send_counts(ids, 2, 4) for ids in sources]
+    assert sends[0] == ([2, 1, 1, 0], [1, 1, 1, 0])
+    traffic = traffic_summary([routes for routes, _ in sends], [tokens for _, tokens in sends], 2)
+    by_rank = traffic["per_rank"]
+    assert by_rank[0]["sent_tokens"] == 3 and by_rank[0]["sent_remote_tokens"] == 2
+    assert by_rank[0]["sent_cross_node_tokens"] == 1
+    assert by_rank[1]["sent_routes"] == 4 and by_rank[1]["sent_cross_node_routes"] == 3
+    assert by_rank[2]["sent_remote_tokens"] == 0
+    assert by_rank[0]["received_routes"] == 4 and by_rank[0]["received_cross_node_routes"] == 1
+    assert by_rank[3]["received_tokens"] == 3 and by_rank[3]["received_cross_node_tokens"] == 2
+    assert sum(entry["received_routes"] for entry in by_rank) == 16
+    assert traffic["same_gpu_route_fraction"] == 7 / 16
+    assert traffic["same_node_route_fraction"] == 9 / 16  # GPUs keep 3 + 1 + 4 + 1 routes in-node
+    assert traffic["idle_receivers"] == 0 and traffic["busiest_receiver"] in (0, 2)
+    idle = traffic_summary([[2, 0], [2, 0]], [[1, 0], [1, 0]], 2)
+    assert idle["idle_receivers"] == 1 and idle["received_routes_max_over_mean"] == 2.0
+
+
+def test_traffic_is_saved_next_to_timings(tmp_path, capsys):
+    from ..traffic import traffic_summary
+
+    config = tiny_config()
+    write_json(tmp_path / "run.json", {"metadata": {}, "presets": {"model": "tiny"}, "status": "running"})
+    traffic = traffic_summary([[3, 1], [2, 0]], [[2, 1], [2, 0]], 1)
+    save_results(
+        tmp_path,
+        [[timing(100)], [timing(120)]],
+        config,
+        {},
+        {"assignments_per_expert": [5, 1], "rank_max_over_mean": 1.67},
+        traffic,
+    )
+    with (tmp_path / "summary.csv").open() as stream:
+        rows = list(csv.DictReader(stream))
+    assert rows[0]["scope"] == "global" and rows[0]["received_routes"] == ""
+    rank1 = [row for row in rows if row["rank"] == "1"]
+    assert {row["phase"] for row in rank1} == {"dispatch", "mlp", "combine", "total"}
+    assert all(row["sent_tokens"] == "2" and row["received_routes"] == "1" for row in rank1)
+    assert all(row["sent_cross_node_tokens"] == "2" for row in rank1)
+    assert json.loads((tmp_path / "run.json").read_text())["traffic"]["per_rank"][1]["received_tokens"] == 1
+    output = capsys.readouterr().out
+    assert "Traffic per GPU (1 GPUs/node" in output and "idle receivers: 0" in output
+
+
+def test_locality_routing_matches_reported_traffic():
+    from ..routing import make_routing
+    from ..traffic import send_counts, traffic_summary
+
+    config = load_config(
+        Path(__file__).resolve().parents[1] / "configs.yaml",
+        num_gpus=8,
+        model="large",
+        input_name="prefill",
+        routing="intra_node_heavy",
+    )
+    config["routing"]["gpus_per_node"] = 4
+    sends = [send_counts(make_routing(config, rank)[0], 16, 8) for rank in range(8)]
+    traffic = traffic_summary([routes for routes, _ in sends], [tokens for _, tokens in sends], 4)
+    assert 0.88 < traffic["same_node_route_fraction"] < 0.92
+    assert all(entry["sent_routes"] == 1024 * 8 for entry in traffic["per_rank"])

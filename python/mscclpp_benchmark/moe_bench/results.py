@@ -10,6 +10,15 @@ import statistics
 from pathlib import Path
 
 PHASES = ("dispatch", "mlp", "combine", "total")
+TRAFFIC_COLUMNS = (
+    "sent_tokens",
+    "sent_remote_tokens",
+    "sent_cross_node_tokens",
+    "received_tokens",
+    "received_remote_tokens",
+    "received_cross_node_tokens",
+    "received_routes",
+)
 
 
 def write_json(path, data):
@@ -57,9 +66,14 @@ def summarize(latencies, tokens_per_rank):
     return rows
 
 
-def save_results(run_dir, latencies, config, metadata, expert_load):
+def save_results(run_dir, latencies, config, metadata, expert_load, traffic=None):
     run_dir = Path(run_dir)
     rows = summarize(latencies, config["input"]["tokens_per_rank"])
+    if traffic is not None:
+        # Put each GPU's realized traffic next to its timings.
+        for row in rows:
+            entry = traffic["per_rank"][row["rank"]] if row["scope"] == "rank" else {}
+            row.update({column: entry.get(column, "") for column in TRAFFIC_COLUMNS})
     with (run_dir / "summary.csv").open("w", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
         writer.writeheader()
@@ -73,6 +87,8 @@ def save_results(run_dir, latencies, config, metadata, expert_load):
         run = json.load(stream)
     run["metadata"].update(metadata)
     run["expert_load"] = expert_load
+    if traffic is not None:
+        run["traffic"] = traffic
     run["schema_version"] = 2
     run["measurement"] = {
         "latency": "CUDA event interval from dispatch through combine, including host launch gaps",
@@ -112,4 +128,27 @@ def save_results(run_dir, latencies, config, metadata, expert_load):
     counts = expert_load["assignments_per_expert"]
     print(f"Expert load (min/max): {min(counts)} / {max(counts)} assignments")
     print(f"GPU load imbalance: {expert_load['rank_max_over_mean']:.2f}x max/mean")
+    if traffic is not None:
+        print_traffic(traffic)
     print(f"Saved: {run_dir}", flush=True)
+
+
+def print_traffic(traffic):
+    """Print realized per-GPU traffic; tokens are per-destination copies, routes expert rows."""
+    print(f"\nTraffic per GPU ({traffic['gpus_per_node']} GPUs/node; tokens = copies per destination GPU)")
+    print(
+        f"{'Rank':>4} {'Sent tokens':>12} {'remote':>8} {'cross-node':>10} {'Recv tokens':>12} {'remote':>8} {'cross-node':>10} {'Recv routes':>12}"
+    )
+    for entry in traffic["per_rank"]:
+        print(
+            f"{entry['rank']:>4} {entry['sent_tokens']:>12} {entry['sent_remote_tokens']:>8} "
+            f"{entry['sent_cross_node_tokens']:>10} {entry['received_tokens']:>12} "
+            f"{entry['received_remote_tokens']:>8} {entry['received_cross_node_tokens']:>10} "
+            f"{entry['received_routes']:>12}"
+        )
+    print(
+        f"Routes on the sending GPU: {traffic['same_gpu_route_fraction']:.1%}; within its node: "
+        f"{traffic['same_node_route_fraction']:.1%}; idle receivers: {traffic['idle_receivers']}; "
+        f"busiest receiver: rank {traffic['busiest_receiver']} "
+        f"({traffic['received_routes_max_over_mean']:.2f}x mean routes)"
+    )

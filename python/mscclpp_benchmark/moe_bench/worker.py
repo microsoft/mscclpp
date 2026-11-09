@@ -22,6 +22,7 @@ if __package__:
     from .memory import estimate_tensor_bytes
     from .results import save_results, write_json
     from .routing import make_routing
+    from .traffic import send_counts, traffic_summary
     from .workload import make_input
 else:
     from communication_backends import create_backend, preflight_backend
@@ -31,6 +32,7 @@ else:
     from memory import estimate_tensor_bytes
     from results import save_results, write_json
     from routing import make_routing
+    from traffic import send_counts, traffic_summary
     from workload import make_input
 
 
@@ -76,6 +78,13 @@ class Pipeline:
         self.global_counts = counts.tolist()
         local_experts = model["num_experts"] // world
         self.counts = self.global_counts[rank * local_experts : (rank + 1) * local_experts]
+        sends = [None] * world
+        dist.all_gather_object(sends, send_counts(ids, local_experts, world))
+        self.traffic = traffic_summary(
+            [routes for routes, _ in sends],
+            [tokens for _, tokens in sends],
+            int(os.environ.get("LOCAL_WORLD_SIZE", world)),
+        )
         estimate = estimate_tensor_bytes(config, self.counts)
         free, _ = torch.cuda.mem_get_info(device)
         budgets = [None] * world
@@ -407,7 +416,7 @@ def run(config, run_dir, check=False, rtol=None, atol=None):
                     or key.startswith("NCCL_")
                 },
             }
-            save_results(run_dir, latencies, config, metadata, pipeline.load_statistics())
+            save_results(run_dir, latencies, config, metadata, pipeline.load_statistics(), pipeline.traffic)
         dist.barrier()
     finally:
         try:

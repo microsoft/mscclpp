@@ -36,14 +36,32 @@ Each run creates `benchmark_results/<run-id>/`:
 
 | File | Contents |
 |---|---|
-| `run.json` | Settings, hardware/software details, and completion status |
-| `summary.csv` | Mean/P50/P95 latency and global token throughput |
+| `run.json` | Settings, hardware/software details, completion status, expert load, and traffic |
+| `summary.csv` | Mean/P50/P95 latency, global token throughput, and each GPU's traffic |
 | `iterations.csv` | Per-GPU dispatch, compute, combine, and total timings |
 
 Use `--output-dir` to change the location. Analyze only completed runs.
 CUDA-event timings exclude warmup but include launch gaps, waits for other GPUs,
 and any layout conversion or quantization. Global total is the maximum GPU
 duration per iteration, not the sum of GPU times.
+
+### Traffic
+
+Each run reports the realized send/receive distribution next to the timings:
+a per-GPU table after the latency table, the same per-GPU columns on each
+GPU's `summary.csv` rows, and `run.json` `traffic` with the full
+`[source][destination]` matrices.
+
+- **Tokens** count token copies per destination GPU: a token routed to two
+  experts on one GPU counts once there.
+- **Routes** count token-to-expert assignments (expert-compute rows).
+- **Remote** excludes the GPU itself; **cross-node** excludes the GPU's node,
+  using the launched GPUs per node.
+
+The summary line gives the share of routes that stay on the sending GPU and
+within its node, idle receivers, and the busiest receiver. Routing is fixed, so
+these counts are exact for every timed iteration; received routes match the
+native dispatch counts the worker verifies at startup.
 
 ### Correctness check
 
