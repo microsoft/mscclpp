@@ -45,7 +45,7 @@ LatencyRuntimeContext::LatencyRuntimeContext(mscclpp::Communicator& communicator
   EP_HOST_ASSERT(numRanks_ % numRanksPerIpcDomain_ == 0);
   MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId_));
 
-#if defined(MSCCLPP_USE_GPUNETIO)
+#if defined(MSCCLPP_USE_CUDA) && defined(USE_IBVERBS)
   isHybrid_ = numRanksPerIpcDomain_ < numRanks_ && outputLayout == DispatchLayout::RANK_MAJOR;
 #endif
   if (!isSupportedHidden(hidden)) {
@@ -159,8 +159,7 @@ void LatencyRuntimeContext::initialize() {
         auto semaphore =
             std::make_shared<mscclpp::PortDevice2DeviceSemaphore>(communicator_, ibConnectionFutures[r][q].get());
         portChannels_.emplace_back(semaphore, peerBufferMemories_[r], ibLocalMemory_);
-        portChannelHandles[static_cast<size_t>(r) * qpsPerPeer_ + q] =
-            portChannels_.back().deviceHandle<mscclpp::PortChannelBackend::Device>();
+        portChannelHandles[static_cast<size_t>(r) * qpsPerPeer_ + q] = portChannels_.back().deviceHandle();
       }
     }
   }

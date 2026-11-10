@@ -6,7 +6,7 @@
 namespace mscclpp {
 namespace ep {
 
-#if defined(MSCCLPP_USE_GPUNETIO) && MSCCLPP_BULK_AVAILABLE
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS) && MSCCLPP_BULK_AVAILABLE
 
 template <CombineMode Mode, int Hidden, DispatchDataType DispatchType, bool Gateway>
 MSCCLPP_DEVICE_INLINE void aggregateReduceToken(void* destination, const void* expertOutput, const int64_t* topkIndices,
@@ -139,8 +139,7 @@ MSCCLPP_DEVICE_INLINE void aggregateControl(const DeviceContext* context, const 
   const auto& hybridCtx = context->hybridCtx_;
   auto* network = transport.portChannels_;
   const int queueIdx = static_cast<int>(threadIdx.x) / WARP_SIZE - configCellDiv(nRanks, WARP_SIZE);
-  __shared__ mscclpp::GpuNetIoWqeSlot wqeSlots[MaxQpsPerPeer];
-  constexpr auto kExclusive = mscclpp::PortChannelSharingMode::Exclusive;
+  constexpr auto kExclusive = mscclpp::PortChannelDeviceHandle::Concurrency::Exclusive;
   if (peerIdx < nRanks && transport.isNvlinkPeer(peerIdx)) {
     if (!transport.isSelf(peerIdx)) {
       transport.baseMemoryChannels_[peerIdx].signal();
@@ -156,7 +155,6 @@ MSCCLPP_DEVICE_INLINE void aggregateControl(const DeviceContext* context, const 
     constexpr size_t TokenBytes = static_cast<size_t>(Hidden) * sizeof(WireElement);
     const int gatewayRank = hybridCtx.gatewayRank_;
     auto handle = network->channel(gatewayRank, queueIdx);
-    handle.setWqeSlot(&wqeSlots[queueIdx]);
     const uint64_t dstOffset = transport.symmetricOffset(hybridCtx.aggregateRecvBuffer_);
     const uint64_t srcOffset = transport.symmetricOffset(hybridCtx.aggregateSendBuffer_);
     const uint64_t flagOffset = transport.symmetricOffset(hybridCtx.aggregateControl_->qpSignalCount + queueIdx);
@@ -165,11 +163,13 @@ MSCCLPP_DEVICE_INLINE void aggregateControl(const DeviceContext* context, const 
       const int nChunkTokens = nTokens - tokenBegin < nTokensPerChunk ? nTokens - tokenBegin : nTokensPerChunk;
       handle.device_.putWithAccumulateAfter<kExclusive>(
           handle.dstMemory_, dstOffset + tokenBegin * TokenBytes, handle.srcMemory_,
-          srcOffset + tokenBegin * TokenBytes, nChunkTokens * TokenBytes, handle.dstMemory_, flagOffset, 1, [&] {
+          srcOffset + tokenBegin * TokenBytes, nChunkTokens * TokenBytes, handle.dstMemory_, flagOffset, 1,
+          [&] {
             while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(hybridCtx.aggregateChunkReady_ + chunkIdx,
                                                                   mscclpp::memoryOrderAcquire) != nChunkTokens) {
             }
-          });
+          },
+          queueIdx);
     }
   }
   for (int idx = threadIdx.x; idx < nRanks; idx += blockDim.x) {
@@ -308,7 +308,7 @@ __global__ __launch_bounds__(CombineNThreads,
                                                          const int* srcInfo, const int64_t* layoutRange,
                                                          Workload workload, void* combineRecvBuffer,
                                                          const void* dispatchRecvBuffer, const DeviceContext* context) {
-#if defined(MSCCLPP_USE_GPUNETIO) && MSCCLPP_BULK_AVAILABLE
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS) && MSCCLPP_BULK_AVAILABLE
   if constexpr (Layout == DispatchLayout::RANK_MAJOR &&
                 (DispatchType == DispatchDataType::BF16 || DispatchType == DispatchDataType::FP8_E4M3_STATIC)) {
     WorkspaceView workspace(context->workspace_, context->numRanks_, workload.numExperts_);

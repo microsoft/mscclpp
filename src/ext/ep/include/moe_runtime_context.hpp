@@ -126,7 +126,7 @@ struct LatencyRuntimeContext {
   void** peerMappedBufferBasesGpu_ = nullptr;
   std::vector<mscclpp::BaseMemoryChannel> baseMemoryChannels_;
   std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> baseMemoryChannelHandles_;
-  std::vector<mscclpp::PortChannel> portChannels_;
+  std::vector<mscclpp::PortChannel<mscclpp::PortChannelBackend::Device>> portChannels_;
   std::shared_ptr<PortChannelDeviceHandle> portChannelHandles_;
   std::shared_ptr<PortChannelDeviceContext> portChannelContext_;
   std::shared_ptr<int> distributeScratch_;

@@ -43,7 +43,7 @@ TEST(ProxyServiceTest, Lifecycle) {
     auto srcId = service->addMemory(srcMemory);
     auto dstId = service->addMemory(dstMemory);
     auto semaphoreId = service->buildAndAddSemaphore(communicator, connection);
-    auto channel = std::make_unique<mscclpp::PortChannel>(service->portChannel(semaphoreId, dstId, srcId));
+    auto channel = std::make_unique<mscclpp::PortChannel<>>(service->portChannel(semaphoreId, dstId, srcId));
     for (int run = 0; run < 2; ++run) {
       MSCCLPP_CUDATHROW(cudaMemset(dst.get(), 0, bytes));
       service->startProxy(true);

@@ -21,8 +21,8 @@ constexpr uint64_t MAGIC = 0xdeadbeef;
 
 template <class T>
 using DeviceHandle = mscclpp::DeviceHandle<T>;
-__constant__ DeviceHandle<mscclpp::PortChannel> constPortChans[16];
-__constant__ DeviceHandle<mscclpp::BasePortChannel> constRawPortChan[16];
+__constant__ DeviceHandle<mscclpp::PortChannel<>> constPortChans[16];
+__constant__ DeviceHandle<mscclpp::BasePortChannel<>> constRawPortChan[16];
 
 __constant__ DeviceHandle<mscclpp::MemoryChannel> constMemChans[512];
 __constant__ DeviceHandle<mscclpp::MemoryChannel> constMemOutOfPlaceChans[16];
@@ -32,7 +32,7 @@ __global__ void __launch_bounds__(1024) allgather0(int rank, size_t nelemsPerGPU
   int warpId = threadIdx.x / WARP_SIZE;
 
   // Each warp is responsible for one of the remote ranks
-  DeviceHandle<mscclpp::PortChannel> portChan = constPortChans[warpId];
+  DeviceHandle<mscclpp::PortChannel<>> portChan = constPortChans[warpId];
 
   // this allgather is really simple and implemented as an alltoall
 
@@ -50,8 +50,8 @@ __global__ void __launch_bounds__(1024) allgather0(int rank, size_t nelemsPerGPU
   if (threadIdx.x % WARP_SIZE == 0) portChan.wait();
 }
 
-__device__ void localAllGather(DeviceHandle<mscclpp::PortChannel> portChan, int rank, int nRanksPerNode, int remoteRank,
-                               uint64_t offset, uint64_t size, bool flushAfterSignal = true) {
+__device__ void localAllGather(DeviceHandle<mscclpp::PortChannel<>> portChan, int rank, int nRanksPerNode,
+                               int remoteRank, uint64_t offset, uint64_t size, bool flushAfterSignal = true) {
   // this allgather algorithm works as follows:
   // Step 1: GPU rank i sends data to GPU rank (i+1) % nRanksPerNode
   // and waits for data from GPU rank (i-1) % nRanksPerNode
@@ -130,7 +130,7 @@ __global__ void __launch_bounds__(1024) allgather1(int rank, int nRanksPerNode, 
   int remoteRank = (warpId < rank) ? warpId : warpId + 1;
 
   // Each warp is responsible for one of the remote ranks
-  DeviceHandle<mscclpp::PortChannel> portChan = constPortChans[warpId];
+  DeviceHandle<mscclpp::PortChannel<>> portChan = constPortChans[warpId];
 
   localAllGather(portChan, rank, nRanksPerNode, remoteRank, rank * nelemsPerGPU * sizeof(int),
                  nelemsPerGPU * sizeof(int));
@@ -141,7 +141,7 @@ __global__ void __launch_bounds__(1024) allgather2(int rank, int worldSize, int 
   int remoteRank = (warpId < rank) ? warpId : warpId + 1;
 
   // Each warp is responsible for one of the remote ranks
-  DeviceHandle<mscclpp::PortChannel> portChan = constPortChans[warpId];
+  DeviceHandle<mscclpp::PortChannel<>> portChan = constPortChans[warpId];
 
   // this allgather is a pipelined and hierarchical one and only works for two nodes
   // it is implemented as follows:
@@ -215,7 +215,7 @@ __global__ void __launch_bounds__(1024) allgather3() {
   int warpId = threadIdx.x / WARP_SIZE;
 
   // Each warp is responsible for one of the remote ranks
-  DeviceHandle<mscclpp::BasePortChannel> portChan = constRawPortChan[warpId];
+  DeviceHandle<mscclpp::BasePortChannel<>> portChan = constRawPortChan[warpId];
 
   int tid = threadIdx.x;
   __syncthreads();
@@ -248,7 +248,7 @@ __global__ void __launch_bounds__(1024) allgather4(int rank, int worldSize, int 
   int peerRank = (rank + nRanksPerNode) % worldSize;
   int peerNodeId = peerRank / nRanksPerNode;
   int peer = (peerRank < rank) ? peerRank : peerRank - 1;
-  DeviceHandle<mscclpp::PortChannel>& portChan = constPortChans[peer];
+  DeviceHandle<mscclpp::PortChannel<>>& portChan = constPortChans[peer];
   const size_t nBlocksForLocalAllGather = gridDim.x;
   const size_t rankChunkSize = nelemsPerGPU * sizeof(int);
   const int startRankIndexInLocalNode = (rank / nRanksPerNode) * nRanksPerNode;
@@ -513,8 +513,8 @@ class AllGatherProxyService : public mscclpp::BaseProxyService {
     semaphores_.push_back(std::make_shared<mscclpp::Host2DeviceSemaphore>(communicator, connection));
     return semaphores_.size() - 1;
   }
-  std::vector<DeviceHandle<mscclpp::BasePortChannel>> portChannels() {
-    std::vector<DeviceHandle<mscclpp::BasePortChannel>> result;
+  std::vector<DeviceHandle<mscclpp::BasePortChannel<>>> portChannels() {
+    std::vector<DeviceHandle<mscclpp::BasePortChannel<>>> result;
     for (auto& semaphore : semaphores_) {
       result.push_back(mscclpp::deviceHandle(mscclpp::BasePortChannel(0, semaphore, proxy_)));
     }
@@ -718,14 +718,14 @@ void AllGatherTestEngine::allocateBuffer() {
 }
 
 void AllGatherTestEngine::setupConnections() {
-  std::vector<DeviceHandle<mscclpp::PortChannel>> devPortChannels;
+  std::vector<DeviceHandle<mscclpp::PortChannel<>>> devPortChannels;
   if (!isUsingHostOffload(args_.kernelNum)) {
     setupMeshConnections(devPortChannels, sendBuff_.get(), args_.maxBytes);
-    if (devPortChannels.size() > sizeof(constPortChans) / sizeof(DeviceHandle<mscclpp::PortChannel>)) {
+    if (devPortChannels.size() > sizeof(constPortChans) / sizeof(DeviceHandle<mscclpp::PortChannel<>>)) {
       std::runtime_error("unexpected error");
     }
     CUDATHROW(cudaMemcpyToSymbol(constPortChans, devPortChannels.data(),
-                                 sizeof(DeviceHandle<mscclpp::PortChannel>) * devPortChannels.size()));
+                                 sizeof(DeviceHandle<mscclpp::PortChannel<>>) * devPortChannels.size()));
 
     setupMeshConnections(memoryChannels_, sendBuff_.get(), args_.maxBytes, nullptr, 0, ChannelSemantic::PUT, 64);
     std::vector<DeviceHandle<mscclpp::MemoryChannel>> memoryChannelHandles(memoryChannels_.size());
@@ -769,11 +769,11 @@ void AllGatherTestEngine::setupConnections() {
                            service->setLocalMemory(localMemory);
                          });
     auto portChannels = service->portChannels();
-    if (portChannels.size() > sizeof(constRawPortChan) / sizeof(DeviceHandle<mscclpp::BasePortChannel>)) {
+    if (portChannels.size() > sizeof(constRawPortChan) / sizeof(DeviceHandle<mscclpp::BasePortChannel<>>)) {
       std::runtime_error("unexpected error");
     }
     CUDATHROW(cudaMemcpyToSymbol(constRawPortChan, portChannels.data(),
-                                 sizeof(DeviceHandle<mscclpp::BasePortChannel>) * portChannels.size()));
+                                 sizeof(DeviceHandle<mscclpp::BasePortChannel<>>) * portChannels.size()));
   }
 }
 

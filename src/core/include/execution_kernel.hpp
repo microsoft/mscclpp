@@ -28,7 +28,7 @@ __device__ DeviceSyncer deviceSyncers[MAX_DEVICE_SYNCERS];
 __device__ DeviceSemaphore* deviceSemaphores;
 
 __shared__ DeviceHandle<BaseMemoryChannel>* memoryChannels_;
-__shared__ DeviceHandle<BasePortChannel>* portChannels_;
+__shared__ DeviceHandle<BasePortChannel<>>* portChannels_;
 __shared__ DeviceHandle<SwitchChannel>* nvlsChannels_;
 __shared__ void** memoryChannelBufferPtrs_;
 __shared__ MemoryId* portChannelBufferIds_;

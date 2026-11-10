@@ -15,7 +15,7 @@
 #include "context.hpp"
 #include "ib.hpp"
 
-#if defined(MSCCLPP_USE_GPUNETIO)
+#if defined(MSCCLPP_USE_CUDA) && defined(USE_IBVERBS)
 extern "C" {
 #include "host/doca_gpunetio.h"
 #include "host/doca_gpunetio_high_level.h"
@@ -31,7 +31,7 @@ struct GpuNetIoDevice {
   explicit GpuNetIoDevice(IbCtx& ibCtx);
   ~GpuNetIoDevice();
 
-#if defined(MSCCLPP_USE_GPUNETIO)
+#if defined(MSCCLPP_USE_CUDA) && defined(USE_IBVERBS)
   doca_gpu_t* gpu(int gpuId);
 
   std::mutex mutex_;
@@ -59,7 +59,7 @@ class GpuNetIoQp {
 
  private:
   GpuNetIoDevice* device_ = nullptr;
-#if defined(MSCCLPP_USE_GPUNETIO)
+#if defined(MSCCLPP_USE_CUDA) && defined(USE_IBVERBS)
   doca_gpu_verbs_qp_hl* qp_ = nullptr;
 #endif
   void* deviceQp_ = nullptr;

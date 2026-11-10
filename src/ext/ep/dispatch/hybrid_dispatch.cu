@@ -6,7 +6,7 @@
 
 namespace mscclpp::ep {
 
-#if defined(MSCCLPP_USE_GPUNETIO) && MSCCLPP_BULK_AVAILABLE
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS) && MSCCLPP_BULK_AVAILABLE
 
 MSCCLPP_DEVICE_INLINE int distributeExpert(const int64_t* routes, int tokenIdx, int laneIdx, const Workload& workload) {
   const int64_t expertIdx = laneIdx < workload.numTopk_ ? routes[tokenIdx * workload.numTopk_ + laneIdx] : -1;
@@ -180,14 +180,12 @@ MSCCLPP_DEVICE_INLINE void distributeControl(const int64_t* routes, const Worklo
     }
   }
 
-  __shared__ mscclpp::GpuNetIoWqeSlot wqeSlots[MaxQpsPerPeer];
-  constexpr auto kExclusive = mscclpp::PortChannelSharingMode::Exclusive;
+  constexpr auto kExclusive = mscclpp::PortChannelDeviceHandle::Concurrency::Exclusive;
   const size_t stride =
       InterRackDispatchPayload::stride(Hidden, workload.numTopk_, sizeof(DispatchElementType<DataType>));
   if (warpIdx < nQps && laneIdx == 0) {
     const int queueIdx = warpIdx;
     auto handle = network->channel(gatewayRank, queueIdx);
-    handle.setWqeSlot(&wqeSlots[queueIdx]);
     const uint64_t dstOffset = transport.symmetricOffset(hybridCtx.distributeRecvBuffer_);
     const uint64_t srcOffset = transport.symmetricOffset(hybridCtx.distributeSendBuffer_);
     const uint64_t flagOffset = transport.symmetricOffset(state->qpSignalCount + queueIdx);
@@ -195,27 +193,32 @@ MSCCLPP_DEVICE_INLINE void distributeControl(const int64_t* routes, const Worklo
       const uint64_t recvHeader = transport.symmetricOffset(&state->recvHeader);
       const uint64_t sendHeader = transport.symmetricOffset(&state->sendHeader);
       const size_t headerBytes = InterRackDispatchHeader::wireBytes(nRanks);
-      handle.put<kExclusive>(recvHeader, sendHeader, headerBytes);
+      handle.put<kExclusive>(recvHeader, sendHeader, headerBytes, queueIdx);
     }
     for (int chunkIdx = queueIdx, tokenBegin = queueIdx * nTokensPerChunk; tokenBegin < nRemoteTokens;
          chunkIdx += nQps, tokenBegin += nQps * nTokensPerChunk) {
       const int nChunkTokens = min(nTokensPerChunk, nRemoteTokens - tokenBegin);
       handle.device_.putWithAccumulateAfter<kExclusive>(
           handle.dstMemory_, dstOffset + tokenBegin * stride, handle.srcMemory_, srcOffset + tokenBegin * stride,
-          nChunkTokens * stride, handle.dstMemory_, flagOffset, 1, [&] {
+          nChunkTokens * stride, handle.dstMemory_, flagOffset, 1,
+          [&] {
             while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(
                        hybridCtx.distributeScratch_->chunkReadySignals + chunkIdx, mscclpp::memoryOrderAcquire) !=
                    nChunkTokens) {
             }
-          });
+          },
+          queueIdx);
     }
     if (queueIdx == 0) {
       const auto readyOffset = transport.symmetricOffset(&state->bufferReuseReady);
-      handle.device_.accumulateAfter<kExclusive>(handle.dstMemory_, readyOffset, 1, [&] {
-        while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(&hybridCtx.distributeScratch_->forwardComplete,
-                                                              mscclpp::memoryOrderAcquire) != 1) {
-        }
-      });
+      handle.device_.accumulateAfter<kExclusive>(
+          handle.dstMemory_, readyOffset, 1,
+          [&] {
+            while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(&hybridCtx.distributeScratch_->forwardComplete,
+                                                                  mscclpp::memoryOrderAcquire) != 1) {
+            }
+          },
+          queueIdx);
     }
   }
 }
@@ -355,7 +358,7 @@ __global__ __launch_bounds__(DispatchNThreads,
                                                           int* outputCount, const int64_t* routes, const float* weights,
                                                           const void* input, Workload workload, void* recvBuffer,
                                                           const DeviceContext* context) {
-#if defined(MSCCLPP_USE_GPUNETIO) && MSCCLPP_BULK_AVAILABLE
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS) && MSCCLPP_BULK_AVAILABLE
   static_assert(DataType == DispatchDataType::BF16 || DataType == DispatchDataType::FP8_E4M3_STATIC);
   extern __shared__ __align__(128) uint8_t sharedMemory[];
   auto* shared = reinterpret_cast<int*>(sharedMemory);

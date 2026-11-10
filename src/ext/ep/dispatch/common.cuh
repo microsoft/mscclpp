@@ -101,7 +101,7 @@ MSCCLPP_DEVICE_INLINE void publishDispatchPayloads(const TransportView& transpor
   }
 }
 
-#if defined(MSCCLPP_USE_GPUNETIO)
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
 // Write per-token top-k IDs and weights for all NVLink-reachable leader lanes in leaderMask.
 MSCCLPP_DEVICE_INLINE void writeRankMajorMetadataNvlink(const TransportView& transport, int* outputTopkIdx,
                                                         float* outputTopkWeights, int sourceRank, int dstRank,

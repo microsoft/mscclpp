@@ -89,10 +89,10 @@ class AlgorithmCtx {
   std::vector<RegisteredMemory> registeredMemories;
   std::vector<MemoryChannel> memoryChannels;
   std::vector<SwitchChannel> switchChannels;
-  std::vector<PortChannel> portChannels;
+  std::vector<PortChannel<>> portChannels;
   std::shared_ptr<DeviceHandle<MemoryChannel>> memoryChannelDeviceHandles;
   std::shared_ptr<DeviceHandle<SwitchChannel>> switchChannelDeviceHandles;
-  std::shared_ptr<DeviceHandle<PortChannel>> portChannelDeviceHandles;
+  std::shared_ptr<DeviceHandle<PortChannel<>>> portChannelDeviceHandles;
   std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores;
   std::vector<std::shared_ptr<Host2DeviceSemaphore>> hostSemaphores;
   std::shared_ptr<void*> remoteMemoryHandles;

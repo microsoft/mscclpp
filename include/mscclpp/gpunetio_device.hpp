@@ -13,7 +13,7 @@
 #include "atomic_device.hpp"
 #endif
 
-#if defined(MSCCLPP_DEVICE_COMPILE) && defined(MSCCLPP_USE_GPUNETIO)
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
 #include <doca_gpunetio_device.h>
 
 #include "bulk_device.hpp"
@@ -21,13 +21,21 @@
 
 namespace mscclpp {
 
-/// Caller-owned shared-memory storage for a single 64-byte BlueFlame work request (WQE).
-/// Only one thread may post through it at a time. A posting operation waits until BlueFlame has consumed this storage
-/// before returning, so sequential operations may reuse it even across different queue pairs.
+namespace detail {
 struct alignas(16) GpuNetIoWqeSlot {
-  /// Opaque work-request storage; callers must not access its contents.
   uint64_t storage[8];
 };
+
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS) && MSCCLPP_BULK_AVAILABLE
+template <uint32_t SmemSlots>
+MSCCLPP_DEVICE_INLINE doca_gpu_dev_verbs_wqe* gpuNetIoWqeSlot(uint32_t slotIdx) {
+  static_assert(SmemSlots > 0 && SmemSlots <= 1024);
+  static_assert(sizeof(GpuNetIoWqeSlot) == sizeof(doca_gpu_dev_verbs_wqe));
+  __shared__ GpuNetIoWqeSlot slots[SmemSlots];
+  return reinterpret_cast<doca_gpu_dev_verbs_wqe*>(slots[slotIdx].storage);
+}
+#endif
+}  // namespace detail
 
 /// A registered memory region that a GPUNetIO PortChannel can address.
 struct GpuNetIoMemoryDeviceHandle {
@@ -54,25 +62,22 @@ struct GpuNetIoDeviceHandle {
   /// Default BlueFlame payload size limit (512 KiB).
   static constexpr uint32_t kDefaultBlueFlameLimit = 512 * 1024;
 
- private:
-  GpuNetIoWqeSlot* wqeSlot_;
+  /// Default number of internal 64-byte BlueFlame shared-memory slots per CTA.
+  static constexpr uint32_t kDefaultSmemSlots = 32;
 
- public:
 #if defined(MSCCLPP_DEVICE_COMPILE)
-  /// Bind a caller-owned shared-memory WQE slot for BlueFlame submissions.
-  /// Only PortChannelSharingMode::Exclusive operations submit through BlueFlame; shared queue pairs ring the regular
-  /// doorbell and do not use the slot.
-  /// @param wqeSlot The shared-memory WQE slot.
-  MSCCLPP_DEVICE_INLINE void setWqeSlot(GpuNetIoWqeSlot* wqeSlot) { wqeSlot_ = wqeSlot; }
-
   /// RDMA write of `size` bytes from a local region to a remote region.
-  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
+  /// @tparam Mode Caller concurrency scope supplied by the PortChannel device handle.
+  /// @tparam SmemSlots Number of internal shared-memory slots per CTA; zero disables BlueFlame.
+  /// @param slotIdx Slot index, or -1 for the linear thread index. Out-of-range indices use regular doorbells.
+  template <auto Mode, uint32_t SmemSlots = kDefaultSmemSlots>
   MSCCLPP_DEVICE_INLINE void put([[maybe_unused]] const GpuNetIoMemoryDeviceHandle& dst,
                                  [[maybe_unused]] uint64_t dstOffset,
                                  [[maybe_unused]] const GpuNetIoMemoryDeviceHandle& src,
-                                 [[maybe_unused]] uint64_t srcOffset, [[maybe_unused]] uint64_t size) {
-#if defined(MSCCLPP_USE_GPUNETIO)
-    putImpl<docaSharingMode<Mode>()>(dst, dstOffset, src, srcOffset, size);
+                                 [[maybe_unused]] uint64_t srcOffset, [[maybe_unused]] uint64_t size,
+                                 [[maybe_unused]] int slotIdx = -1) {
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
+    putImpl<docaConcurrency<Mode>(), SmemSlots>(dst, dstOffset, src, srcOffset, size, slotIdx);
 #else
     MSCCLPP_ASSERT_DEVICE(false, "GPUNetIO is not enabled");
 #endif
@@ -84,31 +89,37 @@ struct GpuNetIoDeviceHandle {
   /// @param dst The destination memory region.
   /// @param dstOffset The offset into the destination memory region.
   /// @param value The 64-bit signed value to add.
-  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
+  /// @tparam Mode Caller concurrency scope supplied by the PortChannel device handle.
+  /// @tparam SmemSlots Number of internal shared-memory slots per CTA; zero disables BlueFlame.
+  /// @param slotIdx Slot index, or -1 for the linear thread index. Out-of-range indices use regular doorbells.
+  template <auto Mode, uint32_t SmemSlots = kDefaultSmemSlots>
   MSCCLPP_DEVICE_INLINE void accumulate([[maybe_unused]] const GpuNetIoMemoryDeviceHandle& dst,
-                                        [[maybe_unused]] uint64_t dstOffset, [[maybe_unused]] int64_t value) {
-#if defined(MSCCLPP_USE_GPUNETIO)
-    accumulateImpl<Mode>(dst, dstOffset, value, [] {});
+                                        [[maybe_unused]] uint64_t dstOffset, [[maybe_unused]] int64_t value,
+                                        [[maybe_unused]] int slotIdx = -1) {
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
+    accumulateImpl<Mode, SmemSlots>(dst, dstOffset, value, slotIdx, [] {});
 #else
     MSCCLPP_ASSERT_DEVICE(false, "GPUNetIO is not enabled");
 #endif
   }
 
   /// accumulate() that prepares the work request, invokes `wait()`, and then submits it, so the preparation overlaps
-  /// the wait. Requires exclusive ownership of the queue pair and WQE slot.
+  /// the wait. Requires exclusive ownership of the queue pair and shared-memory slot.
   /// @param dst The destination memory region.
   /// @param dstOffset The offset into the destination memory region.
   /// @param value The 64-bit signed value to add.
   /// @param wait Called once on the posting thread before submission. It must establish readiness and memory
-  /// ordering, and must not access the same queue pair or WQE slot.
-  template <PortChannelSharingMode Mode = PortChannelSharingMode::Exclusive, typename WaitFn>
+  /// ordering, and must not access the same queue pair or shared-memory slot.
+  /// @param slotIdx Slot index, or -1 for the linear thread index. Out-of-range indices use regular doorbells.
+  /// @tparam Mode Caller concurrency scope supplied by the PortChannel device handle (must be Exclusive).
+  /// @tparam SmemSlots Number of internal shared-memory slots per CTA; zero disables BlueFlame.
+  template <auto Mode, uint32_t SmemSlots = kDefaultSmemSlots, typename WaitFn>
   MSCCLPP_DEVICE_INLINE void accumulateAfter([[maybe_unused]] const GpuNetIoMemoryDeviceHandle& dst,
                                              [[maybe_unused]] uint64_t dstOffset, [[maybe_unused]] int64_t value,
-                                             [[maybe_unused]] WaitFn&& wait) {
-    static_assert(Mode == PortChannelSharingMode::Exclusive,
-                  "accumulateAfter requires PortChannelSharingMode::Exclusive");
-#if defined(MSCCLPP_USE_GPUNETIO)
-    accumulateImpl<Mode>(dst, dstOffset, value, static_cast<WaitFn&&>(wait));
+                                             [[maybe_unused]] WaitFn&& wait, [[maybe_unused]] int slotIdx = -1) {
+    static_assert(Mode == decltype(Mode)::Exclusive, "accumulateAfter requires Concurrency::Exclusive");
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
+    accumulateImpl<Mode, SmemSlots>(dst, dstOffset, value, slotIdx, static_cast<WaitFn&&>(wait));
 #else
     MSCCLPP_ASSERT_DEVICE(false, "GPUNetIO is not enabled");
 #endif
@@ -124,15 +135,19 @@ struct GpuNetIoDeviceHandle {
   /// @param acc The memory region of the accumulated word.
   /// @param accOffset The offset of the accumulated word in `acc`.
   /// @param value The 64-bit signed value to add.
-  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
+  /// @tparam Mode Caller concurrency scope supplied by the PortChannel device handle.
+  /// @tparam SmemSlots Number of internal shared-memory slots per CTA; zero disables BlueFlame.
+  /// @param slotIdx Slot index, or -1 for the linear thread index. Out-of-range indices use regular doorbells.
+  template <auto Mode, uint32_t SmemSlots = kDefaultSmemSlots>
   MSCCLPP_DEVICE_INLINE void putWithAccumulate([[maybe_unused]] const GpuNetIoMemoryDeviceHandle& dst,
                                                [[maybe_unused]] uint64_t dstOffset,
                                                [[maybe_unused]] const GpuNetIoMemoryDeviceHandle& src,
                                                [[maybe_unused]] uint64_t srcOffset, [[maybe_unused]] uint64_t size,
                                                [[maybe_unused]] const GpuNetIoMemoryDeviceHandle& acc,
-                                               [[maybe_unused]] uint64_t accOffset, [[maybe_unused]] int64_t value) {
-#if defined(MSCCLPP_USE_GPUNETIO)
-    putWithAccumulateImpl<Mode>(dst, dstOffset, src, srcOffset, size, acc, accOffset, value, [] {});
+                                               [[maybe_unused]] uint64_t accOffset, [[maybe_unused]] int64_t value,
+                                               [[maybe_unused]] int slotIdx = -1) {
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
+    putWithAccumulateImpl<Mode, SmemSlots>(dst, dstOffset, src, srcOffset, size, acc, accOffset, value, slotIdx, [] {});
 #else
     MSCCLPP_ASSERT_DEVICE(false, "GPUNetIO is not enabled");
 #endif
@@ -140,7 +155,7 @@ struct GpuNetIoDeviceHandle {
 
   /// putWithAccumulate() that prepares the work requests, invokes `wait()`, and then submits them, so the preparation
   /// overlaps the wait. An inline payload is read only after `wait()` returns. Requires exclusive ownership of the
-  /// queue pair and WQE slot.
+  /// queue pair and shared-memory slot.
   /// @param dst The destination memory region.
   /// @param dstOffset The offset into the destination memory region.
   /// @param src The source memory region.
@@ -150,20 +165,22 @@ struct GpuNetIoDeviceHandle {
   /// @param accOffset The offset of the accumulated word in `acc`.
   /// @param value The 64-bit signed value to add.
   /// @param wait Called once on the posting thread before submission. It must establish payload readiness and memory
-  /// ordering, and must not access the same queue pair or WQE slot.
-  template <PortChannelSharingMode Mode = PortChannelSharingMode::Exclusive, typename WaitFn>
+  /// ordering, and must not access the same queue pair or shared-memory slot.
+  /// @param slotIdx Slot index, or -1 for the linear thread index. Out-of-range indices use regular doorbells.
+  /// @tparam Mode Caller concurrency scope supplied by the PortChannel device handle (must be Exclusive).
+  /// @tparam SmemSlots Number of internal shared-memory slots per CTA; zero disables BlueFlame.
+  template <auto Mode, uint32_t SmemSlots = kDefaultSmemSlots, typename WaitFn>
   MSCCLPP_DEVICE_INLINE void putWithAccumulateAfter([[maybe_unused]] const GpuNetIoMemoryDeviceHandle& dst,
                                                     [[maybe_unused]] uint64_t dstOffset,
                                                     [[maybe_unused]] const GpuNetIoMemoryDeviceHandle& src,
                                                     [[maybe_unused]] uint64_t srcOffset, [[maybe_unused]] uint64_t size,
                                                     [[maybe_unused]] const GpuNetIoMemoryDeviceHandle& acc,
                                                     [[maybe_unused]] uint64_t accOffset, [[maybe_unused]] int64_t value,
-                                                    [[maybe_unused]] WaitFn&& wait) {
-    static_assert(Mode == PortChannelSharingMode::Exclusive,
-                  "putWithAccumulateAfter requires PortChannelSharingMode::Exclusive");
-#if defined(MSCCLPP_USE_GPUNETIO)
-    putWithAccumulateImpl<Mode>(dst, dstOffset, src, srcOffset, size, acc, accOffset, value,
-                                static_cast<WaitFn&&>(wait));
+                                                    [[maybe_unused]] WaitFn&& wait, [[maybe_unused]] int slotIdx = -1) {
+    static_assert(Mode == decltype(Mode)::Exclusive, "putWithAccumulateAfter requires Concurrency::Exclusive");
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
+    putWithAccumulateImpl<Mode, SmemSlots>(dst, dstOffset, src, srcOffset, size, acc, accOffset, value, slotIdx,
+                                           static_cast<WaitFn&&>(wait));
 #else
     MSCCLPP_ASSERT_DEVICE(false, "GPUNetIO is not enabled");
 #endif
@@ -171,11 +188,12 @@ struct GpuNetIoDeviceHandle {
 
   /// Wait until every work request posted so far on the queue pair has completed.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
-  template <PortChannelSharingMode Mode = PortChannelSharingMode::Gpu>
+  /// @tparam Mode Caller concurrency scope supplied by the PortChannel device handle.
+  template <auto Mode>
   MSCCLPP_DEVICE_INLINE void flush([[maybe_unused]] int64_t maxSpinCount) {
-#if defined(MSCCLPP_USE_GPUNETIO)
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
     auto* q = static_cast<doca_gpu_dev_verbs_qp*>(qp);
-    constexpr auto sharing = docaSharingMode<Mode>();
+    constexpr auto sharing = docaConcurrency<Mode>();
     const uint64_t ticket = doca_gpu_dev_verbs_atomic_read<uint64_t, sharing>(&q->sq_rsvd_index);
     if (ticket == 0) return;
     [[maybe_unused]] int status;
@@ -191,27 +209,34 @@ struct GpuNetIoDeviceHandle {
   }
 
  private:
-#if defined(MSCCLPP_USE_GPUNETIO)
-  template <PortChannelSharingMode Mode>
-  MSCCLPP_HOST_DEVICE_INLINE static constexpr doca_gpu_dev_verbs_resource_sharing_mode docaSharingMode() {
-    if constexpr (Mode == PortChannelSharingMode::Exclusive) {
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
+  template <auto Mode>
+  MSCCLPP_HOST_DEVICE_INLINE static constexpr doca_gpu_dev_verbs_resource_sharing_mode docaConcurrency() {
+    using Concurrency = decltype(Mode);
+    if constexpr (Mode == Concurrency::Exclusive) {
       return DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_EXCLUSIVE;
-    } else if constexpr (Mode == PortChannelSharingMode::Cta) {
+    } else if constexpr (Mode == Concurrency::Block) {
       return DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_CTA;
     } else {
       return DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU;
     }
   }
 
-  // Only an exclusively owned queue pair submits through BlueFlame, staging each WQE in the caller's slot. On a shared
+  MSCCLPP_DEVICE_INLINE static uint32_t resolveSlotIndex(int slotIdx) {
+    if (slotIdx == -1) return threadIdx.x + blockDim.x * (threadIdx.y + blockDim.y * threadIdx.z);
+    return static_cast<uint32_t>(slotIdx);
+  }
+
+  // Only an exclusively owned queue pair submits through BlueFlame, staging each WQE in an internal slot. On a shared
   // queue pair, the NIC would take a BlueFlame WQE directly only if every earlier WQE were already submitted.
-  template <doca_gpu_dev_verbs_resource_sharing_mode Sharing>
-  MSCCLPP_DEVICE_INLINE bool useBlueFlame(uint64_t size) const {
+  template <doca_gpu_dev_verbs_resource_sharing_mode Sharing, uint32_t SmemSlots>
+  MSCCLPP_DEVICE_INLINE bool useBlueFlame(uint64_t size, uint32_t slotIdx) const {
 #if MSCCLPP_BULK_AVAILABLE
-    return Sharing == DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_EXCLUSIVE && wqeSlot_ != nullptr &&
+    return Sharing == DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_EXCLUSIVE && slotIdx < SmemSlots &&
            size <= blueFlameLimit;
 #else
     (void)size;
+    (void)slotIdx;
     return false;
 #endif
   }
@@ -224,9 +249,10 @@ struct GpuNetIoDeviceHandle {
     doca_gpu_dev_verbs_submit_db<Sharing, syncScope, DOCA_GPUNETIO_VERBS_QP_SQ>(q, prodIndex);
   }
 
-  template <doca_gpu_dev_verbs_resource_sharing_mode Sharing>
+  template <doca_gpu_dev_verbs_resource_sharing_mode Sharing, uint32_t SmemSlots>
   MSCCLPP_DEVICE_INLINE void putImpl(const GpuNetIoMemoryDeviceHandle& dst, uint64_t dstOffset,
-                                     const GpuNetIoMemoryDeviceHandle& src, uint64_t srcOffset, uint64_t size) {
+                                     const GpuNetIoMemoryDeviceHandle& src, uint64_t srcOffset, uint64_t size,
+                                     int slotIdx) {
     auto* q = static_cast<doca_gpu_dev_verbs_qp*>(qp);
     if (size == 0 || size > DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE) {
       doca_gpu_dev_verbs_ticket_t ticket;
@@ -236,8 +262,10 @@ struct GpuNetIoDeviceHandle {
       return;
     }
 
-    if (useBlueFlame<Sharing>(size)) {
-      submitPutBlueFlame<Sharing>(q, dst.addr + dstOffset, dst.key, src.addr + srcOffset, src.key, size);
+    const uint32_t resolvedSlotIdx = resolveSlotIndex(slotIdx);
+    if (useBlueFlame<Sharing, SmemSlots>(size, resolvedSlotIdx)) {
+      submitPutBlueFlame<Sharing, SmemSlots>(q, dst.addr + dstOffset, dst.key, src.addr + srcOffset, src.key, size,
+                                             resolvedSlotIdx);
     } else {
       const auto index =
           doca_gpu_dev_verbs_reserve_wq_slots<Sharing, DOCA_GPUNETIO_VERBS_QP_SQ, DOCA_GPUNETIO_VERBS_CQ_64B>(q, 1);
@@ -245,10 +273,10 @@ struct GpuNetIoDeviceHandle {
     }
   }
 
-  template <doca_gpu_dev_verbs_resource_sharing_mode Sharing>
+  template <doca_gpu_dev_verbs_resource_sharing_mode Sharing, uint32_t SmemSlots>
   MSCCLPP_DEVICE_INLINE void submitPutBlueFlame(doca_gpu_dev_verbs_qp* q, uint64_t dstAddr, uint32_t dstKey,
-                                                uint64_t srcAddr, uint32_t srcKey, uint64_t size) {
-    withWqeSlot<Sharing>(q, 1, [&](doca_gpu_dev_verbs_wqe* sharedWqe, uint64_t index) {
+                                                uint64_t srcAddr, uint32_t srcKey, uint64_t size, uint32_t slotIdx) {
+    withWqeSlot<Sharing, SmemSlots>(q, 1, slotIdx, [&](doca_gpu_dev_verbs_wqe* sharedWqe, uint64_t index) {
       prepareWriteWqe(q, sharedWqe, index, dstAddr, dstKey, srcAddr, srcKey, size);
       copyWqeToGlobal(doca_gpu_dev_verbs_get_wqe_ptr(q, index), sharedWqe);
       doca_gpu_dev_verbs_mark_wqes_ready<Sharing>(q, index, index);
@@ -265,15 +293,16 @@ struct GpuNetIoDeviceHandle {
     submitDb<Sharing>(q, index + 1);
   }
 
-  template <PortChannelSharingMode Mode, typename WaitFn>
+  template <auto Mode, uint32_t SmemSlots, typename WaitFn>
   MSCCLPP_DEVICE_INLINE void accumulateImpl(const GpuNetIoMemoryDeviceHandle& dst, uint64_t dstOffset, int64_t value,
-                                            WaitFn&& wait) {
+                                            int slotIdx, WaitFn&& wait) {
     const uint64_t addr = dst.addr + dstOffset;
     MSCCLPP_ASSERT_DEVICE(addr % sizeof(uint64_t) == 0, "accumulate address must be 8-byte aligned");
     auto* q = static_cast<doca_gpu_dev_verbs_qp*>(qp);
-    constexpr auto sharing = docaSharingMode<Mode>();
-    if (useBlueFlame<sharing>(sizeof(uint64_t))) {
-      withWqeSlot<sharing>(q, 1, [&](doca_gpu_dev_verbs_wqe* sharedWqe, uint64_t index) {
+    constexpr auto sharing = docaConcurrency<Mode>();
+    const uint32_t resolvedSlotIdx = resolveSlotIndex(slotIdx);
+    if (useBlueFlame<sharing, SmemSlots>(sizeof(uint64_t), resolvedSlotIdx)) {
+      withWqeSlot<sharing, SmemSlots>(q, 1, resolvedSlotIdx, [&](doca_gpu_dev_verbs_wqe* sharedWqe, uint64_t index) {
         prepareAtomicWqe(q, sharedWqe, index, addr, dst.key, value);
         copyWqeToGlobal(doca_gpu_dev_verbs_get_wqe_ptr(q, index), sharedWqe);
         doca_gpu_dev_verbs_mark_wqes_ready<sharing>(q, index, index);
@@ -290,26 +319,28 @@ struct GpuNetIoDeviceHandle {
     }
   }
 
-  template <PortChannelSharingMode Mode, typename WaitFn>
+  template <auto Mode, uint32_t SmemSlots, typename WaitFn>
   MSCCLPP_DEVICE_INLINE void putWithAccumulateImpl(const GpuNetIoMemoryDeviceHandle& dst, uint64_t dstOffset,
                                                    const GpuNetIoMemoryDeviceHandle& src, uint64_t srcOffset,
                                                    uint64_t size, const GpuNetIoMemoryDeviceHandle& acc,
-                                                   uint64_t accOffset, int64_t value, WaitFn&& wait) {
+                                                   uint64_t accOffset, int64_t value, int slotIdx, WaitFn&& wait) {
     const uint64_t accAddr = acc.addr + accOffset;
     MSCCLPP_ASSERT_DEVICE(accAddr % sizeof(uint64_t) == 0, "putWithAccumulate address must be 8-byte aligned");
     if (size == 0 || size > DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE) {
       wait();
-      putImpl<docaSharingMode<Mode>()>(dst, dstOffset, src, srcOffset, size);
-      accumulate<Mode>(acc, accOffset, value);
+      putImpl<docaConcurrency<Mode>(), SmemSlots>(dst, dstOffset, src, srcOffset, size, slotIdx);
+      accumulate<Mode, SmemSlots>(acc, accOffset, value, slotIdx);
       return;
     }
     auto* q = static_cast<doca_gpu_dev_verbs_qp*>(qp);
-    constexpr auto sharing = docaSharingMode<Mode>();
+    constexpr auto sharing = docaConcurrency<Mode>();
     const uint64_t dstAddr = dst.addr + dstOffset;
     const uint64_t srcAddr = src.addr + srcOffset;
-    if (useBlueFlame<sharing>(size)) {
-      submitPutWithAccumulateBlueFlame<sharing>(q, dstAddr, dst.key, srcAddr, src.key, size, accAddr, acc.key, value,
-                                                static_cast<WaitFn&&>(wait));
+    const uint32_t resolvedSlotIdx = resolveSlotIndex(slotIdx);
+    if (useBlueFlame<sharing, SmemSlots>(size, resolvedSlotIdx)) {
+      submitPutWithAccumulateBlueFlame<sharing, SmemSlots>(q, dstAddr, dst.key, srcAddr, src.key, size, accAddr,
+                                                           acc.key, value, resolvedSlotIdx,
+                                                           static_cast<WaitFn&&>(wait));
     } else {
       const auto index =
           doca_gpu_dev_verbs_reserve_wq_slots<sharing, DOCA_GPUNETIO_VERBS_QP_SQ, DOCA_GPUNETIO_VERBS_CQ_64B>(q, 2);
@@ -320,12 +351,12 @@ struct GpuNetIoDeviceHandle {
 
   // An inline payload is copied into the WQE, so it must be ready before the write WQE is prepared; otherwise the NIC
   // reads it after submission.
-  template <doca_gpu_dev_verbs_resource_sharing_mode Sharing, typename WaitFn>
+  template <doca_gpu_dev_verbs_resource_sharing_mode Sharing, uint32_t SmemSlots, typename WaitFn>
   MSCCLPP_DEVICE_INLINE void submitPutWithAccumulateBlueFlame(doca_gpu_dev_verbs_qp* q, uint64_t dstAddr,
                                                               uint32_t dstKey, uint64_t srcAddr, uint32_t srcKey,
                                                               uint64_t size, uint64_t accAddr, uint32_t accKey,
-                                                              int64_t value, WaitFn&& wait) {
-    withWqeSlot<Sharing>(q, 2, [&](doca_gpu_dev_verbs_wqe* sharedWqe, uint64_t index) {
+                                                              int64_t value, uint32_t slotIdx, WaitFn&& wait) {
+    withWqeSlot<Sharing, SmemSlots>(q, 2, slotIdx, [&](doca_gpu_dev_verbs_wqe* sharedWqe, uint64_t index) {
       const bool inlinePayload = size <= DOCA_GPUNETIO_VERBS_MAX_INLINE_SIZE;
       if (inlinePayload) wait();
       prepareWriteWqe(q, sharedWqe, index, dstAddr, dstKey, srcAddr, srcKey, size);
@@ -408,18 +439,18 @@ struct GpuNetIoDeviceHandle {
 #endif
   }
 
-  template <doca_gpu_dev_verbs_resource_sharing_mode Sharing, typename Fn>
-  MSCCLPP_DEVICE_INLINE void withWqeSlot(doca_gpu_dev_verbs_qp* q, uint32_t count, Fn&& fn) const {
-    static_assert(sizeof(GpuNetIoWqeSlot) == sizeof(doca_gpu_dev_verbs_wqe));
-    MSCCLPP_ASSERT_DEVICE(wqeSlot_ != nullptr &&
-                              reinterpret_cast<uintptr_t>(wqeSlot_) % alignof(GpuNetIoWqeSlot) == 0 &&
-                              __isShared(wqeSlot_),
-                          "wqeSlot must be a 16-byte-aligned shared-memory pointer");
-    const auto index =
-        doca_gpu_dev_verbs_reserve_wq_slots<Sharing, DOCA_GPUNETIO_VERBS_QP_SQ, DOCA_GPUNETIO_VERBS_CQ_64B>(q, count);
-    fn(reinterpret_cast<doca_gpu_dev_verbs_wqe*>(wqeSlot_->storage), index);
+  template <doca_gpu_dev_verbs_resource_sharing_mode Sharing, uint32_t SmemSlots, typename Fn>
+  MSCCLPP_DEVICE_INLINE void withWqeSlot([[maybe_unused]] doca_gpu_dev_verbs_qp* q, [[maybe_unused]] uint32_t count,
+                                         [[maybe_unused]] uint32_t slotIdx, [[maybe_unused]] Fn&& fn) const {
+#if MSCCLPP_BULK_AVAILABLE
+    if constexpr (Sharing == DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_EXCLUSIVE && SmemSlots > 0) {
+      const auto index =
+          doca_gpu_dev_verbs_reserve_wq_slots<Sharing, DOCA_GPUNETIO_VERBS_QP_SQ, DOCA_GPUNETIO_VERBS_CQ_64B>(q, count);
+      fn(detail::gpuNetIoWqeSlot<SmemSlots>(slotIdx), index);
+    }
+#endif
   }
-#endif  // defined(MSCCLPP_USE_GPUNETIO)
+#endif  // defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 

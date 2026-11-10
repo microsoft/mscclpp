@@ -17,8 +17,7 @@ To build without network access, point CMake to a local checkout of the same rev
 cmake -DFETCHCONTENT_SOURCE_DIR_GPUNETIO=/path/to/gpunetio ..
 ```
 
-The build compiles a patched copy of `doca_gpunetio_high_level.cpp` that fixes a double free on a CQ creation failure
-path; the fetched tree itself is not modified. The GPUNetIO license is installed to `share/licenses/mscclpp/gpunetio`.
+The GPUNetIO license is installed to `share/licenses/mscclpp/gpunetio`.
 
 ## Requirements
 
@@ -31,7 +30,8 @@ path; the fetched tree itself is not modified. The GPUNetIO license is installed
 ## Usage
 
 Create the connection with `EndpointConfig::Ib::Mode::Device` and construct the `PortChannel` directly from the
-semaphore and registered memories (no `ProxyService` is needed):
+semaphore and registered memories (`PortChannel<PortChannelBackend::Device>` is deduced automatically from the
+constructor; no `ProxyService` is needed):
 
 ```cpp
 mscclpp::EndpointConfig cfg;
@@ -45,30 +45,26 @@ auto remoteMem = communicator->recvMemory(remoteRank).get();
 
 auto semaphore = std::make_shared<mscclpp::PortDevice2DeviceSemaphore>(*communicator, connection);
 mscclpp::PortChannel channel(semaphore, remoteMem, localMem);
-auto deviceHandle = channel.deviceHandle<mscclpp::PortChannelBackend::Device>();
+auto deviceHandle = channel.deviceHandle();
 ```
 
-Host-created device handles use regular doorbell submission (`submit_db`, preparing WQEs in GPU global memory) by
-default without requiring shared memory. To enable BlueFlame submission for transfers up to `device_.blueFlameLimit`
-(default: 512 KiB), bind caller-owned shared-memory WQE slot storage on a **local copy** of the handle:
+Exclusive-mode operations automatically use internal shared-memory WQE slots for BlueFlame submission when the
+transfer fits `device_.blueFlameLimit` (default: 512 KiB) and the calling thread has a slot:
 
 ```cpp
 __global__ void send(mscclpp::PortChannelDeviceHandleT<mscclpp::PortChannelBackend::Device> channel, size_t bytes) {
-  __shared__ mscclpp::GpuNetIoWqeSlot wqeSlot;
+  using Concurrency = mscclpp::PortChannelDeviceHandle::Concurrency;
   if (threadIdx.x != 0) return;
-  auto portChan = channel;
-  portChan.setWqeSlot(&wqeSlot);
-  portChan.putWithSignal<mscclpp::PortChannelSharingMode::Exclusive>(0, bytes);
-  portChan.flush<mscclpp::PortChannelSharingMode::Exclusive>();
+  channel.putWithSignal<Concurrency::Exclusive>(0, bytes);
+  channel.flush<Concurrency::Exclusive>();
 }
 
 // One block exclusively owns this QP.
 send<<<1, 32>>>(deviceHandle, bytes);
 ```
 
-Never bind a block-shared pointer on a constant-memory or globally shared channel handle. When no WQE slot is bound
-or a transfer exceeds `blueFlameLimit`, work requests are submitted via regular doorbell without shared-memory
-staging.
+Handles do not store shared-memory pointers and can be loaded directly from constant or global memory. Operations
+without an available slot, or transfers above `blueFlameLimit`, use regular doorbell submission without WQE staging.
 
 In the kernel, `put`, `signal`, `putWithSignal`, `putWithSignalAndFlush`, `flush`, `accumulate`, `wait` and `poll`
 behave as for proxy-backed channels. `flush` waits for the local completion of all work requests posted on the queue
@@ -110,7 +106,7 @@ The dispatch grid needs at least 10 resident blocks, and the launcher checks ful
 - **Control block (block 0).** Counts tokens per destination rank and the number of remote tokens, writes a
   self-validating header (`nRemoteTokens` and per-rank counts, each an `LL8Packet` carrying the round epoch), and
   publishes NVLink counts and payload-ready signals for local destinations. One posting warp per QP (lane 0,
-  `PortChannelSharingMode::Exclusive`, no locks) sends chunk `c` on QP `c % nQps`. QP 0 first sends the active
+  `Concurrency::Exclusive`, no locks) sends chunk `c` on QP `c % nQps`. QP 0 first sends the active
   `(1 + worldSize) * sizeof(LL8Packet)` header bytes with one plain RDMA write, then its chunks, then the
   buffer-reuse acknowledgment described below.
 - **Producer blocks (blocks 9 and up).** Each of the two TMA warps per block handles one input token. It allocates
@@ -163,30 +159,55 @@ stale chunk counters and blocks in the `bufferReuseReady` wait.
 The hybrid paths reuse `LatencyRuntimeContext`, including its workspace, IPC channels, and device context. Its
 symmetric allocation additionally reserves the send and landing regions and the control blocks targeted by RDMA.
 
-### Queue pair sharing modes and BlueFlame configuration
+### Queue pair concurrency and BlueFlame configuration
 
-By default, queue pairs are accessed in `PortChannelSharingMode::Gpu` (safe when threads across the GPU share a QP).
-Callers may also pass `PortChannelSharingMode::Cta` (shared within a CTA) or `PortChannelSharingMode::Exclusive`
-(operations on a QP are serialized by the caller) as a template parameter to posting and `flush` methods.
+Channel handles expose a nested `Concurrency` type (`mscclpp::PortChannelDeviceHandle::Concurrency`).
+The type is defined in `BasePortChannelDeviceHandle` in `port_channel_device.hpp` and shared by both backends.
+For device-backed channels it describes concurrent access to the underlying queue pair, not ownership of the
+PortChannel object. The default is `Concurrency::Device`, allowing callers across the device. Callers may instead
+select `Concurrency::Block` for callers confined to one thread block, or `Concurrency::Exclusive` when the caller
+serializes access, as a template argument to posting and `flush` methods.
 
-`device_.blueFlameLimit` controls the maximum payload size (in bytes) submitted through BlueFlame when a WQE slot
-is bound via `setWqeSlot` (default: `kDefaultBlueFlameLimit = 512 * 1024`; set to `0` to disable BlueFlame or adjust
-it to change which transfer sizes use BlueFlame). Payloads above `blueFlameLimit`, or any request when no WQE slot is
-bound, write their WQEs directly to the GPU-resident send queue and ring the regular doorbell, matching NCCL GIN's
-`submit_db` path.
-Only `PortChannelSharingMode::Exclusive` operations submit through BlueFlame. The NIC executes a BlueFlame work
-request directly only if all earlier ones were already submitted, which threads sharing a queue pair cannot ensure
-without serializing each other, so `Cta` and `Gpu` operations always ring the regular doorbell.
+Host-backed channels accept the same template argument but only support `Concurrency::Device`; other values produce
+a compile-time error. Calls without an explicit template argument continue to use `Device` for either backend.
 
-### Caller-owned WQE slot
+`device_.blueFlameLimit` controls the maximum payload size (in bytes) submitted through BlueFlame (default:
+`kDefaultBlueFlameLimit = 512 * 1024`; set to `0` to disable BlueFlame or adjust it to change which transfer sizes use
+BlueFlame). Payloads above this limit write their WQEs directly to the GPU-resident send queue and ring the regular
+doorbell, matching NCCL GIN's `submit_db` path.
+Only `Concurrency::Exclusive` operations submit through BlueFlame. The NIC executes a BlueFlame work request directly
+only if all earlier ones were already submitted, which concurrent callers cannot ensure without serializing each
+other, so `Block` and `Device` operations always ring the regular doorbell.
 
-`mscclpp::GpuNetIoWqeSlot` is an opaque 64-byte, 16-byte-aligned shared-memory buffer for one WQE. Bind it with
-`setWqeSlot(&wqeSlot)` on a local copy of the handle. Only one thread may post through a slot at a time.
-BlueFlame submission waits for async consumption of the slot before each posting call returns; one thread can
-therefore reuse one slot for sequential operations across different QPs.
+### Internal shared-memory slots
+
+`PortChannelDeviceHandleT<Backend, SmemSlots>` and `BasePortChannelDeviceHandleT<Backend, SmemSlots>` configure the
+internal shared-memory capacity at compile time. The default is 32 slots (2 KiB per CTA); use `channel.deviceHandle<8>()`
+for eight slots, or a capacity of zero to disable BlueFlame without allocating scratch.
+
+The default slot index is the linear thread index, including all three block dimensions. Posting methods accept an
+optional `slotIdx` (`-1` selects the default); out-of-range indices fall back to regular doorbells. For example:
+
+```cpp
+using Concurrency = mscclpp::PortChannelDeviceHandle::Concurrency;
+channel.put<Concurrency::Exclusive>(dstOffset, srcOffset, bytes, slotIdx);
+channel.signal<Concurrency::Exclusive>(slotIdx);
+```
+
+For `put` and `putWithSignal`, specify both source and destination offsets when passing an explicit index, avoiding
+ambiguity with the existing two-argument overloads. For `putWithSignalAndFlush`, the index follows `maxSpinCount`.
+
+Slots are 64 bytes, 16-byte aligned, and shared across all handles with the same capacity in a CTA. Concurrent posting
+threads must use distinct indices, even when they own different QPs. BlueFlame waits for async source consumption
+before returning, so one thread can reuse a slot sequentially across QPs without an extra barrier or flush.
+Prefer one capacity per kernel: different capacities instantiate separate scratch arrays. Scratch is statically
+allocated for compiled BlueFlame paths, so runtime doorbell fallback does not reduce its footprint. Large capacities
+must respect the kernel's shared-memory limits; `Block` and `Device` operations do not use this scratch.
 
 ## Limitations
 
+- CQ initialization has known upstream error-handling issues when its CUDA copy fails; see
+  [NVIDIA-DOCA/gpunetio#23](https://github.com/NVIDIA-DOCA/gpunetio/issues/23). No local workaround is applied.
 - Host-side `Connection` operations (`write`, `updateAndSync`, `accumulate`, `flush`) and `Host2DeviceSemaphore::signal`
   are not supported on GPUNetIO connections and throw `InvalidUsage`.
 - On RoCE devices only port 1 is supported (the pinned DOCA GPUNetIO resolves the destination MAC on port 1).
