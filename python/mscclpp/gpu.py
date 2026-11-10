@@ -64,6 +64,15 @@ class _Runtime:
             attr: (None if names[index] is None else getattr(module, names[index]))
             for attr, names in _API_NAMES.items()
         }
+        if name == "hip":
+
+            def get_device_properties(device_id: int) -> tuple[Any, Any]:
+                props = module.hipDeviceProp_t()
+                result = module.hipGetDeviceProperties(props, device_id)
+                error = result[0] if isinstance(result, tuple) else result
+                return error, props
+
+            funcs["get_device_properties"] = get_device_properties
         stream_non_blocking = module.hipStreamNonBlocking if name == "hip" else module.cudaStreamNonBlocking
         memcpy_kind = getattr(module, name + "MemcpyKind")
         return cls(

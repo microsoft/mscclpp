@@ -10,6 +10,8 @@ not initialize a GPU or require a visible device.
 Shared CUDA/HIP runtime helpers are available in `mscclpp.gpu`, including device
 queries, synchronization, streams, events, and graph capture. They use the backend
 selected by the native build and initialize the Python runtime on first use.
+`gpu.get_device_properties(device_id)` returns `(props,)` on both backends and
+checks runtime errors; the HIP helper allocates the required output structure internally.
 The benchmarks use these helpers directly, as does `mscclpp.utils.get_device_arch()`
 when querying the current device.
 `GpuBuffer` also uses them for device selection, pointer queries, transfers, and
