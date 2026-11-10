@@ -297,6 +297,10 @@ def _reference(config, inputs, ids, scores, weights):
             else:
                 result = (hidden @ second.T) * all_scores[token, slot, None]
                 partial[token, slot] = result.to(torch.bfloat16).float()
+    if config.compute_only:
+        if config.is_static_fp8:
+            partial = partial * config.activation_scale
+        return partial.view(config.world_size, -1, config.top_k, config.hidden).to(inputs.device, torch.bfloat16)
     host_partial = partial.cpu()
     if config.world_size > 1:
         dist.all_reduce(host_partial)
@@ -428,8 +432,6 @@ def main():
     args = parser.parse_args()
     if min(args.tokens, args.graph_batch, args.warmup, args.iterations) < 1:
         parser.error("tokens, graph-batch, warmup, and iterations must be positive")
-    if args.compute_only and args.check:
-        parser.error("--check cannot be used with --compute-only")
     if (args.hidden, args.intermediate) not in (
         (4096, 4608),
         (4096, 5120),
@@ -518,24 +520,25 @@ def main():
     start = time.perf_counter()
     context = MegaMoE(config, communicator, *weights, kernel=kernel)
     initialization_ms = (time.perf_counter() - start) * 1000
-    inputs = torch.randn((args.tokens, args.hidden), device=device, dtype=torch.bfloat16)
-    ids, scores = _generate_routing(
+    raw_inputs = torch.randn((args.tokens, args.hidden), device=device, dtype=torch.bfloat16)
+    raw_ids, raw_scores = _generate_routing(
         config, args.routing_pattern, args.zipf_alpha, args.seed, device, lognormal_sigma=args.lognormal_sigma
     )
-    routing_summary = _routing_summary(config, ids, kernel_config.tile_n)
+    routing_summary = _routing_summary(config, raw_ids, kernel_config.tile_n)
+    inputs, ids, scores = raw_inputs, raw_ids, raw_scores
     input_scales = None
     if config.compute_only:
         from .quantization import quantize_fp8_static, quantize_mxfp8
 
-        gathered_inputs = [torch.empty_like(inputs) for _ in range(world)]
-        gathered_ids = [torch.empty_like(ids) for _ in range(world)]
-        gathered_scores = [torch.empty_like(scores) for _ in range(world)]
+        gathered_inputs = [torch.empty_like(raw_inputs) for _ in range(world)]
+        gathered_ids = [torch.empty_like(raw_ids) for _ in range(world)]
+        gathered_scores = [torch.empty_like(raw_scores) for _ in range(world)]
         if world > 1:
-            dist.all_gather(gathered_inputs, inputs)
-            dist.all_gather(gathered_ids, ids)
-            dist.all_gather(gathered_scores, scores)
+            dist.all_gather(gathered_inputs, raw_inputs)
+            dist.all_gather(gathered_ids, raw_ids)
+            dist.all_gather(gathered_scores, raw_scores)
         else:
-            gathered_inputs[0], gathered_ids[0], gathered_scores[0] = inputs, ids, scores
+            gathered_inputs[0], gathered_ids[0], gathered_scores[0] = raw_inputs, raw_ids, raw_scores
         rm_inputs = torch.stack(gathered_inputs, dim=0).contiguous()
         ids = torch.stack(gathered_ids, dim=0).contiguous()
         scores = torch.stack(gathered_scores, dim=0).contiguous()
@@ -545,7 +548,7 @@ def main():
             inputs = quantize_fp8_static(rm_inputs.float(), config.activation_scale)
         else:
             inputs, input_scales = quantize_mxfp8(rm_inputs.float())
-        output = torch.empty((world, args.tokens, args.top_k, args.hidden), device=device, dtype=torch.bfloat16)
+        output = torch.zeros((world, args.tokens, args.top_k, args.hidden), device=device, dtype=torch.bfloat16)
     else:
         if args.input_mode == "direct":
             direct = context.input_view(args.tokens)
@@ -569,7 +572,7 @@ def main():
     )
     correctness = None
     if args.check:
-        reference = _reference(config, inputs, ids, scores, weights)
+        reference = _reference(config, raw_inputs, raw_ids, raw_scores, weights)
         error = (output.float() - reference.float()).abs()
         correctness = {"max_abs_error": error.max().item(), "mean_abs_error": error.mean().item()}
         torch.testing.assert_close(output, reference, rtol=rtol, atol=atol)
