@@ -171,8 +171,8 @@ template <int LocalMode>
 W8A16KernelEntry<LocalMode> w8a16KernelEntry(const NativeConfig& config) {
   static constexpr std::array kernels{registerW8A16Kernel<4096, 4352>(), registerW8A16Kernel<4096, 4608>(),
                                       registerW8A16Kernel<4096, 5120>(), registerW8A16Kernel<4096, 6656>(),
-                                      registerW8A16Kernel<8192, 4096>(), registerW8A16Kernel<9216, 4096>(),
-                                      registerW8A16Kernel<9216, 4608>()};
+                                      registerW8A16Kernel<5120, 2688>(), registerW8A16Kernel<8192, 4096>(),
+                                      registerW8A16Kernel<9216, 4096>(), registerW8A16Kernel<9216, 4608>()};
   for (const auto& kernel : kernels) {
     if (kernel.matches(config)) {
       if constexpr (LocalMode == 0)

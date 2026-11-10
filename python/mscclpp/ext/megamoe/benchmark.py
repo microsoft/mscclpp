@@ -437,12 +437,13 @@ def main():
         (4096, 4608),
         (4096, 5120),
         (4096, 6656),
+        (5120, 2688),
         (8192, 4096),
         (9216, 4096),
         (9216, 4608),
     ):
         parser.error(
-            "MegaMoE H/I must be 4096/4352, 4096/4608, 4096/5120, 4096/6656, 8192/4096, 9216/4096, or 9216/4608"
+            "MegaMoE H/I must be 4096/4352, 4096/4608, 4096/5120, 4096/6656, 5120/2688, 8192/4096, 9216/4096, or 9216/4608"
         )
     if not args.graph and args.graph_timing != "isolated":
         parser.error("--graph-timing steady-state requires --graph")
