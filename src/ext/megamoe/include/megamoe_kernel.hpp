@@ -40,6 +40,7 @@ struct NativeConfig {
   ActivationDtype activationDtype = ActivationDtype::Mxfp8;
   float activationScale = 1.0f;
   bool combineRouteWeights = false;
+  bool computeOnly = false;
 };
 
 struct SymmetricLayout {
@@ -99,9 +100,9 @@ int kernelPlanCtaCount(const KernelPlan& plan);
 size_t kernelPlanSharedBytes(const KernelPlan& plan);
 void launchNativeW4A8(const std::shared_ptr<KernelPlan>& plan, const void* input, const int32_t* ids,
                       const float* scores, int numTokens, void* output, cudaStream_t stream,
-                      uint32_t* kernelEntrySignal);
+                      uint32_t* kernelEntrySignal, const uint8_t* inputScales = nullptr);
 void launchNativeW8A16(const std::shared_ptr<KernelPlan>& plan, const int32_t* ids, const float* scores, int numTokens,
-                       void* output, cudaStream_t stream, uint32_t* kernelEntrySignal);
+                       void* output, cudaStream_t stream, uint32_t* kernelEntrySignal, const void* input = nullptr);
 void launchNativeSharedExpert(const std::shared_ptr<KernelPlan>& plan, int numTokens, void* output,
                               cudaStream_t stream);
 

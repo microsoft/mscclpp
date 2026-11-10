@@ -25,6 +25,39 @@ MSCCLPP_DEVICE_INLINE float loadRouteWeight(const P& p, const Route& route) {
   return mscclpp::bit_cast<float>(bits);
 }
 
+template <class P>
+MSCCLPP_DEVICE_INLINE float loadLocalRouteWeight(const P& p, const Route& route) {
+  const float* scores = p.directScores ? p.directScores : at<float>(p.local, p.symmetric.topkWeights);
+  size_t index = (size_t(route.rank) * p.runtimeTokens + route.token) * p.config.topK + route.slot;
+  return scores[index];
+}
+
+template <bool IsBf16, class P>
+MSCCLPP_DEVICE_INLINE void resolvePeerRouteSource(const P& p, const Route& route, int hidden, int rowBytes,
+                                                  const uint8_t*& source, const uint8_t*& sourceScale) {
+  source = peerAt<uint8_t>(p, route.rank, IsBf16 ? p.symmetric.input : p.symmetric.quantizedInput) +
+           size_t(route.token) * rowBytes;
+  if constexpr (!IsBf16) {
+    sourceScale = peerAt<uint8_t>(p, route.rank, p.symmetric.quantizedInputScale) +
+                  size_t(route.token) * w4SourceScaleStride(hidden);
+  }
+}
+
+template <bool IsBf16, class P>
+MSCCLPP_DEVICE_INLINE void resolveLocalGatherSource(const P& p, const Route& route, int hidden, int rowBytes,
+                                                    const uint8_t*& source, const uint8_t*& sourceScale) {
+  const size_t sourceRow = size_t(route.rank) * p.runtimeTokens + route.token;
+  const uint8_t* inputBase =
+      p.directInput ? p.directInput : at<uint8_t>(p.local, IsBf16 ? p.symmetric.input : p.symmetric.quantizedInput);
+  source = inputBase + sourceRow * rowBytes;
+  if constexpr (!IsBf16) {
+    const int scaleStride = p.directInputScale ? (hidden / 32) : w4SourceScaleStride(hidden);
+    const uint8_t* scaleBase =
+        p.directInputScale ? p.directInputScale : at<uint8_t>(p.local, p.symmetric.quantizedInputScale);
+    sourceScale = scaleBase + sourceRow * scaleStride;
+  }
+}
+
 template <class Types, class Storage>
 __device__ __forceinline__ void publishDispatchChunk(Storage& storage, int localWarp, int* counter, bool hasRow,
                                                      uint32_t phase) {
@@ -143,8 +176,8 @@ MSCCLPP_DEVICE_INLINE bool mapGroupToTile(const Workspace& w, int nLocalExperts,
   return true;
 }
 
-template <int Hidden, int DispatchBytes, int DispatchStages, class P, class Storage>
-__device__ __forceinline__ void dispatchTokens(const P& p, Storage& s, int localWarp) {
+template <bool LocalGather, int Hidden, int DispatchBytes, int DispatchStages, class P, class Storage>
+__device__ __forceinline__ void stageExpertTokens(const P& p, Storage& s, int localWarp) {
 #if MSCCLPP_BULK_AVAILABLE
   using Types = typename P::Collective;
   static_assert(Hidden >= 0);
@@ -197,15 +230,15 @@ __device__ __forceinline__ void dispatchTokens(const P& p, Storage& s, int local
     Route route{};
     if (hasRow) route = w.routes[row];
     hasRow = hasRow && route.rank >= 0;
-    // Local input staging/quantization precedes this kernel; remote inputs are ordered by
-    // the source's current-epoch route packets consumed in prepareRoutes.
     constexpr bool IsBf16 = P::Activation == ActivationDtype::Bf16;
-    auto* source = hasRow ? peerAt<uint8_t>(p, route.rank, IsBf16 ? p.symmetric.input : p.symmetric.quantizedInput) +
-                                size_t(route.token) * rowBytes
-                          : nullptr;
-    auto* sourceScale = (!IsBf16 && hasRow) ? peerAt<uint8_t>(p, route.rank, p.symmetric.quantizedInputScale) +
-                                                  size_t(route.token) * w4SourceScaleStride(hidden)
-                                            : nullptr;
+    const uint8_t* source = nullptr;
+    const uint8_t* sourceScale = nullptr;
+    if (hasRow) {
+      if constexpr (LocalGather)
+        resolveLocalGatherSource<IsBf16>(p, route, hidden, rowBytes, source, sourceScale);
+      else
+        resolvePeerRouteSource<IsBf16>(p, route, hidden, rowBytes, source, sourceScale);
+    }
     auto* destination = hasRow ? w.quantizedInput + size_t(w4StorageRow<typename P::Tiles>(row)) * rowBytes : nullptr;
     auto load = [&](int chunk) {
       int stage = chunk % DispatchStages;
@@ -227,7 +260,8 @@ __device__ __forceinline__ void dispatchTokens(const P& p, Storage& s, int local
 #pragma unroll
       for (int stage = 0; stage < DispatchStages; ++stage)
         if (stage < chunks) load(stage);
-      if (!p.config.combineRouteWeights) routeWeight = loadRouteWeight(p, route);
+      if (!p.config.combineRouteWeights)
+        routeWeight = LocalGather ? loadLocalRouteWeight(p, route) : loadRouteWeight(p, route);
     }
     auto process = [&](int chunk) {
       int stage = chunk % DispatchStages;
@@ -254,11 +288,24 @@ __device__ __forceinline__ void dispatchTokens(const P& p, Storage& s, int local
 }
 
 template <int Hidden, int DispatchBytes, int DispatchStages, class P, class Storage>
+__device__ __forceinline__ void dispatchTokens(const P& p, Storage& s, int localWarp) {
+  stageExpertTokens<false, Hidden, DispatchBytes, DispatchStages>(p, s, localWarp);
+}
+
+template <int Hidden, int DispatchBytes, int DispatchStages, class P, class Storage>
+__device__ __forceinline__ void gatherLocalTokens(const P& p, Storage& s, int localWarp) {
+  stageExpertTokens<true, Hidden, DispatchBytes, DispatchStages>(p, s, localWarp);
+}
+
+template <int Hidden, int DispatchBytes, int DispatchStages, class P, class Storage>
 __device__ __forceinline__ void runDispatchRole(const P& p, Storage& s, int warp) {
   using Schedule = typename P::Collective::WarpSchedule;
   if (warp >= Schedule::DispatchBegin && warp < Schedule::DispatchEnd) {
     traceKernel(KernelTracePhase::Dispatch, true);
-    dispatchTokens<Hidden, DispatchBytes, DispatchStages>(p, s, warp - Schedule::DispatchBegin);
+    if (p.config.computeOnly)
+      gatherLocalTokens<Hidden, DispatchBytes, DispatchStages>(p, s, warp - Schedule::DispatchBegin);
+    else
+      dispatchTokens<Hidden, DispatchBytes, DispatchStages>(p, s, warp - Schedule::DispatchBegin);
     traceKernel(KernelTracePhase::Dispatch, false);
   }
 }

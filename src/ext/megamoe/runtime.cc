@@ -82,7 +82,8 @@ MegaMoeJitConfigV1 jitConfig(const NativeConfig& c) {
                             c.gateUpClamp,
                             static_cast<int32_t>(c.activationDtype),
                             c.activationScale,
-                            int32_t(c.combineRouteWeights)};
+                            int32_t(c.combineRouteWeights),
+                            int32_t(c.computeOnly)};
 }
 
 MegaMoeJitWeightsV1 jitWeights(const PackedWeights& weights) {
@@ -202,7 +203,7 @@ size_t product(std::initializer_list<size_t> factors) {
 }
 
 struct RankInfo {
-  std::array<int, 10> config;
+  std::array<int, 11> config;
   int tag = 0;
   std::array<int, 19> specialization;
   char kernelId[MSCCLPP_MEGAMOE_JIT_ID_CAPACITY]{};
@@ -217,8 +218,17 @@ struct RankInfo {
 
 RankInfo rankInfo(const NativeConfig& c, int device) {
   RankInfo info{};
-  info.config = {c.worldSize, c.maxTokens, c.hidden,           c.intermediate,         c.numExperts,
-                 c.topK,      c.smMargin,  int(c.weightDtype), int(c.activationDtype), int(c.combineRouteWeights)};
+  info.config = {c.worldSize,
+                 c.maxTokens,
+                 c.hidden,
+                 c.intermediate,
+                 c.numExperts,
+                 c.topK,
+                 c.smMargin,
+                 int(c.weightDtype),
+                 int(c.activationDtype),
+                 int(c.combineRouteWeights),
+                 int(c.computeOnly)};
   info.gateUpClamp = c.gateUpClamp;
   if (c.worldSize == 1) return info;
   if (nvmlInit_v2() != NVML_SUCCESS)
@@ -602,44 +612,52 @@ size_t MegaMoeContext::validateForward(const void* x, void* output, int tokens) 
   if (tokens < 0 || tokens > config().maxTokens)
     throw std::invalid_argument("MegaMoE numTokens exceeds the configured capacity");
   size_t inputBytes = size_t(tokens) * config().hidden * 2;
-  if ((tokens && (!x || !output)) || overlaps(output, inputBytes, impl_->symmetric->data(), impl_->layout.bytes))
+  size_t outputBytes =
+      config().computeOnly ? size_t(config().worldSize) * tokens * config().topK * config().hidden * 2 : inputBytes;
+  if ((tokens && (!x || !output)) || overlaps(output, outputBytes, impl_->symmetric->data(), impl_->layout.bytes))
     throw std::invalid_argument("MegaMoE requires non-null arrays and output disjoint from the registered workspace");
   return inputBytes;
 }
 
 void MegaMoeContext::forward(const void* x, const int32_t* ids, const float* scores, void* output, int tokens,
-                             cudaStream_t stream, bool signalStart) {
+                             cudaStream_t stream, bool signalStart, const uint8_t* inputScales) {
   const size_t inputBytes = validateForward(x, output, tokens);
   const size_t routingBytes = size_t(tokens) * config().topK * 4;
-  if (tokens && (!ids || !scores)) throw std::invalid_argument("MegaMoE routing arrays must be non-null");
+  if (tokens && (!ids || (!config().combineRouteWeights && !scores)))
+    throw std::invalid_argument("MegaMoE routing arrays must be non-null");
+  if (config().computeOnly && tokens && config().weightDtype == WeightDtype::Mxfp4 &&
+      config().activationDtype == ActivationDtype::Mxfp8 && !inputScales)
+    throw std::invalid_argument("MegaMoE computeOnly W4A8 MXFP8 requires inputScales");
   const bool isW4 = config().weightDtype == WeightDtype::Mxfp4;
   const bool local = !isW4 && !config().combineRouteWeights && config().worldSize == 1 && config().numExperts == 1 &&
                      config().topK == 1;
   // Cross-input aliases require the original ordered copies rather than concurrent staging.
   const bool fusedStage =
-      !local && !overlaps(x, inputBytes, topkIds(), routingBytes) &&
+      !local && !config().computeOnly && !overlaps(x, inputBytes, topkIds(), routingBytes) &&
       !overlaps(x, inputBytes, topkWeights(), routingBytes) && !overlaps(ids, routingBytes, input(), inputBytes) &&
       !overlaps(ids, routingBytes, topkWeights(), routingBytes) &&
       !overlaps(scores, routingBytes, input(), inputBytes) && !overlaps(scores, routingBytes, topkIds(), routingBytes);
-  if (!isW4) {
-    stage(input(), x, inputBytes, stream);
-    if (fusedStage) {
+  if (!config().computeOnly) {
+    if (!isW4) {
+      stage(input(), x, inputBytes, stream);
+      if (fusedStage) {
+        validateStage(topkIds(), ids, routingBytes);
+        validateStage(topkWeights(), scores, routingBytes);
+      } else {
+        stage(topkIds(), ids, routingBytes, stream);
+        stage(topkWeights(), scores, routingBytes, stream);
+      }
+    } else if (fusedStage) {
+      validateStage(input(), x, inputBytes);
       validateStage(topkIds(), ids, routingBytes);
       validateStage(topkWeights(), scores, routingBytes);
+      if (tokens && (reinterpret_cast<uintptr_t>(x) & 15))
+        throw std::invalid_argument("MegaMoE W4A8 direct input must be 16-byte aligned");
     } else {
+      stage(input(), x, inputBytes, stream);
       stage(topkIds(), ids, routingBytes, stream);
       stage(topkWeights(), scores, routingBytes, stream);
     }
-  } else if (fusedStage) {
-    validateStage(input(), x, inputBytes);
-    validateStage(topkIds(), ids, routingBytes);
-    validateStage(topkWeights(), scores, routingBytes);
-    if (tokens && (reinterpret_cast<uintptr_t>(x) & 15))
-      throw std::invalid_argument("MegaMoE W4A8 direct input must be 16-byte aligned");
-  } else {
-    stage(input(), x, inputBytes, stream);
-    stage(topkIds(), ids, routingBytes, stream);
-    stage(topkWeights(), scores, routingBytes, stream);
   }
   impl_->startRecorded = false;
   if (signalStart) {
@@ -647,19 +665,20 @@ void MegaMoeContext::forward(const void* x, const int32_t* ids, const float* sco
     MSCCLPP_CUDATHROW(cudaEventRecord(impl_->startResetEvent, stream));
   }
   auto* signal = signalStart ? impl_->kernelEntrySignal.get() : nullptr;
-  // Fused staging hands the caller arrays to the kernels; ordered copies leave them on the staged workspace.
-  const void* launchInput = fusedStage ? x : nullptr;
-  const int32_t* launchIds = fusedStage ? ids : nullptr;
-  const float* launchScores = fusedStage ? scores : nullptr;
+  // Fused staging and computeOnly hand the caller arrays directly to the kernels.
+  const bool directLaunch = fusedStage || config().computeOnly;
+  const void* launchInput = directLaunch ? x : nullptr;
+  const int32_t* launchIds = directLaunch ? ids : nullptr;
+  const float* launchScores = directLaunch ? scores : nullptr;
   if (impl_->jitPlan) {
     char error[ErrorCapacity]{};
-    checkJit(impl_->module->launchDirect(impl_->jitPlan->handle, launchInput, launchIds, launchScores, tokens, output,
-                                         stream, signal, error, sizeof(error)),
+    checkJit(impl_->module->launchDirect(impl_->jitPlan->handle, launchInput, inputScales, launchIds, launchScores,
+                                         tokens, output, stream, signal, error, sizeof(error)),
              error, "launch");
   } else if (isW4) {
-    launchNativeW4A8(impl_->plan, launchInput, launchIds, launchScores, tokens, output, stream, signal);
+    launchNativeW4A8(impl_->plan, launchInput, launchIds, launchScores, tokens, output, stream, signal, inputScales);
   } else {
-    launchNativeW8A16(impl_->plan, launchIds, launchScores, tokens, output, stream, signal);
+    launchNativeW8A16(impl_->plan, launchIds, launchScores, tokens, output, stream, signal, launchInput);
   }
   impl_->startRecorded = signalStart;
 }

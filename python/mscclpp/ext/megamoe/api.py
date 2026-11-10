@@ -36,6 +36,7 @@ class MegaMoEConfig:
     activation_dtype: str = "mxfp8"
     activation_scale: float | None = None
     combine_route_weights: bool = False
+    compute_only: bool = False
 
     def __post_init__(self):
         for name in (
@@ -67,6 +68,8 @@ class MegaMoEConfig:
             raise ValueError("gate_up_clamp must be finite; negative disables clamping")
         if not isinstance(self.combine_route_weights, bool):
             raise ValueError("combine_route_weights must be a bool")
+        if not isinstance(self.compute_only, bool):
+            raise ValueError("compute_only must be a bool")
         if not isinstance(self.weight_dtype, str) or self.weight_dtype not in ("mxfp4", "mxfp8"):
             raise ValueError("weight_dtype must be 'mxfp4' or 'mxfp8'")
         if not isinstance(self.activation_dtype, str) or self.activation_dtype not in (
@@ -222,6 +225,7 @@ class MegaMoE:
             "sm_margin",
             "gate_up_clamp",
             "combine_route_weights",
+            "compute_only",
         ):
             setattr(native_config, name, getattr(config, name))
         native_config.weight_dtype = (
@@ -373,11 +377,24 @@ class MegaMoE:
         return output
 
     def forward(
-        self, inputs, topk_ids, topk_weights, *, output=None, stream=None, validate_routing=False, signal_start=False
+        self,
+        inputs,
+        topk_ids,
+        topk_weights,
+        *,
+        input_scales=None,
+        output=None,
+        stream=None,
+        validate_routing=False,
+        signal_start=False,
     ):
-        """Enqueue routed experts and return BF16 [T,H] output on ``stream``.
+        """Enqueue routed experts and return BF16 output on ``stream``.
 
         ``inputs`` is BF16, ``topk_ids`` is int32, and ``topk_weights`` is float32.
+        In ``compute_only=True`` mode, accepts rank-major ``[world_size, T, H]``
+        dispatched inputs (FP8 E4M3 + ``input_scales`` for W4A8, BF16 for W8A16)
+        and writes per-slot BF16 ``[world_size, T, top_k, H]`` output for
+        ``DIRECT_SEND`` combine.
         IDs must be in [0, num_experts); weights must be finite. Every rank must
         participate in the same launch order, but token counts may differ or be
         zero. Optional value validation synchronizes and is forbidden in capture;
@@ -399,6 +416,60 @@ class MegaMoE:
         stream = self._stream(stream)
         if not isinstance(signal_start, bool):
             raise TypeError("signal_start must be bool")
+        if self.config.compute_only:
+            if not isinstance(inputs, torch.Tensor) or inputs.ndim not in (2, 3):
+                raise ValueError("compute_only inputs must be a rank-2 or rank-3 torch.Tensor")
+            w, h, k = self.config.world_size, self.config.hidden, self.config.top_k
+            if inputs.ndim == 3:
+                if inputs.shape[0] != w:
+                    raise ValueError(f"inputs leading dimension must be world_size ({w})")
+                t = inputs.shape[1]
+                in_shape = (w, t, h)
+            else:
+                if inputs.shape[0] % w:
+                    raise ValueError(f"inputs row count must be divisible by world_size ({w})")
+                t = inputs.shape[0] // w
+                in_shape = (w * t, h)
+            if t > self.config.max_tokens:
+                raise ValueError("input token count exceeds max_tokens")
+            in_dtype = torch.bfloat16 if self.config.is_w8a16 else torch.float8_e4m3fn
+            _tensor(inputs, "inputs", in_shape, in_dtype, self.device)
+            ids_shape = (w, t, k) if isinstance(topk_ids, torch.Tensor) and topk_ids.ndim == 3 else (w * t, k)
+            _tensor(topk_ids, "topk_ids", ids_shape, torch.int32, self.device)
+            if topk_weights is not None or not self.config.combine_route_weights:
+                w_shape = (w, t, k) if isinstance(topk_weights, torch.Tensor) and topk_weights.ndim == 3 else (w * t, k)
+                _tensor(topk_weights, "topk_weights", w_shape, torch.float32, self.device)
+            if not self.config.is_w8a16 and not self.config.is_static_fp8:
+                s_shape = (
+                    (w, t, h // 32)
+                    if isinstance(input_scales, torch.Tensor) and input_scales.ndim == 3
+                    else (w * t, h // 32)
+                )
+                _tensor(input_scales, "input_scales", s_shape, torch.uint8, self.device)
+            elif input_scales is not None:
+                raise ValueError("input_scales is supported only for W4A8 MXFP8 compute_only")
+            with torch.cuda.device(self.device), torch.cuda.stream(stream):
+                if output is None:
+                    output = torch.empty((w, t, k, h), dtype=torch.bfloat16, device=self.device)
+                out_shape = (w, t, k, h) if isinstance(output, torch.Tensor) and output.ndim == 4 else (w * t, k, h)
+                _tensor(output, "output", out_shape, torch.bfloat16, self.device)
+                for tensor in (inputs, topk_ids, topk_weights, input_scales, output):
+                    if tensor is not None:
+                        tensor.record_stream(stream)
+                self._native.forward(
+                    inputs.data_ptr(),
+                    topk_ids.data_ptr(),
+                    0 if topk_weights is None else topk_weights.data_ptr(),
+                    output.data_ptr(),
+                    t,
+                    stream.cuda_stream,
+                    signal_start,
+                    0 if input_scales is None else input_scales.data_ptr(),
+                )
+            return output
+
+        if input_scales is not None:
+            raise ValueError("input_scales is only supported when compute_only=True")
         if not isinstance(inputs, torch.Tensor) or inputs.ndim != 2:
             raise ValueError("inputs must be a rank-2 torch.Tensor")
         t, h = inputs.shape

@@ -63,6 +63,7 @@ def test_config_preserves_positional_gate_clamp():
         {"activation_scale": -1.0},
         {"activation_scale": float("nan")},
         {"combine_route_weights": 1},
+        {"compute_only": 1},
     ],
 )
 def test_config_rejects_invalid(override):
@@ -390,3 +391,66 @@ def test_native_w4a8_combine_route_weights(activation_dtype, activation_scale):
     expected = _reference(config, inputs, ids, torch.where(ids >= 0, scores, 0.0), weights)
     torch.testing.assert_close(output, expected, rtol=0.05, atol=0.02)
     del context
+
+
+@pytest.mark.parametrize("weight_dtype", ["mxfp4", "mxfp8"])
+def test_native_compute_only_graph(weight_dtype):
+    from mscclpp import Communicator, TcpBootstrap
+    from mscclpp.ext.megamoe import MegaMoE, is_available, quantize_mxfp8
+    from mscclpp.ext.megamoe.benchmark import _reference, _weights
+
+    torch = pytest.importorskip("torch")
+    if (
+        not is_available()
+        or not torch.cuda.is_available()
+        or torch.cuda.get_device_capability() not in ((10, 0), (10, 3), (10, 7))
+    ):
+        pytest.skip("requires native MegaMoE on an SM100-family GPU")
+    device = torch.device("cuda", torch.cuda.current_device())
+    sm_count = torch.cuda.get_device_properties(device).multi_processor_count
+    config = _config(
+        world_size=1,
+        max_tokens=32,
+        hidden=4096,
+        intermediate=4608,
+        num_experts=4,
+        top_k=2,
+        sm_margin=sm_count - 8,
+        weight_dtype=weight_dtype,
+        compute_only=True,
+    )
+    assert config.compute_only is True
+    bootstrap = TcpBootstrap.create(0, 1)
+    bootstrap.initialize(TcpBootstrap.create_unique_id())
+    torch.manual_seed(6101)
+    weights = _weights(config, device)
+    context = MegaMoE(config, Communicator(bootstrap), *weights)
+    bf16_inputs = torch.randn((1, 32, 4096), device=device, dtype=torch.bfloat16).mul_(0.125)
+    if config.is_w8a16:
+        inputs, input_scales = bf16_inputs, None
+    else:
+        inputs, input_scales = quantize_mxfp8(bf16_inputs.float())
+    ids = torch.arange(32, device=device, dtype=torch.int32).remainder(4)
+    ids = torch.stack((ids, (ids + 1).remainder(4)), dim=1).unsqueeze(0).contiguous()
+    scores = torch.rand((1, 32, 2), device=device, dtype=torch.float32)
+    scores /= scores.sum(dim=-1, keepdim=True)
+    output = torch.empty((1, 32, 2, 4096), device=device, dtype=torch.bfloat16)
+    context(inputs, ids, scores, input_scales=input_scales, output=output)
+    torch.cuda.synchronize()
+    expected = _reference(config, bf16_inputs[0], ids[0], scores[0], weights)
+    actual = output[0].float().sum(dim=1).to(torch.bfloat16)
+    torch.testing.assert_close(actual, expected, rtol=0.05, atol=0.02)
+
+    graph = torch.cuda.CUDAGraph()
+    stream = torch.cuda.Stream(device=device)
+    stream.wait_stream(torch.cuda.current_stream(device))
+    with torch.cuda.graph(graph, stream=stream):
+        context(inputs, ids, scores, input_scales=input_scales, output=output, stream=stream)
+    with torch.cuda.stream(stream):
+        output.zero_()
+        for _ in range(3):
+            graph.replay()
+    stream.synchronize()
+    actual_graph = output[0].float().sum(dim=1).to(torch.bfloat16)
+    torch.testing.assert_close(actual_graph, expected, rtol=0.05, atol=0.02)
+    del graph, context

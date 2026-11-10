@@ -222,12 +222,22 @@ __device__ __forceinline__ auto w8a16ParameterView(const P& p, NativeConfig conf
   return w4a8ParameterView<ActivationDtype::Bf16>(p, config);
 }
 
-using W4A8KernelEntry = void (*)(W4A8Parameters, int, __bfloat16*, uint32_t*, const int32_t*, const float*);
+template <class P>
+struct FinalOutputParameterView : P {
+  __bfloat16* finalOutput;
+  const uint8_t* directInput;
+  const uint8_t* directInputScale;
+  const float* directScores;
+  int runtimeTokens;
+};
+
+using W4A8KernelEntry = void (*)(W4A8Parameters, int, __bfloat16*, uint32_t*, const void*, const uint8_t*,
+                                 const int32_t*, const float*);
 W4A8KernelEntry w4a8KernelEntry(const NativeConfig& config, bool capturing = false);
 
 template <int LocalMode = 0>
 using W8A16KernelEntry = void (*)(std::conditional_t<LocalMode != 0, W8A16LocalParameters, W8A16Parameters>, int,
-                                  __bfloat16*, uint32_t*, const int32_t*, const float*);
+                                  __bfloat16*, uint32_t*, const void*, const int32_t*, const float*);
 
 template <int LocalMode = 0>
 W8A16KernelEntry<LocalMode> w8a16KernelEntry(const NativeConfig& config);

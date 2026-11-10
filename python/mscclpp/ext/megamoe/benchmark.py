@@ -418,10 +418,18 @@ def main():
         default=False,
         help="apply routing weights in combine instead of FC1/FC2",
     )
+    parser.add_argument(
+        "--compute-only",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="disable routing, dispatch, and combine communication; run GEMM and epilogue computation only",
+    )
     parser.add_argument("--json-output", default=None, help="optional output path")
     args = parser.parse_args()
     if min(args.tokens, args.graph_batch, args.warmup, args.iterations) < 1:
         parser.error("tokens, graph-batch, warmup, and iterations must be positive")
+    if args.compute_only and args.check:
+        parser.error("--check cannot be used with --compute-only")
     if (args.hidden, args.intermediate) not in (
         (4096, 4608),
         (4096, 5120),
@@ -466,6 +474,7 @@ def main():
         activation_dtype=args.activation_dtype,
         activation_scale=args.activation_scale,
         combine_route_weights=args.combine_route_weights,
+        compute_only=args.compute_only,
     )
     kernel_config = W4A8KernelConfig()
     if not config.is_w8a16 and args.w4_profile is not None:
@@ -514,16 +523,40 @@ def main():
         config, args.routing_pattern, args.zipf_alpha, args.seed, device, lognormal_sigma=args.lognormal_sigma
     )
     routing_summary = _routing_summary(config, ids, kernel_config.tile_n)
-    if args.input_mode == "direct":
-        direct = context.input_view(args.tokens)
-        direct.copy_(inputs)
-        inputs = direct
-    output = torch.empty_like(inputs)
+    input_scales = None
+    if config.compute_only:
+        from .quantization import quantize_fp8_static, quantize_mxfp8
+
+        gathered_inputs = [torch.empty_like(inputs) for _ in range(world)]
+        gathered_ids = [torch.empty_like(ids) for _ in range(world)]
+        gathered_scores = [torch.empty_like(scores) for _ in range(world)]
+        if world > 1:
+            dist.all_gather(gathered_inputs, inputs)
+            dist.all_gather(gathered_ids, ids)
+            dist.all_gather(gathered_scores, scores)
+        else:
+            gathered_inputs[0], gathered_ids[0], gathered_scores[0] = inputs, ids, scores
+        rm_inputs = torch.stack(gathered_inputs, dim=0).contiguous()
+        ids = torch.stack(gathered_ids, dim=0).contiguous()
+        scores = torch.stack(gathered_scores, dim=0).contiguous()
+        if config.is_w8a16:
+            inputs = rm_inputs
+        elif config.is_static_fp8:
+            inputs = quantize_fp8_static(rm_inputs.float(), config.activation_scale)
+        else:
+            inputs, input_scales = quantize_mxfp8(rm_inputs.float())
+        output = torch.empty((world, args.tokens, args.top_k, args.hidden), device=device, dtype=torch.bfloat16)
+    else:
+        if args.input_mode == "direct":
+            direct = context.input_view(args.tokens)
+            direct.copy_(inputs)
+            inputs = direct
+        output = torch.empty_like(inputs)
     stream = torch.cuda.Stream(device=device)
     stream.wait_stream(torch.cuda.current_stream(device))
 
     def launch():
-        context(inputs, ids, scores, output=output, stream=stream)
+        context(inputs, ids, scores, input_scales=input_scales, output=output, stream=stream)
 
     for _ in range(args.warmup):
         launch()

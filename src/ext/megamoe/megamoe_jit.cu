@@ -59,6 +59,7 @@ NativeConfig nativeConfig(const MegaMoeJitConfigV1* c) {
   if (!c) throw std::invalid_argument("Invalid MegaMoE JIT configuration");
   if (c->combineRouteWeights != 0 && c->combineRouteWeights != 1)
     throw std::invalid_argument("Invalid MegaMoE JIT combineRouteWeights flag");
+  if (c->computeOnly != 0 && c->computeOnly != 1) throw std::invalid_argument("Invalid MegaMoE JIT computeOnly flag");
   return NativeConfig{c->rank,
                       c->worldSize,
                       c->maxTokens,
@@ -71,7 +72,8 @@ NativeConfig nativeConfig(const MegaMoeJitConfigV1* c) {
                       WeightDtype::Mxfp4,
                       static_cast<ActivationDtype>(c->activationDtype),
                       c->activationScale,
-                      bool(c->combineRouteWeights)};
+                      bool(c->combineRouteWeights),
+                      bool(c->computeOnly)};
 }
 
 PackedWeights nativeWeights(const MegaMoeJitWeightsV1* weights) {
@@ -123,18 +125,20 @@ int jitCreate(const MegaMoeJitConfigV1* config, void* symmetric, const uint64_t*
 
 void jitDestroy(void* plan) noexcept { delete static_cast<JitPlan*>(plan); }
 
-int jitLaunchDirect(void* plan, const void* input, const int32_t* ids, const float* scores, int32_t tokens,
-                    void* output, void* stream, uint32_t* kernelEntrySignal, char* error, size_t capacity) noexcept {
+int jitLaunchDirect(void* plan, const void* input, const uint8_t* inputScales, const int32_t* ids, const float* scores,
+                    int32_t tokens, void* output, void* stream, uint32_t* kernelEntrySignal, char* error,
+                    size_t capacity) noexcept {
   return jitCall(error, capacity, [&] {
     if (!plan) throw std::invalid_argument("Invalid MegaMoE JIT launch");
     jit::launchNativeW4A8(*static_cast<JitPlan*>(plan), input, ids, scores, tokens, output,
-                          reinterpret_cast<cudaStream_t>(stream), kernelEntrySignal);
+                          reinterpret_cast<cudaStream_t>(stream), kernelEntrySignal, inputScales);
   });
 }
 
 int jitLaunch(void* plan, int32_t tokens, void* output, void* stream, uint32_t* kernelEntrySignal, char* error,
               size_t capacity) noexcept {
-  return jitLaunchDirect(plan, nullptr, nullptr, nullptr, tokens, output, stream, kernelEntrySignal, error, capacity);
+  return jitLaunchDirect(plan, nullptr, nullptr, nullptr, nullptr, tokens, output, stream, kernelEntrySignal, error,
+                         capacity);
 }
 
 const MegaMoeJitApiV1 JitApi = [] {
@@ -187,8 +191,8 @@ extern "C" __attribute__((visibility("default"))) uint32_t mscclpp_megamoe_jit_o
 }
 
 extern "C" __attribute__((visibility("default"))) int mscclpp_megamoe_jit_launch_direct_v1(
-    void* plan, const void* input, const int32_t* topkIds, const float* topkWeights, int32_t numTokens, void* output,
-    void* stream, uint32_t* kernelEntrySignal, char* error, size_t capacity) {
-  return jitLaunchDirect(plan, input, topkIds, topkWeights, numTokens, output, stream, kernelEntrySignal, error,
-                         capacity);
+    void* plan, const void* input, const uint8_t* inputScales, const int32_t* topkIds, const float* topkWeights,
+    int32_t numTokens, void* output, void* stream, uint32_t* kernelEntrySignal, char* error, size_t capacity) {
+  return jitLaunchDirect(plan, input, inputScales, topkIds, topkWeights, numTokens, output, stream, kernelEntrySignal,
+                         error, capacity);
 }

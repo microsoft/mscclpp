@@ -21,11 +21,12 @@ MSCCLPP_DEVICE_INLINE uint32_t packRouteEntry(int expert, int offset) {
   return uint32_t(expert) << 16 | uint32_t(offset);
 }
 
-// Decode a global route index, source * maxTokens * topK + the source's route index.
+// Decode a global route index, source * tokensPerRank * topK + the source's route index.
 template <class P>
-MSCCLPP_DEVICE_INLINE Route makeRoute(const P& p, uint32_t route) {
+MSCCLPP_DEVICE_INLINE Route makeRoute(const P& p, uint32_t route, int nTokens = 0) {
   const int topK = p.config.topK;
-  const uint32_t nRoutesPerRank = uint32_t(p.config.maxTokens) * topK;
+  const int tokensPerRank = (p.config.computeOnly && nTokens > 0) ? nTokens : p.config.maxTokens;
+  const uint32_t nRoutesPerRank = uint32_t(tokensPerRank) * topK;
   int rank = p.config.worldSize > 1 ? int(route / nRoutesPerRank) : 0;
   int index = int(route - uint32_t(rank) * nRoutesPerRank);
   if ((topK & (topK - 1)) == 0) return Route{rank, index >> (__ffs(topK) - 1), index & (topK - 1), 0.0f};
@@ -339,6 +340,85 @@ MSCCLPP_DEVICE_INLINE void resetReadyCounters(const P& p, int nTokenBlocks) {
     for (int chunk = 0; chunk < w4InputChunks<typename P::Collective>(p.config.hidden) - 1; ++chunk)
       *w4InputChunkCounter<typename P::Collective>(w, p.config.hidden, block, chunk) = 0;
   }
+}
+
+template <class P>
+__device__ void prepareLocalRoutes(const P& p, int nTokens, const int32_t* ids) {
+  using SharedStorage = typename P::SharedStorage;
+  const auto& c = p.config;
+  const auto& w = p.workspace;
+  const int nLocalExperts = c.numExperts / c.worldSize;
+  const int nRoutes = c.worldSize * nTokens * c.topK;
+  const int firstChunkExpertId = loadRouteId(p, ids, blockIdx.x * RouteChunk + threadIdx.x, nRoutes);
+  if (nTokens == 0) {
+    if (blockIdx.x == 0 && threadIdx.x < warpSize) {
+      int nTokenBlocks = buildTokenBlockMetadata(p);
+      if (threadIdx.x == 0) w.control->tokenBlocks = nTokenBlocks;
+    }
+    syncResidentGrid(&w.control->residentGridSyncState, gridDim.x);
+    return;
+  }
+
+  extern __shared__ __align__(1024) char storage[];
+  auto& shared = *reinterpret_cast<SharedStorage*>(storage);
+  const RoutingScratch scratch = makeRoutingScratch(shared, nLocalExperts, c.worldSize);
+#pragma unroll 1
+  for (int counter = threadIdx.x; counter <= nLocalExperts + c.worldSize; counter += P::ThreadCount)
+    scratch.nRoutesByExpert[counter] = 0;
+  __syncthreads();
+
+  const int lane = threadIdx.x % warpSize;
+  const int nLiveChunks = routeChunks(nRoutes);
+  const int firstLocalExpert = c.rank * nLocalExperts;
+  auto scanRoutes = [&](auto&& handleOwnedRoute) {
+    for (int chunkIdx = blockIdx.x; chunkIdx < nLiveChunks; chunkIdx += gridDim.x) {
+      int routeIndex = chunkIdx * RouteChunk + threadIdx.x;
+      int expertId = chunkIdx == blockIdx.x ? firstChunkExpertId : loadRouteId(p, ids, routeIndex, nRoutes);
+      int localExpert = (expertId >= firstLocalExpert && expertId < firstLocalExpert + nLocalExperts)
+                            ? (expertId - firstLocalExpert)
+                            : -1;
+      handleOwnedRoute(localExpert, uint32_t(routeIndex), lane);
+    }
+  };
+  scanRoutes([&](int expert, uint32_t route, int l) { cacheRoute(scratch, expert, route, l); });
+  __syncthreads();
+#pragma unroll 1
+  for (int expert = threadIdx.x; expert < nLocalExperts; expert += P::ThreadCount) {
+    int nExpertRoutes = scratch.nRoutesByExpert[expert];
+    scratch.routeOffsets[expert] =
+        nExpertRoutes ? atomicFetchAdd<int, scopeDevice>(w.counts + expert, nExpertRoutes, memoryOrderRelaxed) : 0;
+  }
+  syncResidentGrid(&w.control->residentGridSyncState, gridDim.x);
+  if (threadIdx.x < warpSize) {
+    int nTokenBlocks = buildTokenBlockMetadata(p, scratch.routeOffsets);
+    if (threadIdx.x == 0) {
+      *scratch.nTokenBlocks = nTokenBlocks;
+      if (blockIdx.x == 0) w.control->tokenBlocks = nTokenBlocks;
+    }
+  }
+  __syncthreads();
+  resetReadyCounters(p, *scratch.nTokenBlocks);
+  const int nCachedRoutes = *scratch.nRoutes;
+  if (nCachedRoutes <= scratch.capacity) {
+#pragma unroll 1
+    for (int slot = threadIdx.x; slot < nCachedRoutes; slot += P::ThreadCount) {
+      CachedRoute entry = scratch.cachedRoutes[slot];
+      w.routes[scratch.routeOffsets[entry.expert] + entry.position] = makeRoute(p, entry.route, nTokens);
+    }
+  } else {
+    scanRoutes([&](int expert, uint32_t route, int l) {
+      int position = reserveRouteGroup(scratch.routeOffsets, expert, l);
+      if (position >= 0) w.routes[position] = makeRoute(p, route, nTokens);
+    });
+  }
+#if MSCCLPP_BULK_AVAILABLE
+  bulkFence();
+#endif
+  syncResidentGrid(&w.control->residentGridSyncState, gridDim.x);
+#pragma unroll 1
+  for (int expert = blockIdx.x * P::ThreadCount + threadIdx.x; expert < nLocalExperts;
+       expert += gridDim.x * P::ThreadCount)
+    w.counts[expert] = 0;
 }
 
 // Every CTA sends its chunks of the rank's routes to their owners and caches its local-expert routes and its share of

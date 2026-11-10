@@ -218,9 +218,12 @@ MSCCLPP_DEVICE_INLINE float2 fc2RouteWeights(const KernelParams& params, const T
                        firstToken + token + 1 < validRows && ids[row + 1] == 0 ? 1.0f : 0.0f);
   }
   if constexpr (KernelParams::Activation == ActivationDtype::Bf16) return make_float2(1.0f, 1.0f);
-  if (params.config.combineRouteWeights) return make_float2(1.0f, 1.0f);
+  const float scale = (KernelParams::Activation == ActivationDtype::Fp8Static && params.config.computeOnly)
+                          ? params.config.activationScale
+                          : 1.0f;
+  if (params.config.combineRouteWeights) return make_float2(scale, scale);
   const Route* routes = params.workspace.routes + row;
-  return make_float2(routes[0].weight, routes[1].weight);
+  return make_float2(routes[0].weight * scale, routes[1].weight * scale);
 }
 
 // Scales a warp's 32 FC2 features x ReadTokens tokens by route weights in pairs and writes token-major BF16/FP8 rows.
@@ -233,21 +236,23 @@ MSCCLPP_DEVICE_INLINE void packFc2Chunk(const KernelParams& params, const Task& 
   int lane = threadIdx.x % 32;
   int firstToken = readerGroup * ReadTokens;
   if constexpr (KernelParams::Activation == ActivationDtype::Fp8Static) {
-    const int warpFeatureBase = (threadIdx.x / 32 % 4) * 32;
+    if (!params.config.computeOnly) {
+      const int warpFeatureBase = (threadIdx.x / 32 % 4) * 32;
 #pragma unroll
-    for (int group = 0; group < ReadTokens / 8; ++group) {
-      int token = group * 8 + lane % 4 * 2;
-      float2 weights = fc2RouteWeights<LocalMode>(params, task, tokenOffset, validRows, firstToken, token);
-      uint8_t* tokenRows = s.epilogue.packedFp8 + (firstToken + token) * PackedFp8RowStride;
+      for (int group = 0; group < ReadTokens / 8; ++group) {
+        int token = group * 8 + lane % 4 * 2;
+        float2 weights = fc2RouteWeights<LocalMode>(params, task, tokenOffset, validRows, firstToken, token);
+        uint8_t* tokenRows = s.epilogue.packedFp8 + (firstToken + token) * PackedFp8RowStride;
 #pragma unroll
-      for (int i = 0; i < 4; ++i) {
-        const uint32_t* pair = accumulator[i / 2] + group * 4 + i % 2 * 2;
-        mscclpp::f32x2 scaled = __fmul2_rn(make_float2(__uint_as_float(pair[0]), __uint_as_float(pair[1])), weights);
-        uint16_t fp8Pair = mscclpp::bit_cast<uint16_t>(mscclpp::to<mscclpp::f8_e4m3x2>(scaled));
-        storeTransposedFp8Quad(tokenRows, PackedFp8RowStride, warpFeatureBase + i * 8, lane, fp8Pair);
+        for (int i = 0; i < 4; ++i) {
+          const uint32_t* pair = accumulator[i / 2] + group * 4 + i % 2 * 2;
+          mscclpp::f32x2 scaled = __fmul2_rn(make_float2(__uint_as_float(pair[0]), __uint_as_float(pair[1])), weights);
+          uint16_t fp8Pair = mscclpp::bit_cast<uint16_t>(mscclpp::to<mscclpp::f8_e4m3x2>(scaled));
+          storeTransposedFp8Quad(tokenRows, PackedFp8RowStride, warpFeatureBase + i * 8, lane, fp8Pair);
+        }
       }
+      return;
     }
-    return;
   }
   // Matrix m of each x4 store holds the warp's features [8m, 8m + 8); lane 8m + j addresses token row j.
   auto* rows = s.epilogue.packed + (firstToken + lane % 8) * PackedRowStride + threadIdx.x / 32 % 4 * 32 + lane / 8 * 8;
@@ -314,6 +319,14 @@ MSCCLPP_DEVICE_INLINE void storeOutputChunk(const KernelParams& params, const Ta
   int token = warp + lane * EpilogueWarps;
   if (lane < WarpTokens && token < validRows) {
     Route route = params.workspace.routes[task.block * KernelTileN + tokenOffset + token];
+    if (params.config.computeOnly) {
+      size_t offset =
+          ((size_t(route.rank) * params.runtimeTokens + route.token) * params.config.topK + route.slot) * hidden +
+          feature;
+      bulkStore(finalOutput + offset, s.epilogue.packed + token * PackedRowStride, CtaTileM * sizeof(__bfloat16));
+      bulkStoreCommit();
+      return;
+    }
     if constexpr (KernelParams::Activation == ActivationDtype::Fp8Static) {
       auto* output = peerAt<uint8_t>(params, route.rank, params.symmetric.partialOutput);
       size_t offset = (size_t(route.token) * params.config.topK + route.slot) * params.config.hidden + feature;
@@ -600,6 +613,7 @@ MSCCLPP_DEVICE_INLINE void combineResults(const KernelParams& params, int tokens
 
 template <int Hidden = 0, class KernelParams>
 __device__ void finishAndCombine(const KernelParams& p, int tokens, __bfloat16* output) {
+  if (p.config.computeOnly) return;
   if constexpr (KernelParams::WeightMxfp4 && KernelParams::Activation == ActivationDtype::Mxfp8) {
     if (!p.config.combineRouteWeights && p.config.worldSize == 1 && p.config.topK == 1) return;
   }

@@ -23,14 +23,10 @@ extern "C" int mscclpp_megamoe_w4_trace_copy(void* events, size_t bytes, uint32_
 #endif
 #endif
 
-template <class P>
-struct FinalOutputParameterView : P {
-  __bfloat16* finalOutput;
-};
-
 template <int Hidden, int Intermediate, bool FixedTokenCount = false, ActivationDtype ActDtype = ActivationDtype::Mxfp8>
 __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ const W4A8Parameters parameters,
                                                             int tokens, __bfloat16* output, uint32_t* kernelEntrySignal,
+                                                            const void* input, const uint8_t* inputScales,
                                                             const int32_t* ids, const float* scores) {
   using namespace cute;
   using Parameters = W4A8Parameters;
@@ -45,7 +41,8 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   configuration.hidden = Hidden;
   configuration.intermediate = Intermediate;
   auto view = w4a8ParameterView<ActDtype>(parameters, configuration);
-  auto p = FinalOutputParameterView<decltype(view)>{view, output};
+  auto p = FinalOutputParameterView<decltype(view)>{view,        output, static_cast<const uint8_t*>(input),
+                                                    inputScales, scores, tokens};
   extern __shared__ __align__(1024) char storage[];
   auto& s = *reinterpret_cast<W4A8SharedStorageT<Types>*>(storage);
   int warp = threadIdx.x / warpSize;
@@ -58,8 +55,12 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   if (blockIdx.x == 0 && threadIdx.x == 0 && kernelEntrySignal)
     atomicStore<uint32_t, scopeDevice>(kernelEntrySignal, 1, memoryOrderRelease);
   traceKernel(KernelTracePhase::Routing, true);
-  // Local routes read source inputs directly; remote routes consume current-epoch packets.
-  prepareRoutes<FixedTokenCount>(p, tokens, ids, scores);
+  if (p.config.computeOnly) {
+    prepareLocalRoutes(p, tokens, ids);
+  } else {
+    // Local routes read source inputs directly; remote routes consume current-epoch packets.
+    prepareRoutes<FixedTokenCount>(p, tokens, ids, scores);
+  }
   traceKernel(KernelTracePhase::Routing, false);
   cute::conditional_t<ClusterSize == 1, cute::TMEM::Allocator1Sm, cute::TMEM::Allocator2Sm> allocator;
 

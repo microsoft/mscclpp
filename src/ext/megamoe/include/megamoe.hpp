@@ -110,7 +110,7 @@ class MegaMoeContext {
   /// @param signalStart Reset and publish an execution-start signal for waitUntilStarted().
   /// This opt-in adds a reset/event before the kernel; ordinary forwards do not.
   void forward(const void* input, const int32_t* topkIds, const float* topkWeights, void* output, int numTokens,
-               cudaStream_t stream, bool signalStart = false);
+               cudaStream_t stream, bool signalStart = false, const uint8_t* inputScales = nullptr);
 
   /// Order a consumer stream after the latest signalStart forward has entered its kernel.
   /// This does not wait for completion or make the forward's output ready. The

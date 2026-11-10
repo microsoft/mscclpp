@@ -24,7 +24,11 @@ __device__ __forceinline__ int prepareW8A16TokenBlocks(const Parameters& p, int 
     return (tokens + Parameters::Tiles::N - 1) / Parameters::Tiles::N;
   } else {
     traceKernel(KernelTracePhase::Routing, true);
-    prepareRoutes<false>(p, tokens, ids, scores);
+    if (p.config.computeOnly) {
+      prepareLocalRoutes(p, tokens, ids);
+    } else {
+      prepareRoutes<false>(p, tokens, ids, scores);
+    }
     traceKernel(KernelTracePhase::Routing, false);
     return p.workspace.control->tokenBlocks;
   }
@@ -39,8 +43,8 @@ template <int Hidden, int Intermediate, int LocalMode = 0,
           class Parameters = std::conditional_t<LocalMode != 0, W8A16LocalParameters, W8A16Parameters>>
 __global__ __launch_bounds__((LocalMode ? LocalThreads : W4Threads),
                              1) void megaMoeW8A16(__grid_constant__ const Parameters parameters, int tokens,
-                                                  __bfloat16* output, uint32_t* kernelEntrySignal, const int32_t* ids,
-                                                  const float* scores) {
+                                                  __bfloat16* output, uint32_t* kernelEntrySignal, const void* input,
+                                                  const int32_t* ids, const float* scores) {
   using namespace cute;
   constexpr bool Local = LocalMode != 0;
   using Types = W8A16CollectiveTypesT<Local>;
@@ -58,7 +62,9 @@ __global__ __launch_bounds__((LocalMode ? LocalThreads : W4Threads),
   NativeConfig configuration = parameters.config;
   configuration.hidden = Hidden;
   configuration.intermediate = Intermediate;
-  auto p = w8a16ParameterView(parameters, configuration);
+  auto view = w8a16ParameterView(parameters, configuration);
+  auto p = FinalOutputParameterView<decltype(view)>{view,    output, static_cast<const uint8_t*>(input),
+                                                    nullptr, scores, tokens};
   auto& s = *reinterpret_cast<SharedStorage*>(storage);
   int warp = threadIdx.x / warpSize;
   int lane = threadIdx.x % warpSize;

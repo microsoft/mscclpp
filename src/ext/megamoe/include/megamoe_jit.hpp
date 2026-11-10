@@ -38,6 +38,7 @@ typedef struct MegaMoeJitConfigV1 {
   int32_t activationDtype;
   float activationScale;
   int32_t combineRouteWeights;
+  int32_t computeOnly;
 } MegaMoeJitConfigV1;
 
 typedef struct MegaMoeJitWeightsV1 {
@@ -106,9 +107,10 @@ typedef const MegaMoeJitApiV1* (*MegaMoeJitGetApiV1)(void);
 // and fuses their workspace staging, so no separate copy precedes it. A null array selects its staged workspace copy.
 // The input must be 16-byte aligned, arrays must not alias another staging buffer, and they must stay valid until the
 // launch, or every replay of a graph capturing it, completes.
-typedef int (*MegaMoeJitLaunchDirectV1)(void* plan, const void* input, const int32_t* topkIds, const float* topkWeights,
-                                        int32_t numTokens, void* output, void* stream, uint32_t* kernelEntrySignal,
-                                        char* error, size_t capacity);
+typedef int (*MegaMoeJitLaunchDirectV1)(void* plan, const void* input, const uint8_t* inputScales,
+                                        const int32_t* topkIds, const float* topkWeights, int32_t numTokens,
+                                        void* output, void* stream, uint32_t* kernelEntrySignal, char* error,
+                                        size_t capacity);
 
 #ifdef __cplusplus
 extern "C" {
@@ -117,8 +119,8 @@ __attribute__((visibility("default"))) const MegaMoeJitApiV1* mscclpp_megamoe_ji
 __attribute__((visibility("default"))) int mscclpp_megamoe_jit_fixed_token_count_v1(void);
 __attribute__((visibility("default"))) uint32_t mscclpp_megamoe_jit_optimization_flags_v1(void);
 __attribute__((visibility("default"))) int mscclpp_megamoe_jit_launch_direct_v1(
-    void* plan, const void* input, const int32_t* topkIds, const float* topkWeights, int32_t numTokens, void* output,
-    void* stream, uint32_t* kernelEntrySignal, char* error, size_t capacity);
+    void* plan, const void* input, const uint8_t* inputScales, const int32_t* topkIds, const float* topkWeights,
+    int32_t numTokens, void* output, void* stream, uint32_t* kernelEntrySignal, char* error, size_t capacity);
 #ifdef __cplusplus
 }
 #endif

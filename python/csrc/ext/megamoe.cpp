@@ -77,7 +77,8 @@ void register_megamoe(nb::module_& m) {
       .def_rw("weight_dtype", &NativeConfig::weightDtype)
       .def_rw("activation_dtype", &NativeConfig::activationDtype)
       .def_rw("activation_scale", &NativeConfig::activationScale)
-      .def_rw("combine_route_weights", &NativeConfig::combineRouteWeights);
+      .def_rw("combine_route_weights", &NativeConfig::combineRouteWeights)
+      .def_rw("compute_only", &NativeConfig::computeOnly);
   nb::class_<MegaMoeContext>(m, "CppMegaMoeContext")
       .def_static(
           "create",
@@ -134,13 +135,14 @@ void register_megamoe(nb::module_& m) {
       .def(
           "forward",
           [](MegaMoeContext& self, uintptr_t input, uintptr_t ids, uintptr_t scores, uintptr_t output, int tokens,
-             uintptr_t stream, bool signalStart) {
+             uintptr_t stream, bool signalStart, uintptr_t inputScales) {
             self.forward(reinterpret_cast<const void*>(input), reinterpret_cast<const int32_t*>(ids),
                          reinterpret_cast<const float*>(scores), reinterpret_cast<void*>(output), tokens,
-                         reinterpret_cast<cudaStream_t>(stream), signalStart);
+                         reinterpret_cast<cudaStream_t>(stream), signalStart,
+                         reinterpret_cast<const uint8_t*>(inputScales));
           },
           nb::arg("input"), nb::arg("topk_ids"), nb::arg("topk_weights"), nb::arg("output"), nb::arg("num_tokens"),
-          nb::arg("stream"), nb::arg("signal_start") = false);
+          nb::arg("stream"), nb::arg("signal_start") = false, nb::arg("input_scales") = 0);
 #else
   m.def("megamoe_available", []() { return false; });
 #endif

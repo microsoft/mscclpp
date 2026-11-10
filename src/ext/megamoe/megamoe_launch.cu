@@ -367,11 +367,13 @@ void validateNativeConfig(const NativeConfig& c) {
 SymmetricLayout getSymmetricLayout(const NativeConfig& c) {
   validateNativeConfig(c);
   SymmetricLayout layout{};
+  const size_t rankMultiplier = c.computeOnly ? size_t(c.worldSize) : 1;
   const size_t inputTokens =
       detail::isLocalExpert(c) ? detail::aligned(c.maxTokens, detail::LocalTokenAlignment) : size_t(c.maxTokens);
-  layout.input = detail::appendRegion(layout.bytes, inputTokens * c.hidden * sizeof(__bfloat16));
-  layout.topkIds = detail::appendRegion(layout.bytes, size_t(c.maxTokens) * c.topK * sizeof(int));
-  layout.topkWeights = detail::appendRegion(layout.bytes, size_t(c.maxTokens) * c.topK * sizeof(float));
+  layout.input = detail::appendRegion(layout.bytes, rankMultiplier * inputTokens * c.hidden * sizeof(__bfloat16));
+  layout.topkIds = detail::appendRegion(layout.bytes, rankMultiplier * size_t(c.maxTokens) * c.topK * sizeof(int));
+  layout.topkWeights =
+      detail::appendRegion(layout.bytes, rankMultiplier * size_t(c.maxTokens) * c.topK * sizeof(float));
   const size_t partialElemBytes =
       c.activationDtype == ActivationDtype::Fp8Static ? sizeof(uint8_t) : sizeof(__bfloat16);
   layout.partialOutput = detail::appendRegion(layout.bytes, size_t(c.maxTokens) * c.topK * c.hidden * partialElemBytes);
@@ -386,9 +388,9 @@ SymmetricLayout getSymmetricLayout(const NativeConfig& c) {
         detail::appendRegion(layout.bytes, size_t(c.worldSize) * c.maxTokens * c.topK * sizeof(mscclpp::LL8Packet));
   }
   if (c.weightDtype == WeightDtype::Mxfp4) {
-    layout.quantizedInput = detail::appendRegion(layout.bytes, size_t(c.maxTokens) * c.hidden);
-    layout.quantizedInputScale =
-        detail::appendRegion(layout.bytes, size_t(c.maxTokens) * detail::w4SourceScaleStride(c.hidden));
+    layout.quantizedInput = detail::appendRegion(layout.bytes, rankMultiplier * size_t(c.maxTokens) * c.hidden);
+    layout.quantizedInputScale = detail::appendRegion(
+        layout.bytes, rankMultiplier * size_t(c.maxTokens) * detail::w4SourceScaleStride(c.hidden));
   }
   layout.bytes = detail::aligned(layout.bytes);
   return layout;
@@ -501,7 +503,8 @@ int kernelPlanCtaCount(const KernelPlan& plan) { return plan.ctas; }
 size_t kernelPlanSharedBytes(const KernelPlan& plan) { return plan.sharedBytes; }
 
 void launchNativeW4A8(const std::shared_ptr<KernelPlan>& plan, const void* input, const int32_t* ids,
-                      const float* scores, int tokens, void* output, cudaStream_t stream, uint32_t* kernelEntrySignal) {
+                      const float* scores, int tokens, void* output, cudaStream_t stream, uint32_t* kernelEntrySignal,
+                      const uint8_t* inputScales) {
   if (!plan) throw std::invalid_argument("MegaMoE kernel plan is null");
   int device;
   MSCCLPP_CUDATHROW(cudaGetDevice(&device));
@@ -511,7 +514,9 @@ void launchNativeW4A8(const std::shared_ptr<KernelPlan>& plan, const void* input
     throw std::invalid_argument("MegaMoE token count or output pointer is invalid");
   cudaStreamCaptureStatus capture;
   MSCCLPP_CUDATHROW(cudaStreamIsCapturing(stream, &capture));
-  if (tokens) {
+  const void* directInput = params.config.computeOnly ? input : nullptr;
+  const uint8_t* directInputScales = params.config.computeOnly ? inputScales : nullptr;
+  if (tokens && !params.config.computeOnly) {
     dim3 threads(128);
     dim3 blocks((params.config.hidden / 32 + 31) / 32, std::min(tokens, 65535));
     const auto* source =
@@ -530,15 +535,16 @@ void launchNativeW4A8(const std::shared_ptr<KernelPlan>& plan, const void* input
   std::array<cudaLaunchAttribute, 2> launchAttributes{};
   auto launch = detail::makeLaunchConfig(plan->ctas, detail::W4A8Parameters::ThreadCount, plan->sharedBytes, stream,
                                          launchAttributes, detail::W4ClusterSize);
-  MSCCLPP_CUDATHROW(
-      cudaLaunchKernelEx(&launch, detail::w4a8KernelEntry(params.config, capture == cudaStreamCaptureStatusActive),
-                         params, tokens, static_cast<__bfloat16*>(output), kernelEntrySignal, ids, scores));
+  MSCCLPP_CUDATHROW(cudaLaunchKernelEx(
+      &launch, detail::w4a8KernelEntry(params.config, capture == cudaStreamCaptureStatusActive), params, tokens,
+      static_cast<__bfloat16*>(output), kernelEntrySignal, directInput, directInputScales, ids, scores));
 }
 
 #if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
 template <int LocalMode>
 void launchW8A16Mode(const std::shared_ptr<KernelPlan>& plan, const int32_t* ids, const float* scores, int tokens,
-                     void* output, cudaStream_t stream, uint32_t* kernelEntrySignal = nullptr) {
+                     void* output, cudaStream_t stream, uint32_t* kernelEntrySignal = nullptr,
+                     const void* input = nullptr) {
   if (!plan) throw std::invalid_argument("MegaMoE kernel plan is null");
   int device;
   MSCCLPP_CUDATHROW(cudaGetDevice(&device));
@@ -558,16 +564,16 @@ void launchW8A16Mode(const std::shared_ptr<KernelPlan>& plan, const int32_t* ids
   auto launch = detail::makeLaunchConfig(plan->ctas, Parameters::ThreadCount, plan->sharedBytes, stream,
                                          launchAttributes, Parameters::Tiles::ClusterSize);
   MSCCLPP_CUDATHROW(cudaLaunchKernelEx(&launch, detail::w8a16KernelEntry<LocalMode>(params.config), params, tokens,
-                                       static_cast<__bfloat16*>(output), kernelEntrySignal, ids, scores));
+                                       static_cast<__bfloat16*>(output), kernelEntrySignal, input, ids, scores));
 }
 
 void launchNativeW8A16(const std::shared_ptr<KernelPlan>& plan, const int32_t* ids, const float* scores, int tokens,
-                       void* output, cudaStream_t stream, uint32_t* kernelEntrySignal) {
+                       void* output, cudaStream_t stream, uint32_t* kernelEntrySignal, const void* input) {
   if (plan && plan->localExpert) {
-    launchW8A16Mode<1>(plan, ids, scores, tokens, output, stream, kernelEntrySignal);
+    launchW8A16Mode<1>(plan, ids, scores, tokens, output, stream, kernelEntrySignal, input);
     return;
   }
-  launchW8A16Mode<0>(plan, ids, scores, tokens, output, stream, kernelEntrySignal);
+  launchW8A16Mode<0>(plan, ids, scores, tokens, output, stream, kernelEntrySignal, input);
 }
 
 void launchNativeSharedExpert(const std::shared_ptr<KernelPlan>& plan, int tokens, void* output, cudaStream_t stream) {
