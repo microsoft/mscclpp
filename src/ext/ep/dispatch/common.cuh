@@ -68,15 +68,23 @@ inline void dispatchHidden(void* output, void* outputScales, int* outputSrcInfo,
                            const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,
                            const DeviceContext& context, int numBlocks, cudaStream_t stream) {
   if constexpr (Layout == DispatchLayout::RANK_MAJOR) {
-    if (workload.dispatchDataType_ == DispatchDataType::MXFP8_E4M3) {
-      return dispatchHiddenMode<Hidden, DispatchDataType::MXFP8_E4M3, 32, Layout, KernelSelector>(
-          output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
-          topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
+    switch (workload.dispatchDataType_) {
+      case DispatchDataType::BF16:
+        return dispatchHiddenMode<Hidden, DispatchDataType::BF16, 0, Layout, KernelSelector>(
+            output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
+            topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
+      case DispatchDataType::FP8_E4M3:
+        break;
+      case DispatchDataType::FP8_E4M3_STATIC:
+        return dispatchHiddenMode<Hidden, DispatchDataType::FP8_E4M3_STATIC, 0, Layout, KernelSelector>(
+            output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
+            topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
+      case DispatchDataType::MXFP8_E4M3:
+        return dispatchHiddenMode<Hidden, DispatchDataType::MXFP8_E4M3, 32, Layout, KernelSelector>(
+            output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
+            topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     }
-    EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16);
-    return dispatchHiddenMode<Hidden, DispatchDataType::BF16, 0, Layout, KernelSelector>(
-        output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
-        topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
+    EP_HOST_ASSERT(false && "unsupported rank-major dispatch data type");
   } else {
     switch (workload.dispatchDataType_) {
       case DispatchDataType::BF16:
@@ -88,6 +96,7 @@ inline void dispatchHidden(void* output, void* outputScales, int* outputSrcInfo,
             output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
             topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
       case DispatchDataType::MXFP8_E4M3:
+      case DispatchDataType::FP8_E4M3_STATIC:
         break;
     }
     EP_HOST_ASSERT(false && "unsupported dispatch data type");
@@ -133,7 +142,13 @@ inline void dispatchAlgorithm(void* output, void* outputScales, int* outputSrcIn
   EP_HOST_ASSERT(output != nullptr);
   EP_HOST_ASSERT(workload.outputLayout_ == Layout);
   EP_HOST_ASSERT(isSupportedDispatchDataType(workload.dispatchDataType_));
-  EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16 || outputScales != nullptr);
+  if constexpr (Layout == DispatchLayout::EXPERT_MAJOR) {
+    EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16 || outputScales != nullptr);
+  } else if (workload.dispatchDataType_ == DispatchDataType::FP8_E4M3_STATIC) {
+    EP_HOST_ASSERT(outputScales == nullptr);
+  } else if (workload.dispatchDataType_ == DispatchDataType::MXFP8_E4M3) {
+    EP_HOST_ASSERT(outputScales != nullptr);
+  }
   EP_HOST_ASSERT(outputSrcInfo != nullptr || workload.outputLayout_ == DispatchLayout::RANK_MAJOR);
   EP_HOST_ASSERT(outputCount != nullptr);
   EP_HOST_ASSERT(outputLayout != nullptr || workload.outputLayout_ == DispatchLayout::RANK_MAJOR);
@@ -143,6 +158,7 @@ inline void dispatchAlgorithm(void* output, void* outputScales, int* outputSrcIn
   }
   if constexpr (Layout == DispatchLayout::RANK_MAJOR) {
     EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16 ||
+                   workload.dispatchDataType_ == DispatchDataType::FP8_E4M3_STATIC ||
                    workload.dispatchDataType_ == DispatchDataType::MXFP8_E4M3);
   }
   EP_HOST_ASSERT(workload.numTokens_ == 0 || input != nullptr);

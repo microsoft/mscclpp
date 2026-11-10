@@ -194,10 +194,9 @@ void CudaIpcConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, 
   *src = newValue;
   uint64_t* dstPtr = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(dst.data()) + dstOffset);
 
-  stream_->memcpyH2D(dstPtr + dstOffset, src, sizeof(uint64_t));
+  stream_->memcpyH2D(dstPtr, src, sizeof(uint64_t));
 
-  INFO(CONN, "CudaIpcConnection atomic write: from ", src, " to ", dstPtr + dstOffset, ", ", oldValue, " -> ",
-       newValue);
+  INFO(CONN, "CudaIpcConnection atomic write: from ", src, " to ", dstPtr, ", ", oldValue, " -> ", newValue);
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_CUDA_IPC_UPDATE_AND_SYNC_EXIT)
   NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_CUDA_IPC_UPDATE_AND_SYNC_EXIT, 0, 0, *NpKit::GetCpuTimestamp(), 0);
@@ -706,7 +705,7 @@ void EthernetConnection::write(RegisteredMemory dst, uint64_t dstOffset, Registe
       mscclpp::gpuMemcpy(sendBuffer_.data() + headerSize / sizeof(char), srcPtr + (sentDataSize / sizeof(char)),
                          dataSize, cudaMemcpyDeviceToHost);
       sendSocket_->send(sendBuffer_.data(), messageSize);
-      sentDataSize += messageSize;
+      sentDataSize += dataSize;
       headerSize = 0;
     }
   });

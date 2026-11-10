@@ -86,7 +86,7 @@ ADD . /tmp/mscclpp
 WORKDIR /tmp/mscclpp
 RUN target_type=$(echo "$TARGET" | sed -E 's/^([[:alpha:]]+[0-9]+).*/\1/') && \
     if echo "$TARGET" | grep -q "^rocm"; then \
-        export CUPY_INSTALL_USE_HIP=1 && export ROCM_HOME=/opt/rocm; \
+        export ROCM_HOME=/opt/rocm; \
     fi && \
     pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r python/requirements_${target_type}.txt && \

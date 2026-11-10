@@ -1,0 +1,691 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+"""CPU-only checks of native-buffer ownership, transfers, and consumer boundaries."""
+
+import ctypes
+from enum import Enum
+import gc
+import importlib.util
+from pathlib import Path
+import sys
+from types import ModuleType, SimpleNamespace
+import unittest
+from unittest.mock import Mock, patch
+import weakref
+
+import numpy as np
+
+DataType = Enum(
+    "DataType",
+    "float32 float16 int32 uint32 uint8 bfloat16 float8_e4m3fn float8_e4m3fnuz float8_e5m2 float8_e5m2fnuz float8_e4m3b15",
+)
+
+
+def load_module(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+class CudaBufferTests(unittest.TestCase):
+    is_hip = False
+
+    def setUp(self):
+        self.device = 2
+        self.prefix = "hip" if self.is_hip else "cuda"
+        self.python_dir = Path(__file__).resolve().parents[1]
+        current_device = lambda: self.device
+
+        class Allocation:
+            def __init__(self, size, granularity):
+                self.memory = ctypes.create_string_buffer((size + 63) // 64 * 64)
+                self.device = current_device()
+
+            def data(self):
+                return ctypes.addressof(self.memory)
+
+            def bytes(self):
+                return ctypes.sizeof(self.memory)
+
+            def device_id(self):
+                return self.device
+
+        self.allocate = Mock(side_effect=Allocation)
+
+        def set_device(device):
+            self.device = device
+            return (0,)
+
+        self.pending_copies = {}
+
+        def memcpy_async(dst, src, size, direction, stream):
+            self.pending_copies.setdefault(stream, []).append((dst, src, size))
+            return (0,)
+
+        def stream_synchronize(stream):
+            for dst, src, size in self.pending_copies.pop(stream, []):
+                ctypes.memmove(dst, src, size)
+            return (0,)
+
+        self.runtime = SimpleNamespace()
+        self.pointer_device = 2
+        for name, callback in (
+            ("GetDeviceCount", lambda: (0, 8)),
+            ("GetDevice", lambda: (0, self.device)),
+            ("GetErrorString", lambda error: (0, b"native error")),
+            ("PointerGetAttributes", lambda ptr: (0, SimpleNamespace(device=self.pointer_device))),
+            ("SetDevice", set_device),
+            ("DeviceSynchronize", lambda: (0,)),
+            ("MemcpyAsync", memcpy_async),
+            ("StreamSynchronize", stream_synchronize),
+            ("StreamIsCapturing", lambda stream: (0, 0)),
+        ):
+            setattr(self.runtime, self.prefix + name, Mock(__name__=self.prefix + name, side_effect=callback))
+        setattr(
+            self.runtime,
+            self.prefix + "MemcpyKind",
+            SimpleNamespace(**{self.prefix + "MemcpyHostToDevice": 1, self.prefix + "MemcpyDeviceToHost": 2}),
+        )
+        setattr(self.runtime, self.prefix + "Error_t", SimpleNamespace(**{self.prefix + "Success": 0}))
+        setattr(
+            self.runtime,
+            self.prefix + "StreamCaptureMode",
+            SimpleNamespace(**{self.prefix + "StreamCaptureModeRelaxed": 2}),
+        )
+        setattr(self.runtime, self.prefix + "StreamNonBlocking", 1)
+        package = ModuleType("mscclpp")
+        package.__path__ = [str(self.python_dir / "mscclpp")]
+        modules = {
+            "mscclpp": package,
+            "mscclpp._mscclpp": SimpleNamespace(
+                CppRawGpuBuffer=self.allocate,
+                CppGpuBufferGranularity=SimpleNamespace(MultiCastMinimum=0),
+                CppDataType=DataType,
+                is_hip=self.is_hip,
+            ),
+            "cupy": None,
+            "torch": None,
+            "cuda": SimpleNamespace(),
+            "cuda.bindings": SimpleNamespace(runtime=self.runtime),
+            "hip": SimpleNamespace(hip=self.runtime),
+        }
+        module_patch = patch.dict(sys.modules, modules)
+        module_patch.start()
+        self.addCleanup(module_patch.stop)
+        package.gpu = load_module("mscclpp.gpu", self.python_dir / "mscclpp" / "gpu.py")
+        for names in package.gpu._API_NAMES.values():
+            name = names[0 if self.is_hip else 1]
+            if not hasattr(self.runtime, name):
+                setattr(self.runtime, name, Mock(return_value=(0,)))
+        self.buffer_module = load_module("_native_buffer_test", self.python_dir / "mscclpp" / "_core" / "buffer.py")
+        self.GpuBuffer = self.buffer_module.GpuBuffer
+        self.addCleanup(self.api("DeviceSynchronize").assert_not_called)
+
+    def api(self, name):
+        return getattr(self.runtime, self.prefix + name)
+
+    def test_constructor_default_and_numpy_inputs_return_datatype(self):
+        buffer = self.GpuBuffer(4)
+        self.assertEqual((buffer.dtype, buffer.itemsize, buffer.nbytes), (DataType.float32, 4, 16))
+        for dtype in (DataType.float32, DataType.float16, DataType.int32, DataType.uint32, DataType.uint8):
+            with self.subTest(dtype=dtype):
+                host = np.arange(4, dtype=dtype.name)
+                for supplied in (dtype, host.dtype, host.dtype.type, host.dtype.name):
+                    buffer = self.GpuBuffer(4, dtype=supplied)
+                    self.assertEqual((buffer.dtype, buffer.nbytes), (dtype, host.nbytes))
+                    buffer.copy_from_numpy(host)
+                    np.testing.assert_array_equal(buffer.to_numpy(), host)
+                self.assertIs(self.GpuBuffer.from_numpy(host).dtype, dtype)
+
+    def test_unmapped_dtypes_are_rejected_before_allocation(self):
+        for dtype in (
+            float,
+            np.float64,
+            np.int8,
+            np.int16,
+            np.int64,
+            np.uint16,
+            np.uint64,
+            np.complex64,
+            np.complex128,
+            bool,
+            np.dtype(np.float32).newbyteorder("S"),
+        ):
+            with self.subTest(dtype=dtype):
+                with self.assertRaisesRegex(ValueError, "no supported mscclpp.DataType"):
+                    self.GpuBuffer(4, dtype)
+                host = np.zeros(4, dtype=dtype)
+                with self.assertRaises(ValueError):
+                    self.GpuBuffer.from_ptr(host.ctypes.data, host.nbytes, host, dtype)
+                with self.assertRaises(ValueError):
+                    self.GpuBuffer.from_numpy(host)
+        self.allocate.assert_not_called()
+
+    def test_low_precision_dtypes_preserve_raw_bits_and_view_metadata(self):
+        for dtype in (
+            DataType.bfloat16,
+            DataType.float8_e4m3fn,
+            DataType.float8_e4m3fnuz,
+            DataType.float8_e5m2,
+            DataType.float8_e5m2fnuz,
+            DataType.float8_e4m3b15,
+        ):
+            with self.subTest(dtype=dtype):
+                storage = np.uint16 if dtype == DataType.bfloat16 else np.uint8
+                bits = np.arange(1 << (8 * np.dtype(storage).itemsize), dtype=storage)
+                buffer = self.GpuBuffer.from_numpy(bits, dtype=dtype)
+                self.assertIs(buffer.dtype, dtype)
+                self.assertEqual(buffer.nbytes, bits.nbytes)
+                np.testing.assert_array_equal(buffer.to_numpy(), bits)
+                wrapped = self.GpuBuffer.from_ptr(buffer.ptr, buffer.nbytes, buffer, dtype)
+                view = wrapped[1:5][1:3]
+                self.assertIs(view.dtype, dtype)
+                self.assertEqual((view.ptr, view.nbytes), (buffer.ptr + 2 * bits.itemsize, 2 * bits.itemsize))
+                np.testing.assert_array_equal(view.to_numpy(), bits[2:4])
+                with self.assertRaisesRegex(ValueError, "pre-encoded"):
+                    self.GpuBuffer.from_numpy(np.ones(4, dtype=np.float32), dtype=dtype)
+
+    def test_allocation_metadata_and_granularity(self):
+        buffer = self.GpuBuffer((2, 3), dtype=np.int32, granularity=7)
+        self.allocate.assert_called_once_with(24, 7)
+        self.assertEqual((buffer.shape, buffer.size, buffer.ndim), ((2, 3), 6, 2))
+        self.assertEqual((buffer.itemsize, buffer.nbytes, buffer.strides), (4, 24, (12, 4)))
+        self.assertEqual(buffer.allocation_size, 64)
+        self.assertEqual(buffer.device_id, 2)
+        self.assertEqual(buffer.data.ptr, buffer.ptr)
+        with self.assertRaises(AttributeError):
+            buffer.shape = (1,)
+
+    def test_round_trip_c_and_fortran_and_noncontiguous_host(self):
+        for order in ("C", "F"):
+            with self.subTest(order=order):
+                host = np.arange(24, dtype=np.float32).reshape(4, 6)[:, ::2]
+                buffer = self.GpuBuffer(host.shape, dtype=host.dtype, order=order)
+                buffer.copy_from_numpy(host)
+                upload = self.api("MemcpyAsync").call_args.args
+                self.assertEqual((upload[0], upload[2], upload[3]), (buffer.ptr, host.nbytes, 1))
+                result = buffer.to_numpy()
+                self.assertEqual(
+                    self.api("MemcpyAsync").call_args.args, (result.ctypes.data, buffer.ptr, host.nbytes, 2, 0)
+                )
+                np.testing.assert_array_equal(result, host)
+                self.assertEqual(buffer.strides, result.strides)
+                self.assertEqual(result.flags.f_contiguous, order == "F")
+                self.api("StreamSynchronize").assert_called_with(0)
+                self.assertFalse(self.pending_copies)
+
+    def test_from_numpy_casts_and_uploads_handle_bytes(self):
+        host = memoryview(b"\x00\xff\x10\x00")
+        buffer = self.GpuBuffer.from_numpy(host, dtype=np.uint8)
+        np.testing.assert_array_equal(buffer.to_numpy(), np.asarray(host))
+        matrix = np.asfortranarray(np.arange(6, dtype=np.int16).reshape(2, 3))
+        buffer = self.GpuBuffer.from_numpy(matrix, dtype=np.int32)
+        self.assertEqual(buffer.strides, (4, 8))
+        np.testing.assert_array_equal(buffer.to_numpy(), matrix)
+
+    def test_default_stream_orders_copies_and_leaves_other_streams_pending(self):
+        source = np.arange(8, dtype=np.int32)
+        unrelated = np.zeros_like(source)
+        self.pending_copies[987] = [(unrelated.ctypes.data, source.ctypes.data, source.nbytes)]
+        buffer = self.GpuBuffer.from_numpy(source)
+        updated = source + 10
+        self.pending_copies[0] = [(buffer.ptr, updated.ctypes.data, updated.nbytes)]
+        np.testing.assert_array_equal(buffer.to_numpy(), updated)
+        self.assertNotIn(0, self.pending_copies)
+        self.assertIn(987, self.pending_copies)
+        np.testing.assert_array_equal(unrelated, 0)
+        self.assertTrue(all(call.args[-1] == 0 for call in self.api("MemcpyAsync").call_args_list))
+        self.assertTrue(all(call.args == (0,) for call in self.api("StreamSynchronize").call_args_list))
+
+    def test_capture_is_rejected_before_copy_and_restores_device(self):
+        buffer = self.GpuBuffer(4, np.int32)
+        self.device = 6
+        for error, status, message in (
+            (0, 1, "graph capture"),
+            (0, 2, "graph capture"),
+            (20, None, "stream_is_capturing failed"),
+        ):
+            self.api("StreamIsCapturing").side_effect = lambda stream: (error, status)
+            for transfer in (
+                lambda: buffer.to_numpy(),
+                lambda: buffer.copy_from_numpy(np.ones(4, dtype=np.int32)),
+            ):
+                with self.subTest(error=error, status=status), self.assertRaisesRegex(RuntimeError, message):
+                    transfer()
+                self.assertEqual(self.device, 6)
+        self.api("MemcpyAsync").assert_not_called()
+        self.api("StreamSynchronize").assert_not_called()
+
+    def test_copy_selects_buffer_device_current_stream_only_when_torch_initialized(self):
+        buffer = self.GpuBuffer(4, np.int32)
+        self.device = 6
+        source = np.arange(4, dtype=np.int32)
+        updated = source + 10
+        for initialized in (False, True):
+            stream = 123 if initialized else 0
+            torch = SimpleNamespace(
+                cuda=SimpleNamespace(
+                    is_initialized=Mock(return_value=initialized),
+                    current_stream=Mock(return_value=SimpleNamespace(cuda_stream=123)),
+                )
+            )
+            with (
+                self.subTest(initialized=initialized),
+                patch.object(self.buffer_module, "_use_torch", True),
+                patch.object(self.buffer_module, "torch", torch, create=True),
+            ):
+                buffer.copy_from_numpy(source)
+                self.api("MemcpyAsync").assert_called_with(buffer.ptr, source.ctypes.data, source.nbytes, 1, stream)
+                self.pending_copies[stream] = [(buffer.ptr, updated.ctypes.data, updated.nbytes)]
+                np.testing.assert_array_equal(buffer.to_numpy(), updated)
+                self.api("StreamIsCapturing").assert_called_with(stream)
+                self.api("StreamSynchronize").assert_called_with(stream)
+                self.assertEqual(self.device, 6)
+                if initialized:
+                    torch.cuda.current_stream.assert_called_with(buffer.device_id)
+                else:
+                    torch.cuda.current_stream.assert_not_called()
+                self.api("MemcpyAsync").reset_mock()
+                self.api("StreamIsCapturing").side_effect = lambda _: (0, 1)
+                with self.assertRaisesRegex(RuntimeError, "graph capture"):
+                    buffer.to_numpy()
+                self.api("StreamIsCapturing").assert_called_with(stream)
+                self.api("MemcpyAsync").assert_not_called()
+                self.assertEqual(self.device, 6)
+                self.api("StreamIsCapturing").side_effect = lambda _: (0, 0)
+
+    def test_to_torch_exports_exact_view_metadata_without_copying(self):
+        class TorchDtype:
+            def __init__(self, name):
+                self.name = name
+
+            def __str__(self):
+                return "torch." + self.name
+
+        capsule, tensor = object(), object()
+        export = Mock(return_value=capsule)
+        consume = Mock(return_value=tensor)
+        torch = SimpleNamespace(
+            dtype=TorchDtype,
+            float32=TorchDtype("float32"),
+            utils=SimpleNamespace(dlpack=SimpleNamespace(from_dlpack=consume)),
+        )
+        with patch.dict(sys.modules, {"torch": torch}):
+            module = load_module("_torch_buffer_test", self.python_dir / "mscclpp" / "_core" / "buffer.py")
+        self.assertTrue(module._use_torch)
+        self.GpuBuffer = module.GpuBuffer
+        native = sys.modules["mscclpp._mscclpp"]
+        buffers = [
+            self.GpuBuffer((2, 3), np.float32),
+            self.GpuBuffer((2, 3), np.float32, order="F"),
+            self.GpuBuffer((), np.float32),
+            self.GpuBuffer((0, 3), np.float32),
+            self.GpuBuffer(8, np.float32)[1:7][2:4],
+        ]
+        for dtype in (
+            DataType.bfloat16,
+            DataType.float8_e4m3fn,
+            DataType.float8_e4m3fnuz,
+            DataType.float8_e5m2,
+            DataType.float8_e5m2fnuz,
+        ):
+            setattr(torch, dtype.name, TorchDtype(dtype.name))
+            buffers.append(self.GpuBuffer(4, dtype))
+        host = np.arange(8, dtype=np.float32)
+        buffers.append(self.GpuBuffer.from_ptr(host.ctypes.data, host.nbytes, host, np.float32)[2:5])
+        allocations = self.allocate.call_count
+        self.device = 6
+        with patch.object(native, "cpp_gpu_buffer_to_dlpack", export, create=True):
+            for buffer in buffers:
+                with self.subTest(shape=buffer.shape, strides=buffer.strides):
+                    self.assertIs(buffer.to_torch(), tensor)
+                    export.assert_called_with(
+                        buffer.ptr,
+                        "torch." + buffer.dtype.name,
+                        buffer.shape,
+                        tuple(s // buffer.itemsize for s in buffer.strides),
+                        2,
+                        buffer._allocation,
+                    )
+                    consume.assert_called_with(capsule)
+            self.api("PointerGetAttributes").reset_mock()
+            empty = self.GpuBuffer.from_ptr(0, 0, object(), np.float32)
+            self.api("GetDevice").assert_not_called()
+            self.assertIs(empty.to_torch(), tensor)
+            export.assert_called_with(0, "torch.float32", (0,), (1,), 6, empty._allocation)
+            self.device = 7
+            self.assertIs(empty[:].to_torch(), tensor)
+            export.assert_called_with(0, "torch.float32", (0,), (1,), 6, empty._allocation)
+            self.api("GetDevice").assert_called_once_with()
+            self.api("PointerGetAttributes").assert_not_called()
+        self.assertEqual(self.allocate.call_count, allocations)
+        self.api("MemcpyAsync").assert_not_called()
+        self.api("DeviceSynchronize").assert_not_called()
+        self.api("SetDevice").assert_not_called()
+
+    def test_to_torch_requires_optional_torch_and_rejects_unsupported_dtype(self):
+        buffer = self.GpuBuffer(4, np.float32)
+        self.assertFalse(self.buffer_module._use_torch)
+        with self.assertRaisesRegex(RuntimeError, "PyTorch is not available"):
+            buffer.to_torch()
+        export = Mock()
+        with (
+            patch.object(sys.modules["mscclpp._mscclpp"], "cpp_gpu_buffer_to_dlpack", export, create=True),
+            patch.dict(sys.modules, {"torch": SimpleNamespace(dtype=type("TorchDtype", (), {}))}),
+        ):
+            module = load_module("_torch_buffer_test", self.python_dir / "mscclpp" / "_core" / "buffer.py")
+            self.assertTrue(module._use_torch)
+            with self.assertRaisesRegex(ValueError, "Unsupported PyTorch dtype"):
+                module.GpuBuffer(4, np.float32).to_torch()
+        export.assert_not_called()
+
+    def test_views_alias_and_retain_allocation(self):
+        host = np.arange(8, dtype=np.int32)
+        buffer = self.GpuBuffer.from_numpy(host)
+        view = buffer[2:7][1:3]
+        self.assertEqual(view.ptr, buffer.ptr + 3 * host.itemsize)
+        self.assertEqual(view.nbytes, 2 * host.itemsize)
+        view.copy_from_numpy(np.full(view.shape, 19, dtype=np.int32))
+        host[3:5] = 19
+        np.testing.assert_array_equal(buffer.to_numpy(), host)
+        owner = weakref.ref(buffer._allocation)
+        del buffer
+        gc.collect()
+        self.assertIsNotNone(owner())
+        np.testing.assert_array_equal(view.to_numpy(), host[3:5])
+        del view
+        gc.collect()
+        self.assertIsNone(owner())
+        self.assertEqual(self.allocate.call_count, 1)
+
+    def test_from_ptr_preserves_memory_without_allocating_or_copying(self):
+        host = np.arange(8, dtype=np.uint32)
+        buffer = self.GpuBuffer.from_ptr(host.ctypes.data, host.nbytes, host, dtype=host.dtype)
+        self.assertEqual(buffer.data.ptr, host.ctypes.data)
+        self.assertEqual((buffer.shape, buffer.dtype, buffer.strides), ((8,), DataType.uint32, (4,)))
+        self.assertEqual((buffer.size, buffer.nbytes, buffer.allocation_size), (8, host.nbytes, host.nbytes))
+        self.allocate.assert_not_called()
+        for func in vars(self.runtime).values():
+            if isinstance(func, Mock):
+                func.assert_not_called()
+        np.testing.assert_array_equal(buffer.to_numpy(), host)
+        view = buffer[2:6][1:3]
+        self.assertEqual(view.ptr, host.ctypes.data + 3 * host.itemsize)
+        view.copy_from_numpy(np.full(view.shape, 19, dtype=np.uint32))
+        np.testing.assert_array_equal(host, [0, 1, 2, 19, 19, 5, 6, 7])
+        buffer.copy_from_numpy(np.zeros(buffer.shape, dtype=np.uint32))
+        np.testing.assert_array_equal(host, np.zeros(8, dtype=np.uint32))
+        self.allocate.assert_not_called()
+
+    def test_from_ptr_slices_retain_external_owner(self):
+        host = np.arange(8, dtype=np.int32)
+        owner = weakref.ref(host)
+        buffer = self.GpuBuffer.from_ptr(host.ctypes.data, host.nbytes, host, dtype=host.dtype)
+        view = buffer[2:7][1:3]
+        del host, buffer
+        gc.collect()
+        self.assertIsNotNone(owner())
+        np.testing.assert_array_equal(view.to_numpy(), [3, 4])
+        del view
+        gc.collect()
+        self.assertIsNone(owner())
+        self.allocate.assert_not_called()
+
+    def test_from_ptr_uses_pointer_device_and_restores_current_device(self):
+        self.device = 6
+        host = np.arange(4, dtype=np.int32)
+        buffer = self.GpuBuffer.from_ptr(host.ctypes.data, host.nbytes, host, dtype=host.dtype)
+        self.assertEqual(buffer.device_id, self.pointer_device)
+        buffer.copy_from_numpy(np.ones(4, dtype=np.int32))
+        self.assertEqual(self.device, 6)
+        self.assertEqual([call.args for call in self.api("SetDevice").call_args_list], [(2,), (6,)])
+        self.api("PointerGetAttributes").assert_called_once_with(host.ctypes.data)
+        self.api("MemcpyAsync").side_effect = lambda *args: (17,)
+        with self.assertRaisesRegex(RuntimeError, r"memcpy_async failed: native error \(17\)"):
+            buffer.to_numpy()
+        self.assertEqual(self.device, 6)
+
+    def test_from_ptr_device_query_failure_is_reported_and_retryable(self):
+        host = np.arange(4, dtype=np.int32)
+        buffer = self.GpuBuffer.from_ptr(host.ctypes.data, host.nbytes, host, dtype=host.dtype)
+        self.api("PointerGetAttributes").side_effect = lambda ptr: (18, None)
+        with self.assertRaisesRegex(RuntimeError, r"pointer_get_attributes failed: native error \(18\)"):
+            buffer.to_numpy()
+        self.api("MemcpyAsync").assert_not_called()
+        self.api("SetDevice").assert_not_called()
+        self.api("PointerGetAttributes").side_effect = lambda ptr: (0, SimpleNamespace(device=2))
+        np.testing.assert_array_equal(buffer.to_numpy(), host)
+
+    def test_from_ptr_validates_metadata_without_gpu_calls(self):
+        for kwargs in (
+            {"ptr": -1, "nbytes": 4, "owner": object()},
+            {"ptr": 0, "nbytes": 4, "owner": object()},
+            {"ptr": 2 * (sys.maxsize + 1), "nbytes": 0, "owner": object()},
+            {"ptr": 2 * sys.maxsize, "nbytes": 4, "owner": object()},
+            {"ptr": 4096, "nbytes": -4, "owner": object()},
+            {"ptr": 4096, "nbytes": 4, "owner": None},
+            {"ptr": 4096, "nbytes": 5, "owner": object(), "dtype": np.uint32},
+            {"ptr": 4096, "nbytes": 8, "owner": object(), "dtype": object},
+            {"ptr": 4096, "nbytes": 8, "owner": object(), "dtype": "S0"},
+            {"ptr": 4096, "nbytes": 8, "owner": object(), "dtype": np.dtype(np.int32).newbyteorder("S")},
+        ):
+            with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
+                self.GpuBuffer.from_ptr(**kwargs)
+        with self.assertRaises(OverflowError):
+            self.GpuBuffer.from_ptr(1, sys.maxsize + 1, object())
+        with self.assertRaises(TypeError):
+            self.GpuBuffer.from_ptr(1.5, 4, object())
+        self.allocate.assert_not_called()
+        self.api("PointerGetAttributes").assert_not_called()
+
+    def test_from_ptr_defaults_to_bytes_and_supports_empty_storage(self):
+        host = np.arange(4, dtype=np.int32)
+        buffer = self.GpuBuffer.from_ptr(host.ctypes.data, host.nbytes, host)
+        self.assertEqual((buffer.shape, buffer.dtype), ((host.nbytes,), DataType.uint8))
+        np.testing.assert_array_equal(buffer.to_numpy(), host.view(np.uint8))
+        self.api("MemcpyAsync").reset_mock()
+        self.api("PointerGetAttributes").reset_mock()
+        self.api("StreamSynchronize").reset_mock()
+        self.api("StreamIsCapturing").reset_mock()
+        empty = self.GpuBuffer.from_ptr(0, 0, object())
+        self.assertEqual((empty.ptr, empty.nbytes, empty.allocation_size), (0, 0, 0))
+        self.assertEqual(empty.to_numpy().shape, (0,))
+        empty.copy_from_numpy(np.zeros(empty.shape, dtype=np.uint8))
+        self.api("MemcpyAsync").assert_not_called()
+        self.api("PointerGetAttributes").assert_not_called()
+        self.api("StreamSynchronize").assert_not_called()
+        self.api("StreamIsCapturing").assert_not_called()
+        self.allocate.assert_not_called()
+
+    def test_upload_preserves_nonzero_and_negative_zero_bits(self):
+        buffer = self.GpuBuffer(5, dtype=np.float32)
+        for value in (2.5, -0.0, 0.0):
+            expected = np.full(5, value, dtype=np.float32)
+            buffer.copy_from_numpy(expected)
+            np.testing.assert_array_equal(buffer.to_numpy().view(np.uint32), expected.view(np.uint32))
+
+    def test_transfers_restore_device_even_on_failure(self):
+        buffer = self.GpuBuffer(4, dtype=np.int32)
+        self.device = 6
+        buffer.copy_from_numpy(np.zeros(buffer.shape, dtype=np.int32))
+        self.assertEqual(self.device, 6)
+        self.assertEqual([call.args for call in self.api("SetDevice").call_args_list], [(2,), (6,)])
+        self.api("MemcpyAsync").side_effect = lambda *args: (17,)
+        self.api("StreamSynchronize").reset_mock()
+        with self.assertRaisesRegex(RuntimeError, r"memcpy_async failed: native error \(17\)"):
+            buffer.to_numpy()
+        self.api("StreamSynchronize").assert_not_called()
+        self.assertEqual(self.device, 6)
+        self.api("SetDevice").side_effect = lambda device: (18,)
+        self.api("MemcpyAsync").reset_mock()
+        with self.assertRaisesRegex(RuntimeError, "set_device failed"):
+            buffer.to_numpy()
+        self.api("MemcpyAsync").assert_not_called()
+
+    def test_shared_synchronization_failure_restores_device(self):
+        buffer = self.GpuBuffer(4, dtype=np.int32)
+        self.device = 6
+        self.api("StreamSynchronize").side_effect = lambda stream: (19,)
+        with self.assertRaisesRegex(RuntimeError, r"stream_synchronize failed: native error \(19\)"):
+            buffer.to_numpy()
+        self.assertEqual(self.device, 6)
+        self.assertEqual([call.args for call in self.api("SetDevice").call_args_list], [(2,), (6,)])
+        self.api("StreamSynchronize").assert_called_once_with(0)
+        self.assertEqual(self.api("MemcpyAsync").call_args.args[-1], 0)
+
+    def test_invalid_layout_and_dtype_fail_before_allocation(self):
+        for kwargs in (
+            {"shape": (-1,)},
+            {"shape": (1.5,)},
+            {"shape": "x"},
+            {"shape": 4, "dtype": object},
+            {"shape": 4, "dtype": "S4"},
+            {"shape": 4, "dtype": np.dtype(np.int32).newbyteorder("S")},
+            {"shape": 4, "order": "A"},
+            {"shape": (2, 3), "dtype": np.int32, "strides": (4, 8)},
+        ):
+            with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
+                self.GpuBuffer(**kwargs)
+        with self.assertRaises(OverflowError):
+            self.GpuBuffer((sys.maxsize, 2))
+        self.allocate.assert_not_called()
+
+    def test_contiguous_strides_and_scalar_and_empty_shapes(self):
+        buffer = self.GpuBuffer((2, 3), np.int32, strides=(4, 8), order="F")
+        self.assertEqual(buffer.strides, (4, 8))
+        scalar = self.GpuBuffer.from_numpy(np.array(7, dtype=np.int32))
+        self.assertEqual(scalar.shape, ())
+        self.assertEqual(scalar.to_numpy().item(), 7)
+        self.api("MemcpyAsync").reset_mock()
+        empty = self.GpuBuffer((0, 3), np.int32)
+        self.assertEqual(empty.nbytes, 0)
+        self.assertEqual(empty.to_numpy().shape, (0, 3))
+        self.assertEqual(self.GpuBuffer(4)[3:1].size, 0)
+        self.api("MemcpyAsync").assert_not_called()
+
+    def test_unsupported_array_operations_and_uploads_are_explicit(self):
+        buffer = self.GpuBuffer(4, dtype=np.int32)
+        with self.assertRaisesRegex(TypeError, "to_numpy"):
+            np.asarray(buffer)
+        with self.assertRaises(TypeError):
+            buffer[0]
+        with self.assertRaises(ValueError):
+            buffer[::2]
+        with self.assertRaises(TypeError):
+            self.GpuBuffer((2, 2))[:1]
+        for host in (np.ones(3, dtype=np.int32), np.ones(4, dtype=np.float32)):
+            with self.assertRaisesRegex(ValueError, "shape and dtype"):
+                buffer.copy_from_numpy(host)
+        self.api("MemcpyAsync").assert_not_called()
+
+    def test_executor_buffers_remain_on_device_and_inplace_views_alias(self):
+        mscclpp = SimpleNamespace(
+            gpu=self.buffer_module.gpu,
+            GpuBuffer=self.GpuBuffer,
+            DataType=DataType,
+            Executor=object,
+            ExecutionPlan=object,
+            PacketType=SimpleNamespace(LL16=1),
+            npkit=object,
+            env=object,
+            CommGroup=object,
+        )
+        with patch.dict(
+            sys.modules,
+            {
+                "mscclpp": mscclpp,
+                "mscclpp.utils": SimpleNamespace(KernelBuilder=object, pack=object),
+                "mpi4py": SimpleNamespace(MPI=object),
+            },
+        ):
+            executor = load_module("_buffer_executor_test", self.python_dir / "test" / "executor_test.py")
+        for collective in ("allreduce", "allgather", "reducescatter", "sendrecv"):
+            for in_place in (False, True):
+                with self.subTest(collective=collective, in_place=in_place):
+                    inputs, outputs, tests, _ = executor.build_bufs(collective, 128, in_place, DataType.int32, 1, 4)
+                    for buffer in inputs + outputs + tests:
+                        self.assertIsInstance(buffer, self.GpuBuffer)
+                    for buffer in tests:
+                        np.testing.assert_array_equal(buffer.to_numpy(), 0)
+                    if in_place and collective == "allgather":
+                        self.assertEqual(inputs[0].ptr, outputs[0].ptr + 32)
+                    if in_place and collective == "reducescatter":
+                        self.assertEqual(outputs[0].ptr, inputs[0].ptr + 32)
+        inputs, outputs, tests, _ = executor.build_bufs("allreduce", 128, True, DataType.bfloat16, 1, 4)
+        for buffer in inputs + outputs + tests:
+            self.assertIs(buffer.dtype, DataType.bfloat16)
+            self.assertEqual(buffer.nbytes, 128)
+        np.testing.assert_array_equal(tests[0].to_numpy(), np.zeros(64, dtype=np.uint16))
+
+    def test_benchmark_uses_logical_dtype_for_allocations_and_execution(self):
+        package = ModuleType("mscclpp_benchmark")
+        package.__path__ = [str(self.python_dir / "mscclpp_benchmark")]
+        with patch.dict(sys.modules, {"mscclpp_benchmark": package, "mpi4py": SimpleNamespace(MPI=object)}):
+            comm = load_module("mscclpp_benchmark.comm", self.python_dir / "mscclpp_benchmark" / "comm.py")
+            bench = load_module("_dtype_benchmark", self.python_dir / "mscclpp_benchmark" / "bench_collective.py")
+        comm._mscclpp_module = bench._mscclpp_module = SimpleNamespace(GpuBuffer=self.GpuBuffer, DataType=DataType)
+        group = SimpleNamespace(nranks=4, my_rank=1)
+        for name in ("float32", "bfloat16", "float8_e4m3fn"):
+            spec = bench._parse_dtype(name)
+            for collective in ("allreduce", "allgather", "reducescatter"):
+                for mode in ("in-place", "out-of-place"):
+                    with self.subTest(dtype=name, collective=collective, mode=mode):
+                        case = bench._make_case(
+                            collective=collective, nelems=8, dtype_spec=spec, comm_group=group, buffer_mode=mode
+                        )
+                        self.assertIs(case.input.dtype, spec.mscclpp_dtype)
+                        self.assertIs(case.output.dtype, spec.mscclpp_dtype)
+                        self.assertIs(comm._dtype_to_mscclpp(case.input.dtype), spec.mscclpp_dtype)
+                        self.assertEqual(case.input.itemsize, np.dtype(spec.storage_dtype).itemsize)
+                        self.assertEqual(comm._dtype_size(case.input.dtype), case.input.itemsize)
+
+    def test_benchmark_reference_downloads_once_and_uploads_input(self):
+        mpi = SimpleNamespace(
+            COMM_WORLD=SimpleNamespace(size=2, allreduce=lambda value, op: value), LAND=1, MAX=2, SUM=3
+        )
+        with patch.dict(
+            sys.modules,
+            {
+                "mpi4py": SimpleNamespace(MPI=mpi),
+                "mscclpp.gpu": SimpleNamespace(device_synchronize=lambda: None),
+            },
+        ):
+            correctness = load_module(
+                "_buffer_correctness_test", self.python_dir / "mscclpp_benchmark" / "correctness.py"
+            )
+        for collective in ("allreduce", "allgather"):
+            output = self.GpuBuffer(8 if collective == "allreduce" else 16, np.float32)
+            case = SimpleNamespace(
+                collective=collective,
+                input=output if collective == "allreduce" else output[:8],
+                output=output,
+                dtype_spec=SimpleNamespace(name="float32", storage_dtype=np.float32, fp8_format=None),
+            )
+            correctness.fill_case_for_benchmark(case, 0)
+            np.testing.assert_array_equal(case.input.to_numpy(), correctness._benchmark_input_values(case, 0))
+            inputs = [correctness._correctness_input_values(case, rank, 0) for rank in range(2)]
+            expected = sum(inputs) if collective == "allreduce" else np.concatenate(inputs)
+
+            def run(case, config):
+                np.testing.assert_array_equal(case.input.to_numpy(), inputs[0])
+                case.output.copy_from_numpy(expected)
+                return 0
+
+            comm = SimpleNamespace(rank=0, nranks=2, run=run, comm_group=SimpleNamespace(barrier=lambda: None))
+            with patch.object(output, "to_numpy", wraps=output.to_numpy) as download:
+                stats = correctness.check_correctness(comm, case, None)
+                self.assertTrue(stats.ok)
+                self.assertEqual(stats.mismatches, 0)
+                self.assertEqual(stats.total, expected.size)
+                self.assertEqual(download.call_count, 2 if case.input is output else 1)
+
+
+class HipBufferTests(CudaBufferTests):
+    is_hip = True
+
+
+if __name__ == "__main__":
+    unittest.main()

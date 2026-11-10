@@ -91,7 +91,11 @@ class MoERuntime {
   /// BF16 or E4M3 elements according to the dispatch request. The active
   /// maxTokensPerRank, not the runtime capacity, determines the rank stride.
   void* dispatchOutputBuffer() const;
-  /// Return the runtime-owned BF16 combine input buffer.
+  /// Return the runtime-owned combine input buffer.
+  ///
+  /// Latency RANK_MAJOR uses the combine format from LatencyDispatchRequest::quant,
+  /// which defaults to BF16 and may be FP8_E4M3_STATIC with matching static FP8
+  /// dispatch. Other layouts and throughput use BF16.
   void* combineInputBuffer() const;
   /// Collectively prepare throughput routing without moving token payloads.
   ///
@@ -137,8 +141,6 @@ class MoERuntime {
   /// handle requests automatic GPU preparation; a non-empty handle skips count
   /// recomputation. Both paths support CUDA graph capture. Keep routing
   /// unchanged when replaying a graph that does not recompute preparation.
-  /// @warning Latency epoch advancement is host-side. Replaying a graph with
-  /// a single dispatch/combine pair is not supported.
   /// @param request Dispatch inputs, outputs, and CUDA stream.
   /// @return A non-owning handle identifying this dispatch. The matching
   /// successful combine consumes the handle. In THROUGHPUT mode, starting a
@@ -153,10 +155,11 @@ class MoERuntime {
   /// combineInputBuffer() before this call.
   ///
   /// The request's handle supplies routing metadata, token count, active
-  /// capacity, and epoch. Fixed dimensions, layout, and algorithm come from the
-  /// runtime. Handle ownership and freshness are checked when enqueuing or
-  /// capturing combine, not when replaying a graph. Device metadata is not
-  /// validated on the host.
+  /// capacity, and a host epoch used for handle freshness. Fixed dimensions,
+  /// layout, and algorithm come from the runtime. Handle ownership and freshness
+  /// are checked when enqueuing or capturing combine, not when replaying a graph.
+  /// Latency device flags advance on each dispatch execution, including graph
+  /// replay. Device metadata is not validated on the host.
   /// @param request Expert inputs, outputs, dispatch handle, block count, and CUDA stream.
   /// @throws EPException If @p request is invalid or its handle is empty,
   /// expired, stale, or belongs to another runtime.
