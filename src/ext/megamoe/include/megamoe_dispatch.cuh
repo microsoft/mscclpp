@@ -176,6 +176,20 @@ MSCCLPP_DEVICE_INLINE bool mapGroupToTile(const Workspace& w, int nLocalExperts,
   return true;
 }
 
+template <int DispatchStages, class Schedule, class Storage>
+__device__ __forceinline__ void initDispatchStorage(Storage& s, int warp, int lane) {
+#if MSCCLPP_BULK_AVAILABLE
+  if (warp >= Schedule::DispatchBegin && warp < Schedule::DispatchEnd) {
+    int localWarp = warp - Schedule::DispatchBegin;
+    if (lane == 0 && localWarp == 0) {
+      s.dispatch.arrivals = 0;
+      s.dispatch.publishedPhase = 0;
+    }
+    if (lane < DispatchStages) s.dispatch.barriers[localWarp][lane].relaxedInit();
+  }
+#endif
+}
+
 template <bool LocalGather, int Hidden, int DispatchBytes, int DispatchStages, class P, class Storage>
 __device__ __forceinline__ void stageExpertTokens(const P& p, Storage& s, int localWarp) {
 #if MSCCLPP_BULK_AVAILABLE
@@ -187,17 +201,6 @@ __device__ __forceinline__ void stageExpertTokens(const P& p, Storage& s, int lo
   const auto& w = p.workspace;
   int lane = threadIdx.x % warpSize;
   auto& barriers = s.dispatch.barriers[localWarp];
-  if (lane == 0 && localWarp == 0) {
-    s.dispatch.arrivals = 0;
-    s.dispatch.publishedPhase = 0;
-  }
-  // Each warp owns its stage barriers, so separate lanes initialize them concurrently.
-  if (lane < DispatchStages) {
-    barriers[lane].relaxedInit();
-    bulkFence();
-  }
-  // All dispatch warps must observe the leader's cleared counters and initialized barriers before publishing.
-  cutlass::arch::NamedBarrier::sync(Types::DispatchWarps * warpSize, 1);
   uint32_t loadPhases[DispatchStages] = {};
   constexpr int ElemBytes = P::Activation == ActivationDtype::Bf16 ? sizeof(__bfloat16) : sizeof(uint8_t);
   const int hidden = Hidden > 0 ? Hidden : p.config.hidden;

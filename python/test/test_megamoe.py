@@ -256,19 +256,6 @@ def test_native_w8a16_routed_and_graph():
     source2 = torch.randn((4, 4096, 4608), generator=generator, device=device).mul_(0.03125)
     fc1, sf1 = quantize_mxfp8(source1)
     fc2, sf2 = quantize_mxfp8(source2)
-    with pytest.raises(ValueError, match="has no compiled specialization"):
-        bad_cfg = _config(
-            world_size=1,
-            max_tokens=65,
-            hidden=4096,
-            intermediate=4352,
-            num_experts=4,
-            top_k=2,
-            weight_dtype="mxfp8",
-        )
-        bad_fc1, bad_sf1 = quantize_mxfp8(torch.zeros((4, 8704, 4096), device=device))
-        bad_fc2, bad_sf2 = quantize_mxfp8(torch.zeros((4, 4096, 4352), device=device))
-        MegaMoE(bad_cfg, Communicator(bootstrap), bad_fc1, bad_sf1, bad_fc2, bad_sf2, tag=18050)
     context = MegaMoE(config, Communicator(bootstrap), fc1, sf1, fc2, sf2)
     assert context.effective_kernel_config["tile_n"] == 128
     assert context.effective_kernel_config["transform_stages"] == 4
@@ -438,8 +425,7 @@ def test_native_compute_only_graph(weight_dtype):
     context(inputs, ids, scores, input_scales=input_scales, output=output)
     torch.cuda.synchronize()
     expected = _reference(config, bf16_inputs[0], ids[0], scores[0], weights)
-    actual = output[0].float().sum(dim=1).to(torch.bfloat16)
-    torch.testing.assert_close(actual, expected, rtol=0.05, atol=0.02)
+    torch.testing.assert_close(output, expected, rtol=0.05, atol=0.02)
 
     graph = torch.cuda.CUDAGraph()
     stream = torch.cuda.Stream(device=device)
@@ -451,6 +437,5 @@ def test_native_compute_only_graph(weight_dtype):
         for _ in range(3):
             graph.replay()
     stream.synchronize()
-    actual_graph = output[0].float().sum(dim=1).to(torch.bfloat16)
-    torch.testing.assert_close(actual_graph, expected, rtol=0.05, atol=0.02)
+    torch.testing.assert_close(output, expected, rtol=0.05, atol=0.02)
     del graph, context

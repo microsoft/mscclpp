@@ -75,7 +75,6 @@ __global__ __launch_bounds__((LocalMode ? LocalThreads : W4Threads),
   if (blockIdx.x == 0 && threadIdx.x == 0 && kernelEntrySignal)
     atomicStore<uint32_t, scopeDevice>(kernelEntrySignal, 1, memoryOrderRelease);
   if (Local && tokens == 0) return;
-  int tokenBlocks = prepareW8A16TokenBlocks<Local>(p, tokens, ids, scores);
 
   typename LoadA::Params aParams{};
   aParams.role = warp == Schedule::LoadAWarp ? LoadA::ThreadCategory::Producer
@@ -106,16 +105,19 @@ __global__ __launch_bounds__((LocalMode ? LocalThreads : W4Threads),
   tParams.initializing_warp = Schedule::TransformBegin;
   Transform tPipeline(s.transformed, tParams, ClusterShape{}, true_type{}, false_type{});
   auto cPipeline = makeAccumulatorPipeline<Accumulate, Schedule, ClusterShape>(s.accumulated, warp);
-  cutlass::arch::fence_barrier_init();
-  cute::cluster_sync();
   aPipeline.init_masks(ClusterShape{}, cute::block_id_in_cluster(), cutlass::McastDirection::kRow);
   bPipeline.init_masks(ClusterShape{}, cutlass::McastDirection::kCol);
   tPipeline.init_masks(ClusterShape{});
   cPipeline.init_masks(ClusterShape{});
   cute::TMEM::Allocator2Sm allocator;
   if (warp == Schedule::MmaWarp) allocator.allocate(512, &s.tmem);
-  __syncthreads();
-  cute::cluster_sync();
+  if constexpr (!Local) initDispatchStorage<Types::DispatchStages, Schedule>(s, warp, lane);
+  cutlass::arch::fence_barrier_init();
+  int tokenBlocks = prepareW8A16TokenBlocks<Local>(p, tokens, ids, scores);
+  if constexpr (Local) {
+    __syncthreads();
+    cute::cluster_sync();
+  }
 
   Mainloop fc1(p.fc1, ClusterShape{}, cta);
   Mainloop fc2(p.fc2, ClusterShape{}, cta);
@@ -167,9 +169,10 @@ constexpr W8A16KernelRegistration registerW8A16Kernel() {
 
 template <int LocalMode>
 W8A16KernelEntry<LocalMode> w8a16KernelEntry(const NativeConfig& config) {
-  static constexpr std::array kernels{registerW8A16Kernel<4096, 4608>(), registerW8A16Kernel<4096, 5120>(),
-                                      registerW8A16Kernel<4096, 6656>(), registerW8A16Kernel<8192, 4096>(),
-                                      registerW8A16Kernel<9216, 4096>(), registerW8A16Kernel<9216, 4608>()};
+  static constexpr std::array kernels{registerW8A16Kernel<4096, 4352>(), registerW8A16Kernel<4096, 4608>(),
+                                      registerW8A16Kernel<4096, 5120>(), registerW8A16Kernel<4096, 6656>(),
+                                      registerW8A16Kernel<8192, 4096>(), registerW8A16Kernel<9216, 4096>(),
+                                      registerW8A16Kernel<9216, 4608>()};
   for (const auto& kernel : kernels) {
     if (kernel.matches(config)) {
       if constexpr (LocalMode == 0)

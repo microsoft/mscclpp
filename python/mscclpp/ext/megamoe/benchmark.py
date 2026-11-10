@@ -433,6 +433,7 @@ def main():
     if min(args.tokens, args.graph_batch, args.warmup, args.iterations) < 1:
         parser.error("tokens, graph-batch, warmup, and iterations must be positive")
     if (args.hidden, args.intermediate) not in (
+        (4096, 4352),
         (4096, 4608),
         (4096, 5120),
         (4096, 6656),
@@ -440,7 +441,9 @@ def main():
         (9216, 4096),
         (9216, 4608),
     ):
-        parser.error("MegaMoE H/I must be 4096/4608, 4096/5120, 4096/6656, 8192/4096, 9216/4096, or 9216/4608")
+        parser.error(
+            "MegaMoE H/I must be 4096/4352, 4096/4608, 4096/5120, 4096/6656, 8192/4096, 9216/4096, or 9216/4608"
+        )
     if not args.graph and args.graph_timing != "isolated":
         parser.error("--graph-timing steady-state requires --graph")
     if not math.isfinite(args.lognormal_sigma) or args.lognormal_sigma < 0:
