@@ -71,6 +71,33 @@ def test_gpu_buffer_external_view(mpi_group: MpiGroup):
     np.testing.assert_array_equal(view.to_numpy(), expected[2:4])
 
 
+@pytest.mark.parametrize(
+    "dtype, storage",
+    [
+        (DataType.int32, np.int32),
+        (DataType.uint32, np.uint32),
+        (DataType.float16, np.float16),
+        (DataType.float32, np.float32),
+        (DataType.bfloat16, np.uint16),
+        (DataType.float8_e4m3fn, np.uint8),
+        (DataType.float8_e4m3fnuz, np.uint8),
+        (DataType.float8_e5m2, np.uint8),
+        (DataType.float8_e5m2fnuz, np.uint8),
+        (DataType.uint8, np.uint8),
+        (DataType.float8_e4m3b15, np.uint8),
+    ],
+)
+def test_gpu_buffer_native_dtype_layout(dtype, storage):
+    assert dtype.name == dtype.__name__
+    with pytest.raises(AttributeError):
+        dtype.name = "float64"
+    buffer = GpuBuffer.from_ptr(0, 0, object(), dtype=dtype)
+    assert buffer.dtype == dtype
+    assert buffer.itemsize == np.dtype(storage).itemsize
+    assert buffer.shape == (0,)
+    assert buffer.nbytes == 0
+
+
 @parametrize_mpi_groups(1)
 @pytest.mark.parametrize("shape, order", [((2, 3), "C"), ((2, 3), "F"), ((), "C"), ((0, 3), "C")])
 @pytest.mark.parametrize(
