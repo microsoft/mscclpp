@@ -611,16 +611,14 @@ MSCCLPP_DEVICE_INLINE void combineResults(const KernelParams& params, int tokens
     combineSlots<Hidden, CombineSlots, true>(params, tokens, output);
 }
 
-template <int Hidden = 0, bool DoGridSync = true, class KernelParams>
+template <int Hidden = 0, class KernelParams>
 __device__ void finishAndCombine(const KernelParams& p, int tokens, __bfloat16* output) {
   if (p.config.computeOnly) return;
   if constexpr (KernelParams::WeightMxfp4 && KernelParams::Activation == ActivationDtype::Mxfp8) {
     if (!p.config.combineRouteWeights && p.config.worldSize == 1 && p.config.topK == 1) return;
   }
-  if constexpr (DoGridSync) {
-    traceKernel(KernelTracePhase::OutputJoin, true);
-    syncResidentGrid(&p.workspace.control->residentGridSyncState, gridDim.x);
-  }
+  traceKernel(KernelTracePhase::OutputJoin, true);
+  syncResidentGrid(&p.workspace.control->residentGridSyncState, gridDim.x);
   if (blockIdx.x > 0 && !hasCombineWork<Hidden>(p, tokens)) {
     traceKernel(KernelTracePhase::OutputJoin, false);
     return;
