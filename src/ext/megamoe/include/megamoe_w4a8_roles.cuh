@@ -53,25 +53,24 @@ MSCCLPP_DEVICE_INLINE bool cacheExpertWeights(const KernelParams& params, int ex
   return params.workspace.cursors[expert] > KernelParams::Tiles::N;
 }
 
-// Local experts pass their token count (no routing workspace) and find FC1 inputs ready at kernel entry.
-template <class P, class Storage>
-__device__ __forceinline__ void runW4A8LoadRole(const P& p, Storage& s, typename P::Collective::Load& loadPipeline,
-                                                typename P::Collective::Load& activationPipeline,
-                                                typename P::Collective::Mainloop& fc1,
-                                                typename P::Collective::Mainloop& fc2, const ProblemShape& shape1,
-                                                const ProblemShape& shape2, int hidden, int intermediate, int warp,
-                                                int lane, int cta, int cluster, int tasks, int tokens = 0) {
+template <class P, class Storage, class State>
+__device__ __forceinline__ void runW4A8LoadTasks(const P& p, Storage& s, typename P::Collective::Load& loadPipeline,
+                                                 typename P::Collective::Load& activationPipeline,
+                                                 typename P::Collective::Mainloop& fc1,
+                                                 typename P::Collective::Mainloop& fc2, const ProblemShape& shape1,
+                                                 const ProblemShape& shape2, int hidden, int intermediate, int warp,
+                                                 int lane, int cta, int cluster, const TaskRange& range, State& state,
+                                                 int tokens = 0) {
   using namespace cute;
   using Types = typename P::Collective;
-  using Load = typename P::Collective::Load;
   using Schedule = typename Types::WarpSchedule;
   auto& producerPipeline =
       Types::SplitPipelines && warp == Schedule::ActivationLoadWarp ? activationPipeline : loadPipeline;
-  auto state = cutlass::make_producer_start_state<Load>();
   auto load1 = fc1.load_init(shape1, s.tensors);
   auto load2 = fc2.load_init(shape2, s.tensors);
-  for (int i = cluster; i < tasks; i += gridDim.x / P::Tiles::ClusterSize) {
-    Task task = taskAt(p, i, hidden, intermediate, tokens);
+  const int clusters = gridDim.x / P::Tiles::ClusterSize;
+  for (int i = firstTaskOrdinal(range, cluster, clusters); i < range.end; i += taskOrdinalStride(range, clusters)) {
+    Task task = taskAt(p, range, i, hidden, intermediate, tokens);
     const bool cacheWeights =
         (Types::LoadWarps == 1 || warp == Schedule::LoadWarp) && cacheExpertWeights(p, task.tokens.expert);
     if (!task.fc1 && (Types::LoadWarps == 1 || warp == Schedule::ActivationLoadWarp)) {
@@ -125,6 +124,23 @@ __device__ __forceinline__ void runW4A8LoadRole(const P& p, Storage& s, typename
     }
     traceKernel(phase, false, i);
   }
+}
+
+// Local experts pass their token count (no routing workspace) and find FC1 inputs ready at kernel entry.
+template <class P, class Storage>
+__device__ __forceinline__ void runW4A8LoadRole(const P& p, Storage& s, typename P::Collective::Load& loadPipeline,
+                                                typename P::Collective::Load& activationPipeline,
+                                                typename P::Collective::Mainloop& fc1,
+                                                typename P::Collective::Mainloop& fc2, const ProblemShape& shape1,
+                                                const ProblemShape& shape2, int hidden, int intermediate, int warp,
+                                                int lane, int cta, int cluster, int tasks, int tokens = 0) {
+  using Load = typename P::Collective::Load;
+  auto state = cutlass::make_producer_start_state<Load>();
+  runW4A8LoadTasks(p, s, loadPipeline, activationPipeline, fc1, fc2, shape1, shape2, hidden, intermediate, warp, lane,
+                   cta, cluster, TaskRange{0, tasks, 0}, state, tokens);
+  auto& producerPipeline = P::Collective::SplitPipelines && warp == P::Collective::WarpSchedule::ActivationLoadWarp
+                               ? activationPipeline
+                               : loadPipeline;
   fc1.load_tail(producerPipeline, state);
 }
 

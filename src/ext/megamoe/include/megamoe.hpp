@@ -39,6 +39,10 @@ class MegaMoeContext {
   MegaMoeContext(std::shared_ptr<Communicator> communicator, const NativeConfig& config, const PackedWeights& weights,
                  cudaStream_t stream = nullptr, int tag = 17920, const std::string& kernelPath = "",
                  const std::string& kernelId = "", std::shared_ptr<MegaMoeContext> sharedWorkspace = nullptr);
+  MegaMoeContext(std::shared_ptr<Communicator> communicator, const NativeConfig& config, const PackedWeights& weights,
+                 const SharedExpertConfig& sharedConfig, const PackedWeights& sharedWeights,
+                 cudaStream_t stream = nullptr, int tag = 17920,
+                 std::shared_ptr<MegaMoeContext> sharedWorkspace = nullptr);
   ~MegaMoeContext();
   MegaMoeContext(const MegaMoeContext&) = delete;
   MegaMoeContext& operator=(const MegaMoeContext&) = delete;
@@ -139,7 +143,20 @@ class MegaMoeContext {
   /// are BF16 [numTokens, hidden]. Shares the context's nonconcurrent workspace lifetime.
   void forwardShared(const void* input, void* output, int numTokens, cudaStream_t stream);
 
+  /// Enqueue routed experts and one fused unweighted local fp8_nv shared expert.
+  /// The routed input/output use config.hidden; the shared input/output use
+  /// SharedExpertConfig.hidden (or config.hidden when zero). Outputs must not overlap.
+  void forwardFusedShared(const void* input, const void* sharedInput, const int32_t* topkIds, const float* topkWeights,
+                          void* output, void* sharedOutput, int numTokens, cudaStream_t stream,
+                          bool signalStart = false);
+
  private:
+  MegaMoeContext(std::shared_ptr<Communicator> communicator, const NativeConfig& config, const PackedWeights& weights,
+                 const SharedExpertConfig* sharedConfig, const PackedWeights* sharedWeights, cudaStream_t stream,
+                 int tag, const std::string& kernelPath, const std::string& kernelId,
+                 std::shared_ptr<MegaMoeContext> sharedWorkspace);
+  void forwardImpl(const void* input, const void* sharedInput, const int32_t* topkIds, const float* topkWeights,
+                   void* output, void* sharedOutput, int numTokens, cudaStream_t stream, bool signalStart);
   size_t validateForward(const void* input, void* output, int numTokens) const;
   struct Impl;
   std::unique_ptr<Impl> impl_;

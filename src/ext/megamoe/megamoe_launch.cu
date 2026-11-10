@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdlib>
 #include <limits>
 #include <mscclpp/gpu_utils.hpp>
 #include <stdexcept>
@@ -112,6 +113,45 @@ Workspace routedWorkspaceLayout(const NativeConfig& c, void* base, size_t& bytes
 
 Workspace workspaceLayout(const NativeConfig& c, void* base, size_t& bytes) {
   return isLocalExpert(c) ? localWorkspaceLayout(c, base, bytes) : routedWorkspaceLayout(c, base, bytes);
+}
+
+NativeConfig sharedNativeConfig(const NativeConfig& routed, const SharedExpertConfig& shared) {
+  NativeConfig c{};
+  c.rank = 0;
+  c.worldSize = 1;
+  c.maxTokens = routed.maxTokens;
+  c.hidden = shared.hidden ? shared.hidden : routed.hidden;
+  c.intermediate = shared.intermediate;
+  c.numExperts = 1;
+  c.topK = 1;
+  c.smMargin = routed.smMargin;
+  c.gateUpClamp = shared.gateUpClamp;
+  c.weightDtype = WeightDtype::Fp8Nv;
+  c.activationDtype = ActivationDtype::Fp8Static;
+  c.activationScale = routed.activationScale;
+  c.combineRouteWeights = false;
+  return c;
+}
+
+Workspace fusedSharedWorkspaceLayout(const NativeConfig& routed, const SharedExpertConfig& sharedConfig,
+                                     const SymmetricLayout& symmetric, void* symmetricBase, void* base, size_t& bytes) {
+  const NativeConfig shared = sharedNativeConfig(routed, sharedConfig);
+  Workspace w{};
+  const size_t rows = aligned(shared.maxTokens, W4TileN);
+  const size_t activationRows = rows / W4TileN * W4TokenStride;
+  w.hiddenReady = at<int>(base, appendRegion(bytes, rows / W4TileN * W4ReadyCounterStride * sizeof(int)));
+  if (shared.hidden == routed.hidden) {
+    w.quantizedInput = at<uint8_t>(symmetricBase, symmetric.quantizedInput);
+    w.inputScale = at<uint8_t>(symmetricBase, symmetric.quantizedInputScale);
+  } else {
+    w.quantizedInput = at<uint8_t>(base, appendRegion(bytes, activationRows * shared.hidden));
+    w.inputScale = at<uint8_t>(base, appendRegion(bytes, blockScaleBytes(activationRows, shared.hidden)));
+  }
+  w.quantizedHidden = at<uint8_t>(base, appendRegion(bytes, activationRows * shared.intermediate));
+  w.hiddenScale = at<uint8_t>(base, appendRegion(bytes, blockScaleBytes(activationRows, shared.intermediate)));
+  w.poolRows = int(rows);
+  bytes = aligned(bytes);
+  return w;
 }
 
 __device__ __forceinline__ int canonicalFc1Row(int row, int intermediate) {
@@ -241,6 +281,32 @@ __global__ void quantizeInputStaticKernel(const __bfloat16* input, uint8_t* quan
   }
 }
 
+// Fused shared-expert prologue in one launch: static-FP8 quantize the routed input (blocks [0, routedBlocks)) and,
+// when the shared hidden differs, the shared input (the remaining blocks), and zero the shared FC1 readiness counters.
+__global__ void quantizeFusedInputsStaticKernel(const __bfloat16* input, uint8_t* quantizedInput, float staticScale,
+                                                int hidden, int routedBlocks, const __bfloat16* sharedInput,
+                                                uint8_t* sharedQuantizedInput, float sharedScale, int sharedHidden,
+                                                int tokens, int* sharedReady, int sharedReadyInts) {
+  constexpr int ValuesPerThread = 8;
+  if (blockIdx.x == 0 && blockIdx.y == 0)
+    for (int i = threadIdx.x; i < sharedReadyInts; i += blockDim.x) sharedReady[i] = 0;
+  const bool routed = int(blockIdx.x) < routedBlocks;
+  const __bfloat16* source = routed ? input : sharedInput;
+  uint8_t* destination = routed ? quantizedInput : sharedQuantizedInput;
+  const int width = routed ? hidden : sharedHidden;
+  const float scale = routed ? staticScale : sharedScale;
+  const int block = routed ? int(blockIdx.x) : int(blockIdx.x) - routedBlocks;
+  int col = (block * blockDim.x + threadIdx.x) * ValuesPerThread;
+  if (col >= width) return;
+  float invScale = scale != 0.0f ? (1.0f / scale) : 0.0f;
+  for (int token = blockIdx.y; token < tokens; token += gridDim.y) {
+    int4 packed = *reinterpret_cast<const int4*>(source + size_t(token) * width + col);
+    mscclpp::f32x8 decoded = mscclpp::to<mscclpp::f32x8>(mscclpp::bit_cast<mscclpp::bf16x8>(packed));
+    auto quantized = quantizeE4M3(decoded, invScale);
+    *reinterpret_cast<uint2*>(destination + size_t(token) * width + col) = quantized.storage;
+  }
+}
+
 template <class Types>
 W4ScaleLayout<Types> makeW4ScaleLayout(int m, int n, int k, int experts, bool activation) {
   using namespace cute;
@@ -253,18 +319,19 @@ W4ScaleLayout<Types> makeW4ScaleLayout(int m, int n, int k, int experts, bool ac
 
 template <class P>
 P makeParameters(const NativeConfig& c, void* symmetric, const uint64_t* peers, void* workspace,
-                 const PackedWeights& weights) {
+                 const PackedWeights& weights, const Workspace* workspaceOverride = nullptr,
+                 const SymmetricLayout* symmetricOverride = nullptr) {
   using namespace cute;
   using Mainloop = typename P::Collective::Mainloop;
   P p{};
   p.config = c;
-  p.symmetric = getSymmetricLayout(c);
+  p.symmetric = symmetricOverride ? *symmetricOverride : getSymmetricLayout(c);
   p.local = symmetric;
   p.peers = peers;
   p.fc1TaskDivisor = cutlass::FastDivmod(2 * c.intermediate / P::Tiles::M);
   p.fc2TaskDivisor = cutlass::FastDivmod((c.hidden + P::Tiles::M - 1) / P::Tiles::M);
   size_t bytes;
-  p.workspace = workspaceLayout(c, workspace, bytes);
+  p.workspace = workspaceOverride ? *workspaceOverride : workspaceLayout(c, workspace, bytes);
   int experts = c.numExperts / c.worldSize;
   auto make = [&](int m, int k, int rows, uint8_t* weight, uint8_t* weightScale, void* input,
                   uint8_t* inputScale = nullptr) {
@@ -333,12 +400,13 @@ cudaLaunchConfig_t makeLaunchConfig(int ctas, int threads, size_t sharedBytes, c
 
 struct KernelPlan {
   std::variant<detail::W4A8Parameters, detail::W8A16Parameters, detail::W8A16LocalParameters,
-               detail::W8A8LocalParameters>
+               detail::W8A8LocalParameters, detail::W4A8FusedParameters>
       params;
   int ctas;
   int device;
   size_t sharedBytes = 0;
   bool localExpert = false;
+  bool fusedShared = false;
 };
 
 void validateNativeConfig(const NativeConfig& c) {
@@ -389,6 +457,20 @@ void validateNativeConfig(const NativeConfig& c) {
   if (c.weightDtype == WeightDtype::Mxfp4) (void)detail::w4a8KernelEntry(c);
 }
 
+void validateFusedConfig(const NativeConfig& c, const SharedExpertConfig& shared) {
+  validateNativeConfig(c);
+  if (c.weightDtype != WeightDtype::Mxfp4 || c.activationDtype != ActivationDtype::Fp8Static)
+    throw std::invalid_argument("MegaMoE fused shared expert requires routed MXFP4 weights and static-FP8 activations");
+  const int sharedHidden = shared.hidden ? shared.hidden : c.hidden;
+  if (sharedHidden < 128 || sharedHidden % 128 || sharedHidden > std::numeric_limits<int>::max() / 2)
+    throw std::invalid_argument("MegaMoE shared hidden must be a positive multiple of 128");
+  if (shared.intermediate < 128 || shared.intermediate % 128 ||
+      shared.intermediate > std::numeric_limits<int>::max() / 2)
+    throw std::invalid_argument("MegaMoE shared intermediate must be a positive multiple of 128");
+  if (!std::isfinite(shared.gateUpClamp)) throw std::invalid_argument("MegaMoE shared gateUpClamp must be finite");
+  validateNativeConfig(detail::sharedNativeConfig(c, shared));
+}
+
 SymmetricLayout getSymmetricLayout(const NativeConfig& c) {
   validateNativeConfig(c);
   SymmetricLayout layout{};
@@ -411,7 +493,9 @@ SymmetricLayout getSymmetricLayout(const NativeConfig& c) {
         detail::appendRegion(layout.bytes, size_t(c.worldSize) * c.maxTokens * c.topK * sizeof(mscclpp::LL8Packet));
   }
   if (c.weightDtype == WeightDtype::Mxfp4) {
-    layout.quantizedInput = detail::appendRegion(layout.bytes, size_t(c.maxTokens) * c.hidden);
+    const size_t rows = detail::aligned(c.maxTokens, detail::W4TileN);
+    const size_t activationRows = rows / detail::W4TileN * detail::W4TokenStride;
+    layout.quantizedInput = detail::appendRegion(layout.bytes, activationRows * c.hidden);
     layout.quantizedInputScale =
         detail::appendRegion(layout.bytes, size_t(c.maxTokens) * detail::w4SourceScaleStride(c.hidden));
   }
@@ -423,6 +507,15 @@ size_t getPrivateWorkspaceBytes(const NativeConfig& c) {
   validateNativeConfig(c);
   size_t bytes;
   detail::workspaceLayout(c, nullptr, bytes);
+  return bytes;
+}
+
+size_t getFusedPrivateWorkspaceBytes(const NativeConfig& c, const SharedExpertConfig& shared) {
+  validateFusedConfig(c, shared);
+  size_t bytes;
+  detail::routedWorkspaceLayout(c, nullptr, bytes);
+  const auto symmetric = getSymmetricLayout(c);
+  (void)detail::fusedSharedWorkspaceLayout(c, shared, symmetric, nullptr, nullptr, bytes);
   return bytes;
 }
 
@@ -526,6 +619,44 @@ KernelResources preflightKernel(const NativeConfig& c) {
   return resources;
 }
 
+KernelResources preflightFusedKernel(const NativeConfig& c, const SharedExpertConfig& shared) {
+  validateFusedConfig(c, shared);
+  KernelResources resources{};
+  MSCCLPP_CUDATHROW(cudaGetDevice(&resources.device));
+  cudaDeviceProp properties{};
+  MSCCLPP_CUDATHROW(cudaGetDeviceProperties(&properties, resources.device));
+  if (properties.major != 10 || (properties.minor != 0 && properties.minor != 3 && properties.minor != 7))
+    throw std::invalid_argument("Native MegaMoE currently requires an SM100-family GPU");
+  if (c.smMargin > properties.multiProcessorCount - detail::W4ClusterSize)
+    throw std::invalid_argument("MegaMoE smMargin must leave enough SMs for the selected cluster");
+  resources.ctas = (properties.multiProcessorCount - c.smMargin) / detail::W4ClusterSize * detail::W4ClusterSize;
+  resources.sharedBytes = sizeof(detail::W4A8FusedSharedStorage);
+  auto configure = [&](auto kernel) {
+    cudaFuncAttributes attributes{};
+    MSCCLPP_CUDATHROW(cudaFuncGetAttributes(&attributes, kernel));
+    if (attributes.numRegs < detail::EntryRegisters)
+      throw std::runtime_error(
+          "MegaMoE fused W4A8 entry register allocation is too small for warpgroup reconfiguration");
+    if (resources.sharedBytes + attributes.sharedSizeBytes > properties.sharedMemPerBlockOptin)
+      throw std::invalid_argument("MegaMoE fused W4A8 specialization exceeds the device's shared memory limit");
+    MSCCLPP_CUDATHROW(
+        cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, int(resources.sharedBytes)));
+    std::array<cudaLaunchAttribute, 2> launchAttributes{};
+    auto launch = detail::makeLaunchConfig(resources.ctas, detail::W4A8Parameters::ThreadCount, resources.sharedBytes,
+                                           nullptr, launchAttributes, detail::W4ClusterSize);
+    int clusters = 0;
+    MSCCLPP_CUDATHROW(cudaOccupancyMaxActiveClusters(&clusters, kernel, &launch));
+    resources.ctas = std::min(resources.ctas, clusters * detail::W4ClusterSize);
+    if (resources.ctas < detail::W4ClusterSize)
+      throw std::runtime_error("MegaMoE fused W4A8 cannot keep the selected cluster resident");
+  };
+  configure(detail::w4a8KernelEntry(c));
+  configure(detail::w4a8KernelEntry(c, true));
+  configure(detail::w4a8FusedKernelEntry(c));
+  configure(detail::w4a8FusedKernelEntry(c, true));
+  return resources;
+}
+
 std::shared_ptr<KernelPlan> createKernelPlan(const NativeConfig& c, void* symmetric, const uint64_t* peers,
                                              void* workspace, const PackedWeights& weights) {
   if (!symmetric || !peers || !workspace || !weights.fc1 || !weights.fc1Scale || !weights.fc2 || !weights.fc2Scale)
@@ -551,6 +682,38 @@ std::shared_ptr<KernelPlan> createKernelPlan(const NativeConfig& c, void* symmet
   return plan;
 }
 
+std::shared_ptr<KernelPlan> createFusedKernelPlan(const NativeConfig& c, const SharedExpertConfig& sharedConfig,
+                                                  void* symmetric, const uint64_t* peers, void* workspace,
+                                                  const PackedWeights& weights, const PackedWeights& sharedWeights) {
+  if (!symmetric || !peers || !workspace || !weights.fc1 || !weights.fc1Scale || !weights.fc2 || !weights.fc2Scale ||
+      !sharedWeights.fc1 || !sharedWeights.fc1Scale || !sharedWeights.fc2 || !sharedWeights.fc2Scale)
+    throw std::invalid_argument("MegaMoE fused plan requires live workspaces, peer addresses, and packed weights");
+  const auto resources = preflightFusedKernel(c, sharedConfig);
+  auto plan = std::make_shared<KernelPlan>();
+  plan->device = resources.device;
+  plan->ctas = resources.ctas;
+  plan->sharedBytes = resources.sharedBytes;
+  plan->fusedShared = true;
+  size_t bytes;
+  auto routedWorkspace = detail::routedWorkspaceLayout(c, workspace, bytes);
+  const auto symmetricLayout = getSymmetricLayout(c);
+  auto sharedWorkspace =
+      detail::fusedSharedWorkspaceLayout(c, sharedConfig, symmetricLayout, symmetric, workspace, bytes);
+  auto routed =
+      detail::makeParameters<detail::W4A8Parameters>(c, symmetric, peers, workspace, weights, &routedWorkspace);
+  const auto sharedNative = detail::sharedNativeConfig(c, sharedConfig);
+  auto shared = detail::makeParameters<detail::W8A8LocalParameters>(sharedNative, symmetric, peers, workspace,
+                                                                    sharedWeights, &sharedWorkspace, &symmetricLayout);
+  shared.fc1WeightScale = sharedWeights.fc1TensorScale;
+  shared.fc2WeightScale = sharedWeights.fc2TensorScale;
+  // MSCCLPP_MEGAMOE_FUSED_FC1_DELAY_NS tunes the shared FC1 start; 2500 ns hides it best at EP32 (see the fused v2
+  // notes).
+  const char* delayEnv = std::getenv("MSCCLPP_MEGAMOE_FUSED_FC1_DELAY_NS");
+  plan->params =
+      detail::W4A8FusedParameters{routed, shared, delayEnv ? uint32_t(std::strtoul(delayEnv, nullptr, 10)) : 2500u};
+  return plan;
+}
+
 int kernelPlanCtaCount(const KernelPlan& plan) { return plan.ctas; }
 size_t kernelPlanSharedBytes(const KernelPlan& plan) { return plan.sharedBytes; }
 
@@ -560,7 +723,8 @@ void launchNativeW4A8(const std::shared_ptr<KernelPlan>& plan, const void* input
   int device;
   MSCCLPP_CUDATHROW(cudaGetDevice(&device));
   if (device != plan->device) throw std::invalid_argument("MegaMoE must launch on the device owning its workspace");
-  auto& params = std::get<detail::W4A8Parameters>(plan->params);
+  auto& params = plan->fusedShared ? std::get<detail::W4A8FusedParameters>(plan->params).routed
+                                   : std::get<detail::W4A8Parameters>(plan->params);
   if (tokens < 0 || tokens > params.config.maxTokens || (tokens && !output))
     throw std::invalid_argument("MegaMoE token count or output pointer is invalid");
   cudaStreamCaptureStatus capture;
@@ -586,7 +750,45 @@ void launchNativeW4A8(const std::shared_ptr<KernelPlan>& plan, const void* input
                                          launchAttributes, detail::W4ClusterSize);
   MSCCLPP_CUDATHROW(
       cudaLaunchKernelEx(&launch, detail::w4a8KernelEntry(params.config, capture == cudaStreamCaptureStatusActive),
-                         params, tokens, static_cast<__bfloat16*>(output), kernelEntrySignal, ids, scores));
+                         params, tokens, static_cast<__bfloat16*>(output), kernelEntrySignal, ids, scores, nullptr));
+}
+
+void launchNativeW4A8FusedShared(const std::shared_ptr<KernelPlan>& plan, const void* input, const void* sharedInput,
+                                 const int32_t* ids, const float* scores, int tokens, void* output, void* sharedOutput,
+                                 cudaStream_t stream, uint32_t* kernelEntrySignal) {
+  if (!plan || !plan->fusedShared) throw std::invalid_argument("MegaMoE fused shared kernel plan is unavailable");
+  int device;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&device));
+  if (device != plan->device) throw std::invalid_argument("MegaMoE must launch on the device owning its workspace");
+  auto& params = std::get<detail::W4A8FusedParameters>(plan->params);
+  if (tokens < 0 || tokens > params.routed.config.maxTokens || (tokens && (!output || !sharedOutput)))
+    throw std::invalid_argument("MegaMoE token count or fused output pointer is invalid");
+  cudaStreamCaptureStatus capture;
+  MSCCLPP_CUDATHROW(cudaStreamIsCapturing(stream, &capture));
+  if (tokens) {
+    const size_t tokenBlocks = (tokens + detail::W4TileN - 1) / detail::W4TileN;
+    dim3 threads(128);
+    const int routedBlocks = (params.routed.config.hidden / 32 + 31) / 32;
+    const bool quantizeShared = params.shared.config.hidden != params.routed.config.hidden;
+    const int sharedBlocks = quantizeShared ? (params.shared.config.hidden / 32 + 31) / 32 : 0;
+    dim3 blocks(routedBlocks + sharedBlocks, std::min(tokens, 65535));
+    const auto* source = input ? static_cast<const __bfloat16*>(input)
+                               : detail::at<__bfloat16>(params.routed.local, params.routed.symmetric.input);
+    detail::quantizeFusedInputsStaticKernel<<<blocks, threads, 0, stream>>>(
+        source, detail::at<uint8_t>(params.routed.local, params.routed.symmetric.quantizedInput),
+        params.routed.config.activationScale, params.routed.config.hidden, routedBlocks,
+        static_cast<const __bfloat16*>(sharedInput), params.shared.workspace.quantizedInput,
+        params.shared.config.activationScale, params.shared.config.hidden, tokens, params.shared.workspace.hiddenReady,
+        int(tokenBlocks * detail::W4ReadyCounterStride));
+    MSCCLPP_CUDATHROW(cudaGetLastError());
+  }
+  std::array<cudaLaunchAttribute, 2> launchAttributes{};
+  auto launch = detail::makeLaunchConfig(plan->ctas, detail::W4A8Parameters::ThreadCount, plan->sharedBytes, stream,
+                                         launchAttributes, detail::W4ClusterSize);
+  MSCCLPP_CUDATHROW(cudaLaunchKernelEx(
+      &launch, detail::w4a8FusedKernelEntry(params.routed.config, capture == cudaStreamCaptureStatusActive), params,
+      tokens, static_cast<__bfloat16*>(output), kernelEntrySignal, ids, scores,
+      static_cast<__bfloat16*>(sharedOutput)));
 }
 
 #if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE

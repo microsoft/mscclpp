@@ -138,6 +138,22 @@ struct W4DispatchStorageT {
 
 struct EmptyStorage {};
 
+template <class Types, bool Local = Types::LocalExpert>
+struct W4RoutingDispatchStorageT;
+
+template <class Types>
+struct W4RoutingDispatchStorageT<Types, false> {
+  union {
+    W4DispatchStorageT<Types> dispatch;
+    int routing[sizeof(W4DispatchStorageT<Types>) / sizeof(int)];
+  };
+};
+
+template <class Types>
+struct W4RoutingDispatchStorageT<Types, true> {
+  EmptyStorage dispatch;
+};
+
 // FC2 BF16 rows are padded by 16 bytes so transposing stmatrix row writes are bank-conflict free.
 constexpr int PackedRowStride = 128 + 8;
 constexpr int PackedFp8RowStride = 128 + 16;
@@ -168,22 +184,36 @@ struct alignas(1024) W8A16SharedStorageT {
 };
 
 template <class Types>
-struct alignas(1024) W4A8SharedStorageT {
-  // Routing finishes before GEMM uses these buffers; pipeline state and dispatch flags remain separate.
-  union {
-    typename Types::Mainloop::TensorStorage tensors;
-    int routing[sizeof(typename Types::Mainloop::TensorStorage) / sizeof(int)];
-  };
+struct alignas(1024) W4A8SharedStorageT : W4RoutingDispatchStorageT<Types> {
+  typename Types::Mainloop::TensorStorage tensors;
   typename Types::Load::SharedStorage mainloop;
   std::conditional_t<Types::SplitPipelines, typename Types::Load::SharedStorage, EmptyStorage> activationLoad;
   typename Types::Accumulate::SharedStorage accumulated;
   uint32_t tmem;
   cutlass::arch::ClusterBarrier tmemReady;
   EpilogueStorage<Types::EpilogueTokens> epilogue;
-  std::conditional_t<Types::LocalExpert, EmptyStorage, W4DispatchStorageT<Types>> dispatch;
 };
 
 using W4A8SharedStorage = W4A8SharedStorageT<W4A8CollectiveTypes>;
+
+struct alignas(1024) W4A8FusedSharedStorage : W4RoutingDispatchStorageT<W4A8CollectiveTypes> {
+  static_assert(std::is_same_v<W4A8CollectiveTypes::Load, W8A8LocalCollectiveTypes::Load>);
+  static_assert(std::is_same_v<W4A8CollectiveTypes::Accumulate, W8A8LocalCollectiveTypes::Accumulate>);
+  union {
+    W4A8CollectiveTypes::Mainloop::TensorStorage tensors;
+    W8A8LocalCollectiveTypes::Mainloop::TensorStorage sharedTensors;
+  };
+  W4A8CollectiveTypes::Load::SharedStorage mainloop;
+  std::conditional_t<W4A8CollectiveTypes::SplitPipelines, W4A8CollectiveTypes::Load::SharedStorage, EmptyStorage>
+      activationLoad;
+  W4A8CollectiveTypes::Accumulate::SharedStorage accumulated;
+  uint32_t tmem;
+  cutlass::arch::ClusterBarrier tmemReady;
+  cutlass::arch::ClusterBarrier computeReady;
+  cutlass::arch::ClusterBarrier phaseReady;
+  cutlass::arch::ClusterBarrier routingReady;
+  EpilogueStorage<W4A8CollectiveTypes::EpilogueTokens> epilogue;
+};
 
 template <class Types, bool Borrowed = false, ActivationDtype ActDtype = ActivationDtype::Mxfp8>
 struct KernelParameters {
@@ -217,14 +247,25 @@ struct W8A8LocalParameters : KernelParameters<W8A8LocalCollectiveTypes, false, A
   float fc2WeightScale;
 };
 
+struct W4A8FusedParameters {
+  W4A8Parameters routed;
+  W8A8LocalParameters shared;
+  // Shared FC1 starts this long after kernel entry so its HBM stream does not slow the latency-bound routing exchange.
+  uint32_t sharedFc1DelayNs;
+};
+
 template <ActivationDtype ActDtype = ActivationDtype::Mxfp8, class P>
 __device__ __forceinline__ auto w4a8ParameterView(const P& p, NativeConfig config) {
   using View = KernelParameters<typename P::Collective, true, ActDtype>;
   return View{config, p.symmetric, p.workspace, p.local, p.peers, p.fc1TaskDivisor, p.fc2TaskDivisor, p.fc1, p.fc2};
 }
 
-using W4A8KernelEntry = void (*)(W4A8Parameters, int, __bfloat16*, uint32_t*, const int32_t*, const float*);
+using W4A8KernelEntry = void (*)(W4A8Parameters, int, __bfloat16*, uint32_t*, const int32_t*, const float*,
+                                 __bfloat16*);
 W4A8KernelEntry w4a8KernelEntry(const NativeConfig& config, bool capturing = false);
+using W4A8FusedKernelEntry = void (*)(W4A8FusedParameters, int, __bfloat16*, uint32_t*, const int32_t*, const float*,
+                                      __bfloat16*);
+W4A8FusedKernelEntry w4a8FusedKernelEntry(const NativeConfig& config, bool capturing = false);
 
 template <int LocalMode = 0>
 using W8A16KernelEntry = void (*)(std::conditional_t<LocalMode != 0, W8A16LocalParameters, W8A16Parameters>, int,

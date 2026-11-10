@@ -435,14 +435,24 @@ MSCCLPP_DEVICE_INLINE void epilogue(const KernelParams& params, const Task& task
 }
 
 template <class Schedule, int LocalMode = 0, class KernelParams, class Storage, class Accumulate, class Accumulators>
+MSCCLPP_DEVICE_INLINE void runEpilogueTasks(const KernelParams& params, Storage& s, Accumulate& pipeline,
+                                            Accumulators accumulators, int hidden, int intermediate, int cluster,
+                                            const TaskRange& range, typename Accumulate::PipelineState& state,
+                                            __bfloat16* finalOutput = nullptr, int tokens = 0) {
+  const int clusters = gridDim.x / KernelParams::Tiles::ClusterSize;
+  for (int i = firstTaskOrdinal(range, cluster, clusters); i < range.end; i += taskOrdinalStride(range, clusters))
+    epilogue<Schedule, LocalMode>(params, taskAt(params, range, i, hidden, intermediate, tokens), s, pipeline, state,
+                                  accumulators, hidden, intermediate, finalOutput);
+}
+
+template <class Schedule, int LocalMode = 0, class KernelParams, class Storage, class Accumulate, class Accumulators>
 MSCCLPP_DEVICE_INLINE void runEpilogueRole(const KernelParams& params, Storage& s, Accumulate& pipeline,
                                            Accumulators accumulators, int hidden, int intermediate, int cluster,
                                            int tasks, __bfloat16* finalOutput = nullptr, int tokens = 0) {
   cutlass::arch::warpgroup_reg_alloc<KernelParams::Collective::EpilogueRegisters>();
   typename Accumulate::PipelineState state;
-  for (int i = cluster; i < tasks; i += gridDim.x / KernelParams::Tiles::ClusterSize)
-    epilogue<Schedule, LocalMode>(params, taskAt(params, i, hidden, intermediate, tokens), s, pipeline, state,
-                                  accumulators, hidden, intermediate, finalOutput);
+  runEpilogueTasks<Schedule, LocalMode>(params, s, pipeline, accumulators, hidden, intermediate, cluster,
+                                        TaskRange{0, tasks, 0}, state, finalOutput, tokens);
 #if MSCCLPP_BULK_AVAILABLE
   // Every lane may own FC2 bulk stores; they must complete before the CTA publishes its completion.
   bulkStoreWait();
@@ -615,17 +625,10 @@ MSCCLPP_DEVICE_INLINE void combineResults(const KernelParams& params, int tokens
     combineSlots<Hidden, CombineSlots, true>(params, tokens, output);
 }
 
+// Publishes this rank's completion to its peers, waits for theirs, and combines. Every CTA of the rank must have
+// passed the resident grid barrier; CTAs without combine work must already have returned.
 template <int Hidden = 0, class KernelParams>
-__device__ void finishAndCombine(const KernelParams& p, int tokens, __bfloat16* output) {
-  if constexpr (KernelParams::WeightMxfp4 && KernelParams::Activation == ActivationDtype::Mxfp8) {
-    if (!p.config.combineRouteWeights && p.config.worldSize == 1 && p.config.topK == 1) return;
-  }
-  traceKernel(KernelTracePhase::OutputJoin, true);
-  syncResidentGrid(&p.workspace.control->residentGridSyncState, gridDim.x);
-  if (blockIdx.x > 0 && !hasCombineWork<Hidden>(p, tokens)) {
-    traceKernel(KernelTracePhase::OutputJoin, false);
-    return;
-  }
+__device__ void signalAndCombine(const KernelParams& p, int tokens, __bfloat16* output) {
   if (blockIdx.x == 0 && threadIdx.x == 0) *at<uint64_t>(p.local, p.symmetric.epoch) = p.workspace.control->epoch;
   if (threadIdx.x < p.config.worldSize) {
     // Only CTA0 consumes the peer notification; followers observe the same epoch.
@@ -640,6 +643,61 @@ __device__ void finishAndCombine(const KernelParams& p, int tokens, __bfloat16* 
   traceKernel(KernelTracePhase::Combine, true);
   combineResults<Hidden>(p, tokens, output);
   traceKernel(KernelTracePhase::Combine, false);
+}
+
+template <int Hidden = 0, class KernelParams>
+__device__ void finishAndCombine(const KernelParams& p, int tokens, __bfloat16* output) {
+  if constexpr (KernelParams::WeightMxfp4 && KernelParams::Activation == ActivationDtype::Mxfp8) {
+    if (!p.config.combineRouteWeights && p.config.worldSize == 1 && p.config.topK == 1) return;
+  }
+  traceKernel(KernelTracePhase::OutputJoin, true);
+  syncResidentGrid(&p.workspace.control->residentGridSyncState, gridDim.x);
+  if (blockIdx.x > 0 && !hasCombineWork<Hidden>(p, tokens)) {
+    traceKernel(KernelTracePhase::OutputJoin, false);
+    return;
+  }
+  signalAndCombine<Hidden>(p, tokens, output);
+}
+
+// CTAs [0, combineCtaCount) take combine work (see hasCombineWork); CTA0 always signals the peers.
+template <int Hidden = 0, class KernelParams>
+MSCCLPP_DEVICE_INLINE int combineCtaCount(const KernelParams& params, int tokens) {
+  constexpr int WarpSize = 32;
+  constexpr int Warps = KernelParams::ThreadCount / WarpSize;
+  const int vectors = (Hidden > 0 ? Hidden : params.config.hidden) / mscclpp::bf16x8::Size;
+  const int topK = params.config.topK;
+  const int slots = topK == 1 ? 1 : (topK == 2 ? 2 : (topK <= 4 ? 4 : CombineSlots));
+  const int items = CombineLoads / slots < CombineItems ? CombineLoads / slots : CombineItems;
+  const int tokenTasks = (vectors + items * WarpSize - 1) / (items * WarpSize);
+  return max(1, (tokens * tokenTasks + Warps - 1) / Warps);
+}
+
+// Split resident grid barrier: one thread per CTA arrives once (after the CTA's routed work), and only the CTAs that
+// combine wait. Returns the phase that waitResidentGrid compares against.
+MSCCLPP_DEVICE_INLINE uint32_t arriveResidentGrid(uint32_t* state, int ctas) {
+  constexpr uint32_t Phase = 1u << 31;
+  if (ctas == 1) return 0;
+  uint32_t increment = blockIdx.x == 0 ? Phase - uint32_t(ctas - 1) : 1u;
+  return atomicFetchAdd<uint32_t, scopeDevice>(state, increment, memoryOrderRelease) & Phase;
+}
+
+MSCCLPP_DEVICE_INLINE void waitResidentGrid(uint32_t* state, int ctas, uint32_t phase) {
+  constexpr uint32_t Phase = 1u << 31;
+  if (ctas == 1) return;
+  POLL_MAYBE_JAILBREAK((atomicLoad<uint32_t, scopeDevice>(state, memoryOrderAcquire) & Phase) == phase, SpinLimit);
+}
+
+// finishAndCombine for kernels whose CTAs already arrived with arriveResidentGrid; `phase` is valid in thread 0.
+template <int Hidden = 0, class KernelParams>
+__device__ void finishAndCombineArrived(const KernelParams& p, int tokens, __bfloat16* output, uint32_t phase) {
+  traceKernel(KernelTracePhase::OutputJoin, true);
+  if (blockIdx.x > 0 && !hasCombineWork<Hidden>(p, tokens)) {
+    traceKernel(KernelTracePhase::OutputJoin, false);
+    return;
+  }
+  if (threadIdx.x == 0) waitResidentGrid(&p.workspace.control->residentGridSyncState, gridDim.x, phase);
+  __syncthreads();
+  signalAndCombine<Hidden>(p, tokens, output);
 }
 
 }  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail

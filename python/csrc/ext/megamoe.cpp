@@ -79,6 +79,11 @@ void register_megamoe(nb::module_& m) {
       .def_rw("activation_dtype", &NativeConfig::activationDtype)
       .def_rw("activation_scale", &NativeConfig::activationScale)
       .def_rw("combine_route_weights", &NativeConfig::combineRouteWeights);
+  nb::class_<SharedExpertConfig>(m, "CppMegaMoeSharedExpertConfig")
+      .def(nb::init<>())
+      .def_rw("hidden", &SharedExpertConfig::hidden)
+      .def_rw("intermediate", &SharedExpertConfig::intermediate)
+      .def_rw("gate_up_clamp", &SharedExpertConfig::gateUpClamp);
   nb::class_<MegaMoeContext>(m, "CppMegaMoeContext")
       .def_static(
           "create",
@@ -94,6 +99,25 @@ void register_megamoe(nb::module_& m) {
           nb::arg("communicator"), nb::arg("config"), nb::arg("fc1"), nb::arg("fc1_scale"), nb::arg("fc2"),
           nb::arg("fc2_scale"), nb::arg("stream") = 0, nb::arg("tag") = 17920, nb::arg("kernel_path") = "",
           nb::arg("kernel_id") = "", nb::arg("shared_workspace") = nullptr, nb::call_guard<nb::gil_scoped_release>())
+      .def_static(
+          "create_fused_shared",
+          [](std::shared_ptr<mscclpp::Communicator> comm, const NativeConfig& config, uintptr_t fc1, uintptr_t fc1Scale,
+             uintptr_t fc2, uintptr_t fc2Scale, const SharedExpertConfig& sharedConfig, uintptr_t sharedFc1,
+             uintptr_t sharedFc1Scale, uintptr_t sharedFc2, uintptr_t sharedFc2Scale, uintptr_t stream, int tag,
+             std::shared_ptr<MegaMoeContext> sharedWorkspace) {
+            PackedWeights weights{reinterpret_cast<uint8_t*>(fc1), reinterpret_cast<uint8_t*>(fc1Scale),
+                                  reinterpret_cast<uint8_t*>(fc2), reinterpret_cast<uint8_t*>(fc2Scale)};
+            PackedWeights sharedWeights{
+                reinterpret_cast<uint8_t*>(sharedFc1), reinterpret_cast<uint8_t*>(sharedFc1Scale),
+                reinterpret_cast<uint8_t*>(sharedFc2), reinterpret_cast<uint8_t*>(sharedFc2Scale)};
+            return std::make_shared<MegaMoeContext>(std::move(comm), config, weights, sharedConfig, sharedWeights,
+                                                    reinterpret_cast<cudaStream_t>(stream), tag,
+                                                    std::move(sharedWorkspace));
+          },
+          nb::arg("communicator"), nb::arg("config"), nb::arg("fc1"), nb::arg("fc1_scale"), nb::arg("fc2"),
+          nb::arg("fc2_scale"), nb::arg("shared_config"), nb::arg("shared_fc1"), nb::arg("shared_fc1_scale"),
+          nb::arg("shared_fc2"), nb::arg("shared_fc2_scale"), nb::arg("stream") = 0, nb::arg("tag") = 17920,
+          nb::arg("shared_workspace") = nullptr, nb::call_guard<nb::gil_scoped_release>())
       .def("input_ptr", [](const MegaMoeContext& self) { return reinterpret_cast<uintptr_t>(self.input()); })
       .def("input_dlpack", &inputDlpack, nb::arg("num_tokens"))
       .def_prop_ro("device", &MegaMoeContext::device)
@@ -135,6 +159,17 @@ void register_megamoe(nb::module_& m) {
                                reinterpret_cast<cudaStream_t>(stream));
           },
           nb::arg("input"), nb::arg("output"), nb::arg("num_tokens"), nb::arg("stream"))
+      .def(
+          "forward_fused_shared",
+          [](MegaMoeContext& self, uintptr_t input, uintptr_t sharedInput, uintptr_t ids, uintptr_t scores,
+             uintptr_t output, uintptr_t sharedOutput, int tokens, uintptr_t stream, bool signalStart) {
+            self.forwardFusedShared(reinterpret_cast<const void*>(input), reinterpret_cast<const void*>(sharedInput),
+                                    reinterpret_cast<const int32_t*>(ids), reinterpret_cast<const float*>(scores),
+                                    reinterpret_cast<void*>(output), reinterpret_cast<void*>(sharedOutput), tokens,
+                                    reinterpret_cast<cudaStream_t>(stream), signalStart);
+          },
+          nb::arg("input"), nb::arg("shared_input"), nb::arg("topk_ids"), nb::arg("topk_weights"), nb::arg("output"),
+          nb::arg("shared_output"), nb::arg("num_tokens"), nb::arg("stream"), nb::arg("signal_start") = false)
       .def(
           "wait_until_started",
           [](MegaMoeContext& self, uintptr_t stream) { self.waitUntilStarted(reinterpret_cast<cudaStream_t>(stream)); },

@@ -11,7 +11,8 @@
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 
 template <class Pipeline, class Schedule, class ClusterShape = cute::Shape<cute::_2, cute::_1, cute::_1>>
-__device__ __forceinline__ Pipeline makeAccumulatorPipeline(typename Pipeline::SharedStorage& storage, int warp) {
+__device__ __forceinline__ Pipeline makeAccumulatorPipeline(typename Pipeline::SharedStorage& storage, int warp,
+                                                            int initializingWarp = Schedule::EpilogueBegin) {
   typename Pipeline::Params params{};
   params.role = warp == Schedule::MmaWarp ? Pipeline::ThreadCategory::Producer
                                           : (warp >= Schedule::EpilogueBegin && warp < Schedule::EpilogueEnd
@@ -19,7 +20,7 @@ __device__ __forceinline__ Pipeline makeAccumulatorPipeline(typename Pipeline::S
                                                  : Pipeline::ThreadCategory::NonParticipant);
   params.producer_arv_count = 1;
   params.consumer_arv_count = cute::size(ClusterShape{}) * (Schedule::EpilogueEnd - Schedule::EpilogueBegin) * 32;
-  params.initializing_warp = Schedule::EpilogueBegin;
+  params.initializing_warp = initializingWarp;
   return Pipeline(storage, params, ClusterShape{}, cute::true_type{}, cute::false_type{});
 }
 
@@ -122,27 +123,24 @@ __device__ __forceinline__ void runW8A16MmaRole(const P& p, int tokens, Storage&
   }
 }
 
-template <class P, class Storage, class TmemStorage>
-__device__ __forceinline__ void runMmaRole(const P& p, Storage& s, typename P::Collective::Load& loadPipeline,
-                                           typename P::Collective::Load& activationPipeline,
-                                           typename P::Collective::Accumulate& accumulatePipeline,
-                                           typename P::Collective::Mainloop& fc1, TmemStorage tmemStorage, int hidden,
-                                           int intermediate, int warp, int cta, int cluster, int tasks,
-                                           int tokens = 0) {
+template <class P, class Storage, class TmemStorage, class LoadState, class AccumulateState>
+__device__ __forceinline__ void runMmaTasks(const P& p, Storage& s, typename P::Collective::Load& loadPipeline,
+                                            typename P::Collective::Load& activationPipeline,
+                                            typename P::Collective::Accumulate& accumulatePipeline,
+                                            typename P::Collective::Mainloop& fc1, TmemStorage tmemStorage, int hidden,
+                                            int intermediate, int warp, int cta, int cluster, const TaskRange& range,
+                                            LoadState& loadState, AccumulateState& accumulateState, int tokens = 0) {
   using namespace cute;
   using Mainloop = typename P::Collective::Mainloop;
-  using Load = typename P::Collective::Load;
-  using Accumulate = typename P::Collective::Accumulate;
   using Schedule = typename P::Collective::WarpSchedule;
   if (warp == Schedule::MmaWarp && cta == 0) {
-    typename Load::PipelineState loadState;
-    auto accumulateState = cutlass::make_producer_start_state<Accumulate>();
     auto mmaInputs = fc1.mma_init(tmemStorage, s.tensors);
     if constexpr (P::Activation == ActivationDtype::Fp8Static) {
       if (elect_one_sync()) copy(get<8>(mmaInputs), get<9>(mmaInputs)(_, _, _, _, 0), get<10>(mmaInputs));
     }
-    for (int i = cluster; i < tasks; i += gridDim.x / P::Tiles::ClusterSize) {
-      Task task = taskAt(p, i, hidden, intermediate, tokens);
+    const int clusters = gridDim.x / P::Tiles::ClusterSize;
+    for (int i = firstTaskOrdinal(range, cluster, clusters); i < range.end; i += taskOrdinalStride(range, clusters)) {
+      Task task = taskAt(p, range, i, hidden, intermediate, tokens);
       auto coord = taskCoord(p, task, cta);
       int kTiles = taskKTiles(p, task, hidden, intermediate);
       auto accumulator = Mainloop::slice_accumulator(tmemStorage, accumulateState.index());
@@ -155,8 +153,23 @@ __device__ __forceinline__ void runMmaRole(const P& p, Storage& s, typename P::C
       accumulatePipeline.producer_commit(accumulateState);
       ++accumulateState;
     }
-    accumulatePipeline.producer_tail(accumulateState);
   }
+}
+
+template <class P, class Storage, class TmemStorage>
+__device__ __forceinline__ void runMmaRole(const P& p, Storage& s, typename P::Collective::Load& loadPipeline,
+                                           typename P::Collective::Load& activationPipeline,
+                                           typename P::Collective::Accumulate& accumulatePipeline,
+                                           typename P::Collective::Mainloop& fc1, TmemStorage tmemStorage, int hidden,
+                                           int intermediate, int warp, int cta, int cluster, int tasks,
+                                           int tokens = 0) {
+  using Load = typename P::Collective::Load;
+  using Accumulate = typename P::Collective::Accumulate;
+  typename Load::PipelineState loadState;
+  auto accumulateState = cutlass::make_producer_start_state<Accumulate>();
+  runMmaTasks(p, s, loadPipeline, activationPipeline, accumulatePipeline, fc1, tmemStorage, hidden, intermediate, warp,
+              cta, cluster, TaskRange{0, tasks, 0}, loadState, accumulateState, tokens);
+  if (warp == P::Collective::WarpSchedule::MmaWarp && cta == 0) accumulatePipeline.producer_tail(accumulateState);
 }
 
 }  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail

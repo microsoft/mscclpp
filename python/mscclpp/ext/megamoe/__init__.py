@@ -3,7 +3,7 @@
 
 """Native CUDA MegaMoE on an MSCCL++-registered NVLink workspace."""
 
-from .api import MegaMoE, MegaMoEConfig, is_available
+from .api import MegaMoE, MegaMoEConfig, SharedExpertConfig, is_available
 from .jit import CompiledKernel, W4A8KernelConfig, compile_kernel, load_cached_kernel
 from .quantization import (
     dequantize_fp8_static,
@@ -23,6 +23,7 @@ from .w4a8 import (
 __all__ = [
     "MegaMoE",
     "MegaMoEConfig",
+    "SharedExpertConfig",
     "is_available",
     "quantize_mxfp8",
     "dequantize_mxfp8",

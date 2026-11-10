@@ -409,6 +409,12 @@ def main():
         default=False,
         help="overlap one local W8A16 or W8A8 shared expert with routed MegaMoE",
     )
+    parser.add_argument(
+        "--fused-shared-expert",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="run one fp8_nv shared expert inside the routed static-FP8 W4A8 kernel",
+    )
     parser.add_argument("--shared-hidden", type=int, default=8704)
     parser.add_argument("--shared-intermediate", type=int, default=2048)
     parser.add_argument(
@@ -596,6 +602,10 @@ def main():
         parser.error("--graph-timing steady-state requires --graph")
     if not math.isfinite(args.lognormal_sigma) or args.lognormal_sigma < 0:
         parser.error("--lognormal-sigma must be nonnegative and finite")
+    if args.overlap_shared_expert and args.fused_shared_expert:
+        parser.error("--overlap-shared-expert and --fused-shared-expert are mutually exclusive")
+    if (args.overlap_shared_expert or args.fused_shared_expert) and args.shared_weight_banks < 1:
+        parser.error("--shared-weight-banks must be positive")
     if args.overlap_shared_expert and (
         min(args.shared_hidden, args.shared_intermediate, args.shared_sm_count, args.shared_weight_banks) < 1
         or args.shared_sm_count % 2
@@ -605,15 +615,23 @@ def main():
         )
     if not math.isfinite(args.shared_gate_up_clamp):
         parser.error("--shared-gate-up-clamp must be finite")
-    if args.shared_activation_scale is not None and args.shared_activation_dtype != "fp8_static":
+    if (
+        args.overlap_shared_expert
+        and args.shared_activation_scale is not None
+        and args.shared_activation_dtype != "fp8_static"
+    ):
         parser.error("--shared-activation-scale requires --shared-activation-dtype fp8_static")
-    if args.shared_weight_dtype == "fp8_nv" and args.shared_activation_dtype != "fp8_static":
+    if (
+        args.overlap_shared_expert
+        and args.shared_weight_dtype == "fp8_nv"
+        and args.shared_activation_dtype != "fp8_static"
+    ):
         parser.error("--shared-weight-dtype fp8_nv requires --shared-activation-dtype fp8_static")
 
     import torch
     import torch.distributed as dist
     from mscclpp import Communicator, TcpBootstrap
-    from .api import MegaMoE, MegaMoEConfig, is_available
+    from .api import MegaMoE, MegaMoEConfig, SharedExpertConfig, is_available
     from .jit import W4A8KernelConfig, compile_kernel, load_cached_kernel
     from .w4a8 import resolve_w4a8_kernel_config
 
@@ -645,6 +663,11 @@ def main():
         activation_scale=args.activation_scale,
         combine_route_weights=args.combine_route_weights,
     )
+    if args.fused_shared_expert:
+        if config.weight_dtype != "mxfp4" or config.activation_dtype != "fp8_static":
+            parser.error("--fused-shared-expert requires routed --weight-dtype mxfp4 and --activation-dtype fp8_static")
+        if args.shared_activation_scale is not None and args.shared_activation_scale != config.activation_scale:
+            parser.error("fused shared and routed activation scales must match")
     kernel_config = W4A8KernelConfig()
     if not config.is_w8a16 and args.w4_profile is not None:
         kernel_config = resolve_w4a8_kernel_config(config, profile_path=args.w4_profile or None)
@@ -675,7 +698,11 @@ def main():
         kernel_config = replace(kernel_config, **policy_overrides)
     if args.kernel_key is not None and (args.w4_profile is not None or policy_overrides):
         parser.error("--kernel-key cannot be combined with --w4-profile or kernel policy overrides")
-    if config.is_w8a16:
+    if args.fused_shared_expert:
+        if args.kernel_key is not None or args.w4_profile is not None or policy_overrides:
+            parser.error("--fused-shared-expert currently requires the builtin kernel without policy overrides")
+        kernel = load_cached_kernel("builtin")
+    elif config.is_w8a16:
         if args.kernel_key is not None:
             parser.error("--kernel-key is only supported for W4A8")
         kernel = None
@@ -704,9 +731,6 @@ def main():
     bootstrap.initialize(f"{os.environ['MASTER_ADDR']}:{port}")
     communicator = Communicator(bootstrap)
     weights = _weights(config, device)
-    start = time.perf_counter()
-    context = MegaMoE(config, communicator, *weights, kernel=kernel)
-    initialization_ms = (time.perf_counter() - start) * 1000
     shared_bootstrap = None
     shared_communicator = None
     shared_context = None
@@ -714,6 +738,51 @@ def main():
     shared_config = None
     shared_weights = None
     shared_initialization_ms = None
+    fused_contexts = []
+    if args.fused_shared_expert:
+        shared_config = MegaMoEConfig(
+            rank=0,
+            world_size=1,
+            max_tokens=args.tokens,
+            hidden=args.shared_hidden,
+            intermediate=args.shared_intermediate,
+            num_experts=1,
+            top_k=1,
+            sm_margin=args.sm_margin,
+            gate_up_clamp=args.shared_gate_up_clamp,
+            combine_route_weights=False,
+            weight_dtype="fp8_nv",
+            activation_dtype="fp8_static",
+            activation_scale=config.activation_scale,
+        )
+        shared_weights = _weights(shared_config, device)
+        fused_config = SharedExpertConfig(
+            args.shared_intermediate,
+            args.shared_gate_up_clamp,
+            hidden=args.shared_hidden,
+        )
+        start = time.perf_counter()
+        for _ in range(args.shared_weight_banks):
+            fused_contexts.append(
+                MegaMoE(
+                    config,
+                    communicator,
+                    *weights,
+                    kernel=kernel,
+                    shared_workspace=fused_contexts[0] if fused_contexts else None,
+                    shared_config=fused_config,
+                    shared_fc1=shared_weights[0],
+                    shared_fc1_scale=shared_weights[1],
+                    shared_fc2=shared_weights[2],
+                    shared_fc2_scale=shared_weights[3],
+                )
+            )
+        context = fused_contexts[0]
+        initialization_ms = (time.perf_counter() - start) * 1000
+    else:
+        start = time.perf_counter()
+        context = MegaMoE(config, communicator, *weights, kernel=kernel)
+        initialization_ms = (time.perf_counter() - start) * 1000
     if args.overlap_shared_expert:
         shared_config = MegaMoEConfig(
             rank=0,
@@ -769,7 +838,18 @@ def main():
     shared_inputs = None
     shared_output = None
     shared_stream = None
-    if shared_context is not None:
+    if fused_contexts:
+        shared_inputs = (
+            inputs
+            if args.shared_hidden == args.hidden
+            else torch.randn(
+                (args.tokens, args.shared_hidden),
+                device=device,
+                dtype=torch.bfloat16,
+            )
+        )
+        shared_output = torch.empty_like(shared_inputs)
+    elif shared_context is not None:
         shared_inputs = torch.randn(
             (args.tokens, args.shared_hidden),
             device=device,
@@ -807,6 +887,17 @@ def main():
             stream=target_stream,
         )
 
+    def launch_fused(index=0):
+        fused_contexts[index % len(fused_contexts)].forward_fused_shared(
+            inputs,
+            ids,
+            scores,
+            shared_inputs=shared_inputs,
+            output=output,
+            shared_output=shared_output,
+            stream=stream,
+        )
+
     def launch_overlap(timing=None, index=0, join=True):
         assert shared_context is not None
         assert shared_inputs is not None
@@ -830,7 +921,11 @@ def main():
     for _ in range(args.warmup):
         launch_routed()
     stream.synchronize()
-    if shared_context is not None:
+    if fused_contexts:
+        for index in range(args.warmup):
+            launch_fused(index)
+        stream.synchronize()
+    elif shared_context is not None:
         for index in range(args.warmup):
             launch_overlap(index=index)
         stream.synchronize()
@@ -850,7 +945,7 @@ def main():
         error = (output.float() - reference.float()).abs()
         correctness = {"max_abs_error": error.max().item(), "mean_abs_error": error.mean().item()}
         torch.testing.assert_close(output, reference, rtol=rtol, atol=atol)
-        if shared_context is not None:
+        if fused_contexts or shared_context is not None:
             assert shared_config is not None
             assert shared_inputs is not None
             assert shared_output is not None
@@ -877,6 +972,7 @@ def main():
     overlap_graph = None
     overlap_timed_graph = None
     overlap_timing = None
+    fused_graph = None
     if args.graph:
         routed_graph = torch.cuda.CUDAGraph()
         dist.barrier()
@@ -887,7 +983,18 @@ def main():
         torch.cuda.synchronize(device)
         if args.check:
             torch.testing.assert_close(output, reference, rtol=rtol, atol=atol)
-        if shared_context is not None:
+        if fused_contexts:
+            fused_graph = torch.cuda.CUDAGraph()
+            dist.barrier()
+            with torch.cuda.graph(fused_graph, stream=stream):
+                for index in range(args.graph_batch):
+                    launch_fused(index)
+            fused_graph.replay()
+            torch.cuda.synchronize(device)
+            if args.check:
+                torch.testing.assert_close(output, reference, rtol=rtol, atol=atol)
+                torch.testing.assert_close(shared_output, shared_reference, rtol=shared_rtol, atol=shared_atol)
+        elif shared_context is not None:
             shared_graph = torch.cuda.CUDAGraph()
             with torch.cuda.graph(shared_graph, stream=shared_stream):
                 for index in range(args.graph_batch):
@@ -1018,11 +1125,61 @@ def main():
                 * 1000
                 / repetitions
             )
+    fused_samples = None
+    if fused_contexts:
+        fused_samples = []
+        repetitions = args.graph_batch if fused_graph else 1
+        for _ in range(args.iterations):
+            dist.barrier()
+            with torch.cuda.stream(stream):
+                if fused_graph and args.graph_timing == "steady-state":
+                    fused_graph.replay()
+                begin.record()
+                fused_graph.replay() if fused_graph else launch_fused()
+                end.record()
+            end.synchronize()
+            fused_samples.append(begin.elapsed_time(end) * 1000 / repetitions)
+    ktrace_dir = os.environ.get("MEGAMOE_KTRACE_DIR")
+    if ktrace_dir and routed_graph is not None:
+        import ctypes
+        import glob as _glob
+        import numpy as _np
+        import mscclpp as _m
+
+        lib_path = sorted(_glob.glob(os.path.join(os.path.dirname(_m.__file__), "lib", "libmscclpp_megamoe.so*")))[0]
+        lib = ctypes.CDLL(lib_path)
+        tracks, capacity = 32, 8192
+        os.makedirs(ktrace_dir, exist_ok=True)
+        for label, graph in [("routed", routed_graph)] + ([("fused", fused_graph)] if fused_graph is not None else []):
+            for replay in range(2):
+                torch.cuda.synchronize(device)
+                dist.barrier()
+                assert lib.mscclpp_megamoe_w4_trace_reset() == 0
+                with torch.cuda.stream(stream):
+                    graph.replay()
+                torch.cuda.synchronize(device)
+                events = _np.zeros(tracks * capacity * 2, dtype=_np.uint64)
+                counts = _np.zeros(tracks, dtype=_np.uint32)
+                assert (
+                    lib.mscclpp_megamoe_w4_trace_copy(
+                        events.ctypes.data_as(ctypes.c_void_p),
+                        ctypes.c_size_t(events.nbytes),
+                        counts.ctypes.data_as(ctypes.POINTER(ctypes.c_uint32)),
+                        ctypes.c_size_t(counts.nbytes),
+                    )
+                    == 0
+                )
+                if rank < 4:
+                    _np.savez(
+                        os.path.join(ktrace_dir, f"{label}-r{replay}-rank{rank}.npz"), events=events, counts=counts
+                    )
     kernel_trace = None
     if args.trace_dir and routed_graph is not None:
         from torch.profiler import ProfilerActivity, profile
 
         profiled = [("routed", routed_graph)]
+        if fused_graph is not None:
+            profiled.append(("fused", fused_graph))
         if overlap_graph is not None:
             profiled += [("shared", shared_graph), ("overlap", overlap_graph)]
         with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA]) as profiler:
@@ -1041,7 +1198,11 @@ def main():
         profiler.export_chrome_trace(trace_path)
         kernel_trace = _trace_kernel_summary(trace_path)
     reports = [None] * world
-    primary_samples = overlap_samples if overlap_samples is not None else routed_control_samples
+    primary_samples = (
+        fused_samples
+        if fused_samples is not None
+        else (overlap_samples if overlap_samples is not None else routed_control_samples)
+    )
     dist.all_gather_object(
         reports,
         {
@@ -1060,21 +1221,25 @@ def main():
             "shared_control_samples_us": shared_control_samples,
             "shared_start_delay_samples_us": shared_start_delay_samples,
             "shared_tail_samples_us": shared_tail_samples,
+            "fused_samples_us": fused_samples,
             "kernel_trace_us": kernel_trace,
             "correctness": correctness,
             "shared": (
                 None
-                if shared_context is None
+                if shared_context is None and not fused_contexts
                 else {
-                    "cta_count": shared_context.cta_count,
-                    "weight_banks": len(shared_contexts),
+                    "mode": "fused" if fused_contexts else "two_kernel_overlap",
+                    "cta_count": None if fused_contexts else shared_context.cta_count,
+                    "weight_banks": len(fused_contexts) if fused_contexts else len(shared_contexts),
                     "weight_dtype": shared_config.weight_dtype,
                     "activation_dtype": shared_config.activation_dtype,
                     "activation_scale": shared_config.activation_scale,
-                    "workspace_bytes": shared_context.workspace_bytes,
+                    "workspace_bytes": context.workspace_bytes if fused_contexts else shared_context.workspace_bytes,
                     "initialization_ms": shared_initialization_ms,
-                    "kernel_id": shared_context.kernel_id,
-                    "kernel_config": shared_context.effective_kernel_config,
+                    "kernel_id": context.kernel_id if fused_contexts else shared_context.kernel_id,
+                    "kernel_config": (
+                        context.effective_kernel_config if fused_contexts else shared_context.effective_kernel_config
+                    ),
                     "correctness": shared_correctness,
                 }
             ),
@@ -1083,10 +1248,14 @@ def main():
     if rank == 0:
         result = {
             "implementation": "mscclpp-native-cuda-megamoe",
-            "scope": ("routed_and_overlapped_shared_expert" if shared_context is not None else "routed_experts_only"),
+            "scope": (
+                "routed_and_fused_shared_expert"
+                if fused_contexts
+                else ("routed_and_overlapped_shared_expert" if shared_context is not None else "routed_experts_only")
+            ),
             "excluded": (
                 ["squash", "unsquash", "router", "residual", "routed_shared_add"]
-                if shared_context is not None
+                if shared_context is not None or fused_contexts
                 else ["shared_expert", "squash", "unsquash", "router", "residual"]
             ),
             "configuration": {**vars(args), "world_size": world},
@@ -1151,6 +1320,17 @@ def main():
                 "sm_count": sm_count,
                 "routed_ctas": context.cta_count,
                 "shared_ctas": shared_context.cta_count,
+            }
+        if fused_contexts:
+            result["fused_latency_us_max_across_ranks"] = _latency_summary(
+                reports,
+                "fused_samples_us",
+                args.iterations,
+            )
+            result["sm_partition"] = {
+                "sm_count": sm_count,
+                "fused_ctas": context.cta_count,
+                "reserved_shared_ctas": 0,
             }
         text = json.dumps(result, indent=2)
         print(text, flush=True)

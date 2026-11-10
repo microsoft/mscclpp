@@ -13,6 +13,7 @@ import pytest
 
 from mscclpp.ext.megamoe import (
     MegaMoEConfig,
+    SharedExpertConfig,
     W4A8KernelConfig,
     dequantize_fp8_static,
     dequantize_mxfp4,
@@ -60,9 +61,22 @@ def mocked_workspace_api(monkeypatch):
             private_bytes=4096,
         )
 
+    fused_calls = []
+
+    def create_fused_shared(*args):
+        fused_calls.append(args)
+        owner = args[-1]
+        return SimpleNamespace(
+            workspace_id=owner.workspace_id if owner is not None else (len(calls) + len(fused_calls)) * 4096,
+            packed_weight_pointers=tuple((len(calls) + len(fused_calls)) * 256 + i * 32 for i in range(4)),
+            symmetric_bytes=8192,
+            private_bytes=6144,
+        )
+
     native = SimpleNamespace(
         CppMegaMoeConfig=SimpleNamespace,
-        CppMegaMoeContext=SimpleNamespace(create=create),
+        CppMegaMoeSharedExpertConfig=SimpleNamespace,
+        CppMegaMoeContext=SimpleNamespace(create=create, create_fused_shared=create_fused_shared),
         CppMegaMoeWeightDtype=SimpleNamespace(Mxfp4=0, Mxfp8=1, Fp8Nv=2),
         CppMegaMoeActivationDtype=SimpleNamespace(Mxfp8=0, Fp8Static=1, Bf16=2),
     )
@@ -78,6 +92,7 @@ def mocked_workspace_api(monkeypatch):
     monkeypatch.setattr(torch.cuda, "is_current_stream_capturing", lambda: False)
     monkeypatch.setattr(torch.cuda, "stream", lambda stream: nullcontext())
     weights = [SimpleNamespace(data_ptr=lambda pointer=pointer: pointer) for pointer in range(1, 5)]
+    native.fused_calls = fused_calls
     return api, native, calls, weights
 
 
@@ -124,6 +139,53 @@ def test_shared_workspace_native_validation_is_not_silenced(mocked_workspace_api
     monkeypatch.setattr(native.CppMegaMoeContext, "create", reject)
     with pytest.raises(ValueError, match="same native configuration"):
         api.MegaMoE(_config(max_tokens=64), object(), *weights, shared_workspace=owner)
+
+
+def test_shared_expert_config_validation():
+    shared = SharedExpertConfig(2048, 0.25, hidden=8704)
+    assert shared.intermediate == 2048 and shared.hidden == 8704
+    for intermediate in (0, 129, True, 2**31):
+        with pytest.raises(ValueError):
+            SharedExpertConfig(intermediate)
+    for hidden in (0, 129, True, 2**31):
+        with pytest.raises(ValueError):
+            SharedExpertConfig(2048, hidden=hidden)
+    for clamp in (float("nan"), float("inf")):
+        with pytest.raises(ValueError):
+            SharedExpertConfig(2048, clamp)
+
+
+def test_fused_shared_constructor_contract(mocked_workspace_api):
+    api, native, _, weights = mocked_workspace_api
+    config = _config(activation_scale=0.125)
+    shared = api.SharedExpertConfig(2048, 0.5, hidden=8704)
+    with pytest.raises(ValueError, match="supplied together"):
+        api.MegaMoE(config, object(), *weights, shared_config=shared)
+    with pytest.raises(ValueError, match="requires routed"):
+        api.MegaMoE(
+            _config(),
+            object(),
+            *weights,
+            shared_config=shared,
+            shared_fc1=weights[0],
+            shared_fc1_scale=weights[1],
+            shared_fc2=weights[2],
+            shared_fc2_scale=weights[3],
+        )
+    context = api.MegaMoE(
+        config,
+        object(),
+        *weights,
+        shared_config=shared,
+        shared_fc1=weights[0],
+        shared_fc1_scale=weights[1],
+        shared_fc2=weights[2],
+        shared_fc2_scale=weights[3],
+    )
+    assert context.shared_config == shared
+    assert len(native.fused_calls) == 1
+    native_shared = native.fused_calls[0][6]
+    assert native_shared.hidden == 8704 and native_shared.intermediate == 2048 and native_shared.gate_up_clamp == 0.5
 
 
 @pytest.mark.parametrize(
@@ -570,6 +632,223 @@ def test_native_w4a8_combine_route_weights(activation_dtype, activation_scale):
     expected = _reference(config, inputs, ids, torch.where(ids >= 0, scores, 0.0), weights)
     torch.testing.assert_close(output, expected, rtol=0.05, atol=0.02)
     del context
+
+
+def test_native_w4a8_fused_fp8nv_shared_expert():
+    from mscclpp import Communicator, TcpBootstrap
+    from mscclpp.ext.megamoe import MegaMoE, SharedExpertConfig, is_available
+    from mscclpp.ext.megamoe.benchmark import _reference, _weights
+
+    torch = pytest.importorskip("torch")
+    if (
+        not is_available()
+        or not torch.cuda.is_available()
+        or torch.cuda.get_device_capability() not in ((10, 0), (10, 3), (10, 7))
+    ):
+        pytest.skip("requires native MegaMoE on an SM100-family GPU")
+    device = torch.device("cuda", torch.cuda.current_device())
+    sm_count = torch.cuda.get_device_properties(device).multi_processor_count
+    scale = 0.0625
+    config = _config(
+        world_size=1,
+        max_tokens=33,
+        hidden=4096,
+        intermediate=4352,
+        num_experts=2,
+        top_k=2,
+        sm_margin=sm_count - 8,
+        activation_dtype="fp8_static",
+        activation_scale=scale,
+    )
+    bootstrap = TcpBootstrap.create(0, 1)
+    bootstrap.initialize(TcpBootstrap.create_unique_id())
+    communicator = Communicator(bootstrap)
+    generator = torch.Generator(device=device).manual_seed(6137)
+    routed_weights = _weights(config, device)
+    shared_hidden, shared_intermediate = 8704, 512
+    source1 = (
+        torch.randn((1, 2 * shared_intermediate, shared_hidden), generator=generator, device=device)
+        / shared_hidden**0.5
+    )
+    source2 = (
+        torch.randn((1, shared_hidden, shared_intermediate), generator=generator, device=device)
+        / shared_intermediate**0.5
+    )
+    shared_scale1 = (source1.abs().amax() / 448).reshape(1)
+    shared_scale2 = (source2.abs().amax() / 448).reshape(1)
+    shared_fc1 = (source1 / shared_scale1).to(torch.float8_e4m3fn)
+    shared_fc2 = (source2 / shared_scale2).to(torch.float8_e4m3fn)
+    context = MegaMoE(
+        config,
+        communicator,
+        *routed_weights,
+        shared_config=SharedExpertConfig(shared_intermediate, 0.25, hidden=shared_hidden),
+        shared_fc1=shared_fc1,
+        shared_fc1_scale=shared_scale1,
+        shared_fc2=shared_fc2,
+        shared_fc2_scale=shared_scale2,
+    )
+    inputs = torch.randn((33, config.hidden), generator=generator, device=device, dtype=torch.bfloat16)
+    shared_inputs = torch.randn((33, shared_hidden), generator=generator, device=device, dtype=torch.bfloat16)
+    ids = torch.arange(33, device=device, dtype=torch.int32).remainder(2)
+    ids = torch.stack((ids, 1 - ids), dim=1).contiguous()
+    scores = torch.rand((33, 2), generator=generator, device=device)
+    scores /= scores.sum(dim=1, keepdim=True)
+
+    def shared_reference(source):
+        quantized = quantize_fp8_static(source.float(), scale).float()
+        first = shared_fc1[0].float() * shared_scale1
+        second = shared_fc2[0].float() * shared_scale2
+        gate, up = ((quantized @ first.T) * scale).chunk(2, dim=-1)
+        gate = gate.clamp(max=0.25)
+        up = up.clamp(-0.25, 0.25)
+        hidden = quantize_fp8_static(torch.nn.functional.silu(gate) * up, scale).float()
+        return ((hidden @ second.T) * scale).to(torch.bfloat16)
+
+    routed_output, shared_output = context.forward_fused_shared(inputs, ids, scores, shared_inputs=shared_inputs)
+    torch.cuda.synchronize()
+    torch.testing.assert_close(
+        routed_output, _reference(config, inputs, ids, scores, routed_weights), rtol=0.125, atol=0.16
+    )
+    torch.testing.assert_close(shared_output, shared_reference(shared_inputs), rtol=0.03, atol=0.01)
+
+    empty_routed, empty_shared = context.forward_fused_shared(
+        inputs[:0], ids[:0], scores[:0], shared_inputs=shared_inputs[:0]
+    )
+    torch.cuda.synchronize()
+    assert empty_routed.shape == (0, config.hidden) and empty_shared.shape == (0, shared_hidden)
+
+    graph = torch.cuda.CUDAGraph()
+    stream = torch.cuda.Stream(device=device)
+    graph_routed = torch.empty_like(inputs)
+    graph_shared = torch.empty_like(shared_inputs)
+    stream.wait_stream(torch.cuda.current_stream(device))
+    with torch.cuda.graph(graph, stream=stream):
+        context.forward_fused_shared(
+            inputs,
+            ids,
+            scores,
+            shared_inputs=shared_inputs,
+            output=graph_routed,
+            shared_output=graph_shared,
+            stream=stream,
+        )
+    graph.replay()
+    stream.synchronize()
+    torch.testing.assert_close(graph_shared, shared_reference(shared_inputs), rtol=0.03, atol=0.01)
+
+
+@pytest.mark.nranks(2)
+def test_native_w4a8_fused_shared_remote_routes_and_graph():
+    from mpi4py import MPI
+    from mscclpp import Communicator, TcpBootstrap
+    from mscclpp.ext.megamoe import MegaMoE, SharedExpertConfig, is_available
+    from mscclpp.ext.megamoe.benchmark import _weights
+
+    torch = pytest.importorskip("torch")
+    group = MPI.COMM_WORLD
+    if group.size != 2:
+        pytest.skip("requires exactly two MPI ranks")
+    supported = (
+        is_available()
+        and torch.cuda.is_available()
+        and torch.cuda.get_device_capability() in ((10, 0), (10, 3), (10, 7))
+    )
+    if not all(group.allgather(supported)):
+        pytest.skip("requires native MegaMoE on two NVLink-connected SM100-family GPUs")
+    device = torch.device("cuda", torch.cuda.current_device())
+    sm_count = torch.cuda.get_device_properties(device).multi_processor_count
+    scale = 0.0625
+    config = _config(
+        rank=group.rank,
+        world_size=2,
+        max_tokens=33,
+        hidden=4096,
+        intermediate=4352,
+        num_experts=4,
+        top_k=2,
+        sm_margin=sm_count - 8,
+        activation_dtype="fp8_static",
+        activation_scale=scale,
+    )
+    bootstrap = TcpBootstrap.create(group.rank, group.size)
+    unique_id = TcpBootstrap.create_unique_id() if group.rank == 0 else None
+    bootstrap.initialize(group.bcast(unique_id, root=0))
+    communicator = Communicator(bootstrap)
+    generator = torch.Generator(device=device).manual_seed(9201 + group.rank)
+    routed_weights = _weights(config, device)
+    shared_intermediate = 512
+    source1 = (
+        torch.randn((1, 2 * shared_intermediate, config.hidden), generator=generator, device=device)
+        / config.hidden**0.5
+    )
+    source2 = (
+        torch.randn((1, config.hidden, shared_intermediate), generator=generator, device=device)
+        / shared_intermediate**0.5
+    )
+    shared_scale1 = (source1.abs().amax() / 448).reshape(1)
+    shared_scale2 = (source2.abs().amax() / 448).reshape(1)
+    shared_fc1 = (source1 / shared_scale1).to(torch.float8_e4m3fn)
+    shared_fc2 = (source2 / shared_scale2).to(torch.float8_e4m3fn)
+    context = MegaMoE(
+        config,
+        communicator,
+        *routed_weights,
+        shared_config=SharedExpertConfig(shared_intermediate, 0.25),
+        shared_fc1=shared_fc1,
+        shared_fc1_scale=shared_scale1,
+        shared_fc2=shared_fc2,
+        shared_fc2_scale=shared_scale2,
+    )
+    tokens = 33 if group.rank == 0 else 17
+    inputs = torch.randn((tokens, config.hidden), generator=generator, device=device, dtype=torch.bfloat16)
+    rows = torch.arange(tokens, device=device, dtype=torch.int32)
+    remote_base, local_base = (2, 0) if group.rank == 0 else (0, 2)
+    ids = torch.stack((remote_base + rows.remainder(2), local_base + (rows // 2).remainder(2)), dim=1)
+    ids[::7, 1] = -1
+    ids[::11] = -1
+    scores = torch.full((tokens, 2), 0.5, device=device)
+    scores[ids == -1] = float("nan")
+
+    def shared_reference(source):
+        quantized = quantize_fp8_static(source.float(), scale).float()
+        gate, up = ((quantized @ (shared_fc1[0].float() * shared_scale1).T) * scale).chunk(2, dim=-1)
+        gate = gate.clamp(max=0.25)
+        up = up.clamp(-0.25, 0.25)
+        hidden = quantize_fp8_static(torch.nn.functional.silu(gate) * up, scale).float()
+        return ((hidden @ (shared_fc2[0].float() * shared_scale2).T) * scale).to(torch.bfloat16)
+
+    routed_reference = context(inputs, ids, scores, validate_routing=False)
+    torch.cuda.synchronize()
+    bootstrap.barrier()
+    for _ in range(3):
+        routed, shared = context.forward_fused_shared(inputs, ids, scores)
+        torch.cuda.synchronize()
+        bootstrap.barrier()
+        torch.testing.assert_close(routed, routed_reference, rtol=0.05, atol=0.02)
+        torch.testing.assert_close(shared, shared_reference(inputs), rtol=0.03, atol=0.01)
+
+    graph_routed = torch.empty_like(inputs)
+    graph_shared = torch.empty_like(inputs)
+    graph = torch.cuda.CUDAGraph()
+    stream = torch.cuda.Stream(device=device)
+    stream.wait_stream(torch.cuda.current_stream(device))
+    bootstrap.barrier()
+    with torch.cuda.graph(graph, stream=stream):
+        context.forward_fused_shared(
+            inputs, ids, scores, output=graph_routed, shared_output=graph_shared, stream=stream
+        )
+    bootstrap.barrier()
+    with torch.cuda.stream(stream):
+        for _ in range(3):
+            graph.replay()
+    stream.synchronize()
+    bootstrap.barrier()
+    torch.testing.assert_close(graph_routed, routed_reference, rtol=0.05, atol=0.02)
+    torch.testing.assert_close(graph_shared, shared_reference(inputs), rtol=0.03, atol=0.01)
+    del graph, context
+    gc.collect()
+    bootstrap.barrier()
 
 
 @pytest.mark.parametrize("weight_dtype,local_expert", [("mxfp4", False), ("mxfp8", False), ("mxfp8", True)])

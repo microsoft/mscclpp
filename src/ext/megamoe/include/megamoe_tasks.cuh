@@ -8,6 +8,33 @@
 
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 
+struct TaskRange {
+  int begin;
+  int end;
+  int localBegin;
+  // Optional cluster subset: ordinals go round-robin over clusters [clusterBegin, clusterBegin + clusterCount),
+  // starting at clusterBegin + clusterOffset. clusterCount == 0 uses every cluster.
+  int clusterBegin = 0;
+  int clusterCount = 0;
+  int clusterOffset = 0;
+};
+
+__device__ __forceinline__ int firstTaskOrdinal(const TaskRange& range, int cluster, int clusters) {
+  if (range.clusterCount > 0) {
+    if (cluster < range.clusterBegin || cluster >= range.clusterBegin + range.clusterCount) return range.end;
+    int delta = (cluster - range.clusterBegin - range.clusterOffset) % range.clusterCount;
+    if (delta < 0) delta += range.clusterCount;
+    return range.begin + delta;
+  }
+  int delta = (cluster - range.begin) % clusters;
+  if (delta < 0) delta += clusters;
+  return range.begin + delta;
+}
+
+__device__ __forceinline__ int taskOrdinalStride(const TaskRange& range, int clusters) {
+  return range.clusterCount > 0 ? range.clusterCount : clusters;
+}
+
 template <class P>
 __device__ __forceinline__ int fc1TaskTiles(int intermediate) {
   return 2 * intermediate / P::Tiles::M;
@@ -55,6 +82,11 @@ __device__ Task taskAt(const P& p, int ordinal, int hidden, int intermediate, in
   (fc1 ? p.fc1TaskDivisor : p.fc2TaskDivisor)(block, m, local);
   TokenBlock tokenBlock = resolveTokenBlock(p, block, m, tiles, tokens);
   return Task{fc1, block, m, tokenBlock};
+}
+
+template <class P>
+__device__ Task taskAt(const P& p, const TaskRange& range, int ordinal, int hidden, int intermediate, int tokens = 0) {
+  return taskAt(p, range.localBegin + ordinal - range.begin, hidden, intermediate, tokens);
 }
 
 template <class P>

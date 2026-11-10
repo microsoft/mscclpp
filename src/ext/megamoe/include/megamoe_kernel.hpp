@@ -44,6 +44,14 @@ struct NativeConfig {
   bool combineRouteWeights = false;
 };
 
+struct SharedExpertConfig {
+  // Zero reuses the routed hidden width.
+  int hidden = 0;
+  int intermediate = 0;
+  // Negative disables clamping; otherwise gate <= clamp and -clamp <= up <= clamp.
+  float gateUpClamp = -1.0f;
+};
+
 struct SymmetricLayout {
   size_t bytes = 0;
   size_t input = 0;
@@ -90,8 +98,11 @@ void packNativeWeights(const NativeConfig& config, const PackedWeights& source, 
 
 SymmetricLayout getSymmetricLayout(const NativeConfig& config);
 size_t getPrivateWorkspaceBytes(const NativeConfig& config);
+size_t getFusedPrivateWorkspaceBytes(const NativeConfig& config, const SharedExpertConfig& sharedConfig);
 void validateNativeConfig(const NativeConfig& config);
+void validateFusedConfig(const NativeConfig& config, const SharedExpertConfig& sharedConfig);
 KernelResources preflightKernel(const NativeConfig& config);
+KernelResources preflightFusedKernel(const NativeConfig& config, const SharedExpertConfig& sharedConfig);
 
 struct KernelPlan;
 
@@ -100,11 +111,18 @@ struct KernelPlan;
 std::shared_ptr<KernelPlan> createKernelPlan(const NativeConfig& config, void* symmetricBase,
                                              const uint64_t* devicePeerBases, void* privateWorkspace,
                                              const PackedWeights& weights);
+std::shared_ptr<KernelPlan> createFusedKernelPlan(const NativeConfig& config, const SharedExpertConfig& sharedConfig,
+                                                  void* symmetricBase, const uint64_t* devicePeerBases,
+                                                  void* privateWorkspace, const PackedWeights& weights,
+                                                  const PackedWeights& sharedWeights);
 int kernelPlanCtaCount(const KernelPlan& plan);
 size_t kernelPlanSharedBytes(const KernelPlan& plan);
 void launchNativeW4A8(const std::shared_ptr<KernelPlan>& plan, const void* input, const int32_t* ids,
                       const float* scores, int numTokens, void* output, cudaStream_t stream,
                       uint32_t* kernelEntrySignal);
+void launchNativeW4A8FusedShared(const std::shared_ptr<KernelPlan>& plan, const void* input, const void* sharedInput,
+                                 const int32_t* ids, const float* scores, int numTokens, void* output,
+                                 void* sharedOutput, cudaStream_t stream, uint32_t* kernelEntrySignal);
 void launchNativeW8A16(const std::shared_ptr<KernelPlan>& plan, const int32_t* ids, const float* scores, int numTokens,
                        void* output, cudaStream_t stream, uint32_t* kernelEntrySignal);
 // Runs the single local expert unweighted. A W8A8 plan quantizes `input` (16-byte aligned BF16) or, when null, the

@@ -136,6 +136,35 @@ class MegaMoEConfig:
         return self.num_experts // self.world_size
 
 
+@dataclass(frozen=True)
+class SharedExpertConfig:
+    """Dimensions specific to one fused local fp8_nv shared expert."""
+
+    intermediate: int
+    gate_up_clamp: float = -1.0
+    hidden: int | None = None
+
+    def __post_init__(self):
+        if (
+            isinstance(self.intermediate, bool)
+            or not isinstance(self.intermediate, int)
+            or self.intermediate < 128
+            or self.intermediate % 128
+            or self.intermediate > (2**31 - 1) // 2
+        ):
+            raise ValueError("shared intermediate must be a positive multiple of 128 within signed 32-bit indexing")
+        if not isinstance(self.gate_up_clamp, (int, float)) or not math.isfinite(self.gate_up_clamp):
+            raise ValueError("shared gate_up_clamp must be finite; negative disables clamping")
+        if self.hidden is not None and (
+            isinstance(self.hidden, bool)
+            or not isinstance(self.hidden, int)
+            or self.hidden < 128
+            or self.hidden % 128
+            or self.hidden > (2**31 - 1) // 2
+        ):
+            raise ValueError("shared hidden must be a positive multiple of 128 within signed 32-bit indexing")
+
+
 def _tensor(tensor, name, shape, dtype, device):
     import torch
 
@@ -202,11 +231,23 @@ class MegaMoE:
         tag=17920,
         kernel=None,
         shared_workspace: "MegaMoE | None" = None,
+        shared_config: SharedExpertConfig | None = None,
+        shared_fc1=None,
+        shared_fc1_scale=None,
+        shared_fc2=None,
+        shared_fc2_scale=None,
     ):
         if not isinstance(config, MegaMoEConfig):
             raise TypeError("config must be a MegaMoEConfig")
         if shared_workspace is not None and not isinstance(shared_workspace, MegaMoE):
             raise TypeError("shared_workspace must be a MegaMoE or None")
+        shared_values = (shared_fc1, shared_fc1_scale, shared_fc2, shared_fc2_scale)
+        if (shared_config is None) != all(value is None for value in shared_values):
+            raise ValueError("shared_config and all four shared weight tensors must be supplied together")
+        if shared_config is not None and not isinstance(shared_config, SharedExpertConfig):
+            raise TypeError("shared_config must be a SharedExpertConfig or None")
+        if shared_config is not None and any(value is None for value in shared_values):
+            raise ValueError("shared_config and all four shared weight tensors must be supplied together")
         if not is_available():
             raise RuntimeError(
                 "MSCCL++ was built without native MegaMoE. Rebuild with "
@@ -219,6 +260,7 @@ class MegaMoE:
         if not torch.cuda.is_available() or torch.version.hip:
             raise RuntimeError("Native MegaMoE requires NVIDIA CUDA and an SM100-family GPU; ROCm is unsupported")
         self.config = config
+        self.shared_config = shared_config
         self.device = torch.device("cuda", torch.cuda.current_device())
         if torch.cuda.get_device_capability(self.device) not in ((10, 0), (10, 3), (10, 7)):
             raise RuntimeError("Native MegaMoE currently requires an SM100-family GPU")
@@ -246,6 +288,19 @@ class MegaMoE:
             raise TypeError("kernel must be W4A8KernelConfig, CompiledKernel, or None")
         if mxfp8_weights and (isinstance(kernel, W4A8KernelConfig) or kernel.key != "builtin"):
             raise ValueError("W4A8KernelConfig requires weight_dtype='mxfp4'")
+        if shared_config is not None:
+            if config.weight_dtype != "mxfp4" or config.activation_dtype != "fp8_static":
+                raise ValueError(
+                    "fused shared mode requires routed weight_dtype='mxfp4' and activation_dtype='fp8_static'"
+                )
+            if isinstance(kernel, W4A8KernelConfig) or kernel.key != "builtin":
+                raise ValueError("fused shared mode currently requires the builtin kernel")
+            sh = shared_config.hidden or h
+            si = shared_config.intermediate
+            _tensor(shared_fc1, "shared_fc1", (1, 2 * si, sh), torch.float8_e4m3fn, self.device)
+            _tensor(shared_fc2, "shared_fc2", (1, sh, si), torch.float8_e4m3fn, self.device)
+            _tensor(shared_fc1_scale, "shared_fc1_scale", (1,), torch.float32, self.device)
+            _tensor(shared_fc2_scale, "shared_fc2_scale", (1,), torch.float32, self.device)
         selected = kernel if isinstance(kernel, W4A8KernelConfig) else kernel.config
         cluster_size = 2 if mxfp8_weights else selected.cluster_size
         if config.sm_margin > torch.cuda.get_device_properties(self.device).multi_processor_count - cluster_size:
@@ -281,19 +336,41 @@ class MegaMoE:
             )
         )
         native_config.activation_scale = float(config.activation_scale or 1.0)
-        self._native = _mscclpp.CppMegaMoeContext.create(
-            communicator,
-            native_config,
-            fc1.data_ptr(),
-            fc1_scale.data_ptr(),
-            fc2.data_ptr(),
-            fc2_scale.data_ptr(),
-            stream.cuda_stream,
-            tag,
-            kernel.path,
-            "" if kernel.key == "builtin" else kernel.key,
-            None if shared_workspace is None else shared_workspace._native,
-        )
+        if shared_config is None:
+            self._native = _mscclpp.CppMegaMoeContext.create(
+                communicator,
+                native_config,
+                fc1.data_ptr(),
+                fc1_scale.data_ptr(),
+                fc2.data_ptr(),
+                fc2_scale.data_ptr(),
+                stream.cuda_stream,
+                tag,
+                kernel.path,
+                "" if kernel.key == "builtin" else kernel.key,
+                None if shared_workspace is None else shared_workspace._native,
+            )
+        else:
+            native_shared_config = _mscclpp.CppMegaMoeSharedExpertConfig()
+            native_shared_config.hidden = shared_config.hidden or config.hidden
+            native_shared_config.intermediate = shared_config.intermediate
+            native_shared_config.gate_up_clamp = shared_config.gate_up_clamp
+            self._native = _mscclpp.CppMegaMoeContext.create_fused_shared(
+                communicator,
+                native_config,
+                fc1.data_ptr(),
+                fc1_scale.data_ptr(),
+                fc2.data_ptr(),
+                fc2_scale.data_ptr(),
+                native_shared_config,
+                shared_fc1.data_ptr(),
+                shared_fc1_scale.data_ptr(),
+                shared_fc2.data_ptr(),
+                shared_fc2_scale.data_ptr(),
+                stream.cuda_stream,
+                tag,
+                None if shared_workspace is None else shared_workspace._native,
+            )
 
     @property
     def kernel_config(self):
@@ -501,5 +578,78 @@ class MegaMoE:
                 signal_start,
             )
         return output
+
+    def forward_fused_shared(
+        self,
+        inputs,
+        topk_ids,
+        topk_weights,
+        *,
+        shared_inputs=None,
+        output=None,
+        shared_output=None,
+        stream=None,
+        validate_routing=False,
+        signal_start=False,
+    ):
+        """Enqueue routed and fused local shared experts and return their separate BF16 outputs.
+
+        ``inputs`` has routed width ``config.hidden``. ``shared_inputs`` has
+        ``shared_config.hidden`` and is required when that width differs; equal-width
+        paths reuse ``inputs`` and its quantized buffer.
+        """
+        import torch
+
+        if self.shared_config is None:
+            raise ValueError("forward_fused_shared requires construction with shared_config and shared weights")
+        stream = self._stream(stream)
+        if not isinstance(signal_start, bool):
+            raise TypeError("signal_start must be bool")
+        if not isinstance(inputs, torch.Tensor) or inputs.ndim != 2:
+            raise ValueError("inputs must be a rank-2 torch.Tensor")
+        t, h = inputs.shape
+        if t > self.config.max_tokens:
+            raise ValueError("input token count exceeds max_tokens")
+        _tensor(inputs, "inputs", (t, self.config.hidden), torch.bfloat16, self.device)
+        shared_hidden = self.shared_config.hidden or self.config.hidden
+        if shared_inputs is None:
+            if shared_hidden != self.config.hidden:
+                raise ValueError("shared_inputs is required when the fused shared hidden width differs")
+            shared_inputs = inputs
+        _tensor(shared_inputs, "shared_inputs", (t, shared_hidden), torch.bfloat16, self.device)
+        if shared_hidden == self.config.hidden and shared_inputs.data_ptr() != inputs.data_ptr():
+            raise ValueError("equal-width fused paths must share the same input allocation")
+        _tensor(topk_ids, "topk_ids", (t, self.config.top_k), torch.int32, self.device)
+        _tensor(topk_weights, "topk_weights", (t, self.config.top_k), torch.float32, self.device)
+        with torch.cuda.device(self.device), torch.cuda.stream(stream):
+            if validate_routing:
+                if torch.cuda.is_current_stream_capturing():
+                    raise ValueError("validate_routing=True is not CUDA Graph capturable")
+                if not bool(((topk_ids >= 0) & (topk_ids < self.config.num_experts)).all()):
+                    raise ValueError("routing IDs must be in [0, num_experts)")
+                if not bool(torch.isfinite(topk_weights).all()):
+                    raise ValueError("router weights must be finite")
+            if output is None:
+                output = torch.empty((t, h), dtype=torch.bfloat16, device=self.device)
+            if shared_output is None:
+                shared_output = torch.empty((t, shared_hidden), dtype=torch.bfloat16, device=self.device)
+            _tensor(output, "output", (t, h), torch.bfloat16, self.device)
+            _tensor(shared_output, "shared_output", (t, shared_hidden), torch.bfloat16, self.device)
+            if t and output.data_ptr() == shared_output.data_ptr():
+                raise ValueError("output and shared_output must be disjoint")
+            for tensor in (inputs, shared_inputs, topk_ids, topk_weights, output, shared_output):
+                tensor.record_stream(stream)
+            self._native.forward_fused_shared(
+                inputs.data_ptr(),
+                shared_inputs.data_ptr(),
+                topk_ids.data_ptr(),
+                topk_weights.data_ptr(),
+                output.data_ptr(),
+                shared_output.data_ptr(),
+                t,
+                stream.cuda_stream,
+                signal_start,
+            )
+        return output, shared_output
 
     __call__ = forward
