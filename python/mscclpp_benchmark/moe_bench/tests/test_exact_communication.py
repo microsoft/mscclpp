@@ -83,7 +83,7 @@ def exact_communication(backend):
             (False, "layer"),
             (
                 {"kind": "balanced"},
-                {"kind": "uniform"},
+                {"kind": "zipf_skewed"},
                 {"kind": "hot_experts", "expert_ids": [0, 1], "probability_mass": 0.999},
             ),
         ):

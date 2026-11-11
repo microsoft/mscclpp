@@ -115,7 +115,7 @@ Choose presets from [configs.yaml](configs.yaml):
 |---|---|
 | `--model` | `small`, `medium`, `large`, `scaled_small`, `scaled_medium`, `scaled_large` |
 | `--input` | `decode` (16 tokens/GPU), `prefill` (1024 tokens/GPU) |
-| `--routing` | `balanced`, `uniform`, `hot_pair`, `zipf`, `zipf_skewed`, `hot_experts`, `lognormal`; traffic: `hot_last_rank`, `idle_half`, `local_heavy`, `remote_heavy`, `intra_node_heavy`, `cross_node_heavy` |
+| `--routing` | `balanced`, `zipf`, `zipf_skewed`, `hot_experts`, `lognormal` (as in MegaMoE); traffic: `hot_last_rank`, `idle_half`, `local_heavy`, `remote_heavy`, `intra_node_heavy`, `cross_node_heavy` |
 | `--backend` | `mscclpp` (default), `nccl` |
 | `--mode` | `latency` (default), `throughput` |
 | `--graph` | `none` (default), `mlp` (expert compute only), `layer` (whole layer) |
@@ -157,27 +157,26 @@ Each token always uses `top_k` distinct experts.
 
 | Preset | Expert load |
 |---|---|
-| `balanced` | Every expert receives the same number of routes (within one) |
-| `uniform` | Each token picks `top_k` experts uniformly at random |
-| `hot_pair` | Experts 0 and 1 share 80% of the probability (a hotspot on rank 0) |
+| `balanced` | Each token picks `top_k` experts uniformly at random, so expert loads are roughly even |
 | `zipf` | Per-rank Zipf popularity (`alpha`, default 1.2): hot, warm, and tail experts, with 15% of each rank's experts unused; ranks stay roughly balanced |
 | `zipf_skewed` | Zipf within ranks (20% unused) plus cross-rank skew: rank `r` carries `1 / (r + 1)^0.7` of the load, so rank 0 is heaviest |
 | `hot_experts` | Bimodal: about one in sixteen experts per rank is hot, a quarter are unused, and the rest receive small loads |
 | `lognormal` | Global long-tail popularity, `LogNormal(0, sigma)` per expert (`sigma`, default 0.85) |
 
-`zipf`, `zipf_skewed`, `hot_experts`, and `lognormal` adapt the MegaMoE
-benchmark's distributions (`python/mscclpp/ext/megamoe/benchmark.py` on
-`feature/megamoe`). They fix the global number of routes per expert, capped at
-one route per token so experts stay distinct, then spread those routes across
-all GPUs' tokens. Custom presets can set `alpha` or `sigma`. A `hot_experts`
-preset with `expert_ids` and `probability_mass` instead makes the listed experts
-hot, which places a hotspot on any rank:
+These are the MegaMoE benchmark's routing patterns, with the same names
+(`python/mscclpp/ext/megamoe/benchmark.py` on `feature/megamoe`). `zipf`,
+`zipf_skewed`, `hot_experts`, and `lognormal` fix the global number of routes
+per expert, capped at one route per token so experts stay distinct, then spread
+those routes across all GPUs' tokens. Custom presets can set `alpha` or `sigma`.
+A `hot_experts` preset with `expert_ids` and `probability_mass` instead makes the
+listed experts hot, which places a hotspot on any rank. For example, experts 0
+and 1 (both on rank 0) taking 80% of the routes:
 
 ```yaml
 routing:
-  hot_last_rank:
+  hot_pair:
     kind: hot_experts
-    expert_ids: [6, 7]
+    expert_ids: [0, 1]
     probability_mass: 0.8
 ```
 

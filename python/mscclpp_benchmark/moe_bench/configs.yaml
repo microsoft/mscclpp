@@ -60,15 +60,9 @@ compute:
   weight_dtype: mxfp4
 
 routing:
+  # The MegaMoE benchmark's routing patterns (balanced plus global expert-load profiles).
   balanced:
     kind: balanced
-  uniform:
-    kind: uniform
-  hot_pair:
-    kind: hot_experts
-    expert_ids: [0, 1]
-    probability_mass: 0.8
-  # Global expert-load profiles adapted from the MegaMoE benchmark.
   zipf:
     kind: zipf
     alpha: 1.2

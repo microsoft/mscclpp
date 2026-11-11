@@ -29,7 +29,6 @@ _FIELDS = {
 _CATEGORIES = {"models": "model", "inputs": "input", "routing": "routing"}
 ROUTING_KINDS = (
     "balanced",
-    "uniform",
     "hot_experts",
     "zipf",
     "zipf_skewed",

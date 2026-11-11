@@ -3,11 +3,12 @@
 
 """Deterministic CPU routing plans with placement-independent gate weights.
 
-``zipf``, ``zipf_skewed``, ``lognormal``, and ``hot_experts`` without explicit
-expert IDs follow the MegaMoE benchmark's global expert-load profiles
-(``python/mscclpp/ext/megamoe/benchmark.py`` on ``feature/megamoe``). Each profile
-fixes global route counts per expert, capped so every token uses an expert at
-most once; all ranks derive the same global plan and take their own tokens.
+``balanced``, ``zipf``, ``zipf_skewed``, ``lognormal``, and ``hot_experts``
+without explicit expert IDs follow the MegaMoE benchmark's routing patterns
+(``python/mscclpp/ext/megamoe/benchmark.py`` on ``feature/megamoe``). ``balanced``
+draws each token's experts uniformly at random. The other four fix global route
+counts per expert, capped so every token uses an expert at most once; all ranks
+derive the same global plan and take their own tokens.
 """
 
 import math
@@ -40,13 +41,9 @@ def make_routing(config: dict, rank: int) -> tuple[torch.Tensor, torch.Tensor]:
         ids = profile_routing(config)[rank * tokens : (rank + 1) * tokens]
     elif route["kind"] == "locality":
         ids = locality_routing(config, rank, placement_generator)
-    elif route["kind"] == "balanced":
-        # Every rank uses the same permutation so global counts differ by at most one.
-        global_generator = torch.Generator(device="cpu").manual_seed(seed)
-        permutation = torch.randperm(experts, generator=global_generator, device="cpu")
-        global_slots = torch.arange(tokens * top_k, dtype=torch.int64, device="cpu") + rank * tokens * top_k
-        ids = permutation[global_slots.remainder(experts)].reshape(tokens, top_k)
     else:
+        # balanced: each token picks top_k distinct experts uniformly at random,
+        # like MegaMoE's balanced pattern; the other kinds reweight experts.
         probabilities = torch.full((experts,), 1.0 / experts, dtype=torch.float64, device="cpu")
         if route["kind"] == "hot_experts":
             # Explicit hot experts; without expert_ids this kind uses the MegaMoE profile above.

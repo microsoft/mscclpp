@@ -22,6 +22,8 @@ from ..routing import make_routing
 
 PRESETS = Path(__file__).resolve().parents[1] / "configs.yaml"
 
+HOT_PAIR = {"kind": "hot_experts", "expert_ids": [0, 1], "probability_mass": 0.8}
+
 
 def _config(**kwargs):
     return load_config(
@@ -53,7 +55,7 @@ def test_presets_and_defaults():
         "compute_backend": "cutlass_flashinfer",
         "cuda_graph": False,
     }
-    large = _config(model="large", input_name="prefill", routing="hot_pair")
+    large = _config(model="large", input_name="prefill", routing="zipf")
     assert large["model"]["num_experts"] == 128
     assert large["input"]["tokens_per_rank"] == 1024
     assert large["environment"]["num_gpus"] == 4
@@ -110,7 +112,7 @@ def test_independent_environment_overrides_and_isolation(key, value):
         config = _config(environment_overrides=overrides)
     assert config["environment"] == {**original["environment"], "num_gpus": 4, key: value}
     config["environment"]["num_gpus"] = 2
-    config["routing"]["kind"] = "uniform"
+    config["routing"]["kind"] = "zipf"
     assert document == original
     assert overrides == {key: value}
 
@@ -334,7 +336,8 @@ def test_top_k_limit_and_row_limit():
 
 @pytest.mark.parametrize("ids", [[], [0, 0], [False], [-1], [8], list(range(8)), "0,1"])
 def test_invalid_hot_experts(ids):
-    config = _config(routing="hot_pair")
+    config = _config()
+    config["routing"] = dict(HOT_PAIR)
     config["routing"]["expert_ids"] = ids
     with pytest.raises(ValueError, match="expert_ids"):
         validate_config(config)
@@ -342,15 +345,17 @@ def test_invalid_hot_experts(ids):
 
 @pytest.mark.parametrize("mass", [0, 1, -0.1, 1.1, True, "0.8", float("nan"), float("inf")])
 def test_invalid_hot_probability(mass):
-    config = _config(routing="hot_pair")
+    config = _config()
+    config["routing"] = dict(HOT_PAIR)
     config["routing"]["probability_mass"] = mass
     with pytest.raises(ValueError, match="probability_mass"):
         validate_config(config)
 
 
-@pytest.mark.parametrize("route", ["balanced", "uniform", "hot_pair"])
+@pytest.mark.parametrize("route", [{"kind": "balanced"}, {"kind": "zipf_skewed"}, HOT_PAIR])
 def test_reproducibility_shapes_and_rng_isolation(route):
-    config = _config(routing=route)
+    config = _config()
+    config["routing"] = deepcopy(route)
     state = torch.random.get_rng_state().clone()
     ids, weights = make_routing(config, 1)
     repeated_ids, repeated_weights = make_routing(config, 1)
@@ -367,31 +372,21 @@ def test_reproducibility_shapes_and_rng_isolation(route):
     assert not torch.equal(weights, make_routing(config, 0)[1])
 
 
-@pytest.mark.parametrize("tokens,experts,top_k,ranks", [(3, 8, 3, 2), (5, 12, 2, 4), (1, 8, 1, 2), (3, 8, 8, 4)])
-def test_global_balanced_counts(tokens, experts, top_k, ranks):
-    config = _config()
-    config["input"]["tokens_per_rank"] = tokens
-    config["model"].update(num_experts=experts, top_k=top_k)
-    config["environment"]["num_gpus"] = ranks
-    ids = torch.cat([make_routing(config, rank)[0] for rank in range(ranks)])
-    counts = torch.bincount(ids.flatten(), minlength=experts)
-    assert int(counts.max() - counts.min()) <= 1
-    assert torch.all(ids.sort(dim=1).values[:, 1:] != ids.sort(dim=1).values[:, :-1])
-
-
 def test_weights_independent_of_routing():
-    weights = [make_routing(_config(routing=route), 0)[1] for route in ("balanced", "uniform", "hot_pair")]
+    configs = [_config(routing=route) for route in ("balanced", "zipf_skewed")] + [_config()]
+    configs[-1]["routing"] = dict(HOT_PAIR)
+    weights = [make_routing(config, 0)[1] for config in configs]
     assert all(torch.equal(weights[0], value) for value in weights[1:])
 
 
-def test_uniform_and_hotspot_distribution():
-    config = _config(routing="uniform")
+def test_balanced_and_hotspot_distribution():
+    config = _config(routing="balanced")
     config["input"]["tokens_per_rank"] = 4096
     config["model"]["top_k"] = 1
-    uniform_ids, _ = make_routing(config, 0)
-    uniform_counts = torch.bincount(uniform_ids.flatten(), minlength=8)
-    assert torch.all((uniform_counts > 350) & (uniform_counts < 700))
-    config["routing"] = deepcopy(_config(routing="hot_pair")["routing"])
+    balanced_ids, _ = make_routing(config, 0)
+    balanced_counts = torch.bincount(balanced_ids.flatten(), minlength=8)
+    assert torch.all((balanced_counts > 350) & (balanced_counts < 700))
+    config["routing"] = dict(HOT_PAIR)
     hot_ids, _ = make_routing(config, 0)
     hot_fraction = (hot_ids < 2).float().mean().item()
     assert 0.7 < hot_fraction < 0.9
@@ -471,7 +466,7 @@ def test_scale_counts_caps_each_expert_at_one_route_per_token():
 
 
 def test_profile_routing_options_validation():
-    for routing in ("zipf", "zipf_skewed", "hot_experts", "lognormal", "hot_pair"):
+    for routing in ("zipf", "zipf_skewed", "hot_experts", "lognormal"):
         assert _config(routing=routing)["routing"]["kind"] in ("zipf", "zipf_skewed", "hot_experts", "lognormal")
     config = _config(routing="zipf")
     for alpha in (-1, float("nan"), float("inf"), "1.2", True):
@@ -491,8 +486,8 @@ def test_profile_routing_options_validation():
     with pytest.raises(ValueError, match="missing fields: kind"):
         validate_config(config)
     # Explicit hot experts can place the hotspot on any rank, e.g. the last one.
-    config = _config(routing="hot_pair")
-    config["routing"]["expert_ids"] = [6, 7]
+    config = _config()
+    config["routing"] = {**HOT_PAIR, "expert_ids": [6, 7]}
     ids, _ = _global_routing(config)
     per_rank = torch.bincount(ids.flatten() // 2, minlength=4)
     assert per_rank.argmax().item() == 3
