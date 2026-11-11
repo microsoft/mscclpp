@@ -1,5 +1,6 @@
 mpi4py
 cuda-bindings>=13,<14
+cupy-cuda13x
 prettytable
 netifaces
 pytest

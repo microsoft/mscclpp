@@ -2,10 +2,13 @@
 # Licensed under the MIT License.
 
 import json
+import sys
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
+from mscclpp_benchmark import arrays
 from mscclpp_benchmark.correctness import (
     _comparison_tolerance,
     _decode_bfloat16_array,
@@ -17,6 +20,48 @@ from mscclpp_benchmark.correctness import (
     _stats_values,
 )
 from mscclpp_benchmark.tuning_config import HardwareProfile, TunedConfig, TunedConfigStore
+
+
+@pytest.mark.parametrize("is_hip,cupy_available", [(True, True), (False, False)])
+def test_numpy_validation_without_cuda_cupy(monkeypatch, is_hip, cupy_available):
+    monkeypatch.setitem(sys.modules, "mscclpp._mscclpp", SimpleNamespace(is_hip=is_hip))
+    monkeypatch.setattr(arrays.importlib.util, "find_spec", lambda name: object() if cupy_available else None)
+    values = np.arange(4, dtype=np.uint8)
+    buffer = SimpleNamespace(
+        to_numpy=lambda: values.copy(), copy_from_numpy=lambda source: values.__setitem__(slice(None), source)
+    )
+    assert arrays.array_module() is np
+    arrays.copy_into(buffer, np.full(4, 7, dtype=np.uint8))
+    np.testing.assert_array_equal(arrays.buffer_array(buffer), [7, 7, 7, 7])
+
+
+def test_host_reference_does_not_import_cuda(monkeypatch):
+    def unexpected_import(name):
+        raise AssertionError("Host references must not probe CuPy")
+
+    monkeypatch.setattr(arrays.importlib.util, "find_spec", unexpected_import)
+    assert arrays.array_module(np.arange(4)) is np
+
+
+def test_cuda_validation_encodings_match_numpy():
+    from mscclpp._mscclpp import is_hip
+
+    if is_hip:
+        pytest.skip("CUDA-only CuPy validation")
+    cp = pytest.importorskip("cupy")
+    bits = np.arange(256, dtype=np.uint8)
+    for fmt in ("e4m3fn", "e4m3fnuz", "e4m3b15"):
+        host = _decode_fp8_array(fmt, bits)
+        device = _decode_fp8_array(fmt, cp.asarray(bits))
+        np.testing.assert_allclose(cp.asnumpy(device), host, rtol=0, atol=0, equal_nan=True)
+        finite = host[np.isfinite(host)]
+        np.testing.assert_array_equal(
+            cp.asnumpy(_encode_fp8_values(fmt, cp.asarray(finite))), _encode_fp8_values(fmt, finite)
+        )
+    values = np.asarray([1.0, -2.5, 1.00390625, 1.01171875, float("nan")], dtype=np.float32)
+    np.testing.assert_array_equal(
+        cp.asnumpy(_encode_bfloat16_values(cp.asarray(values))), _encode_bfloat16_values(values)
+    )
 
 
 def test_allgather_requires_exact_match():

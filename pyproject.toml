@@ -47,6 +47,12 @@ test = [
     "mpi4py",
     "netifaces",
 ]
+test-cuda12 = [
+    "cupy-cuda12x",
+]
+test-cuda13 = [
+    "cupy-cuda13x",
+]
 
 [tool.setuptools_scm]
 write_to = "python/mscclpp/_version.py"

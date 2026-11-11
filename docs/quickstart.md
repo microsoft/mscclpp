@@ -123,13 +123,21 @@ Optional extras can be installed by specifying them in brackets. Available extra
 - **`rocm6`**, **`rocm7`**: Install HIP Python for the matching AMD ROCm major version.
 - **`benchmark`**: Install benchmark dependencies (mpi4py, prettytable, netifaces, matplotlib).
 - **`test`**: Install test dependencies (pytest, mpi4py, netifaces).
+- **`test-cuda12`**, **`test-cuda13`**: Add CuPy for CUDA testing alongside the matching platform and `test` extras. Select only one CUDA version.
 
 ```bash
 # Example: install with CUDA 12 and benchmark extras
 $ python -m pip install ".[cuda12,benchmark]"
-# Example: install with all extras for testing on CUDA 12
-$ python -m pip install ".[cuda12,benchmark,test]"
+# Example: install with CuPy for testing and benchmarking on CUDA 12
+$ python -m pip install ".[cuda12,benchmark,test,test-cuda12]"
 ```
+
+Production installs such as `.[cuda12]` remain CuPy-free. CUDA CI installs the
+matching CuPy test extra. Tests and benchmark validation use CuPy array operations
+and zero-copy views of native buffers on CUDA when CuPy is installed. ROCm and
+CUDA installs without CuPy retain NumPy validation. Host-transfer and CPU-only
+regression tests continue to exercise NumPy. Production library code does not
+import CuPy.
 
 The NCCL comparison in `python -m mscclpp_benchmark.allreduce_bench` also requires
 the vendor's NCCL (`libnccl.so.2`) or RCCL (`librccl.so.1`) system library.

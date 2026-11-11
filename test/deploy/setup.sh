@@ -62,9 +62,9 @@ fi
 
 cd /root/mscclpp
 if [[ "${CUDA_VERSION}" == *"12."* ]]; then
-    pip3 install ".[cuda12,benchmark,test]"
+    pip3 install ".[cuda12,benchmark,test,test-cuda12]"
 elif [[ "${CUDA_VERSION}" == *"13."* ]]; then
-    pip3 install ".[cuda13,benchmark,test]"
+    pip3 install ".[cuda13,benchmark,test,test-cuda13]"
 elif [ "${PLATFORM}" == "rocm" ]; then
     ROCM_VERSION=$(cat /opt/rocm/.info/version)
     ROCM_MAJOR="${ROCM_VERSION%%.*}"
