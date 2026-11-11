@@ -220,6 +220,13 @@ projects back to `d_model`. It requires Blackwell SM100/SM103, CUDA 13 PyTorch,
 and model dimensions divisible by 128. Communication remains BF16; activation
 quantization is included in compute timing.
 
+Layouts other than `expert_major` deliver rows in arrival order. Each layer
+sorts the received routes by local expert on the GPU and gathers them into the
+grouped GEMM input. The second GEMM's fused finalize then applies the routing
+weights and adds each route into its received token row with BF16 atomics, so
+the combine sends one pre-weighted partial per token. Compute timing includes
+the sort and gather.
+
 ### Optional NCCL-EP setup
 
 To use `--backend nccl`, install `nccl-extensions[cu13]`. See

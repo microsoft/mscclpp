@@ -173,6 +173,14 @@ class FlashInferMLP:
         self.sx = torch.empty(self.rows * self.hidden // 32, dtype=torch.uint8, device=device)
         self.alpha = torch.ones(len(counts), device=device)
         self.unit_weights = torch.ones(self.rows, 1, device=device)
+        # compute_routed reuses the schedule but maps compact rows to native routes.
+        self.routed_slots = torch.full_like(self.schedule[0], -1)
+        self.slot_positions = torch.nonzero(self.schedule[0] >= 0).flatten()
+        self.routed_timed_operations = (
+            "gather into compact rows, input quantization, quantized-buffer copies, FC1 grouped GEMM with fused "
+            "SwiGLU and intermediate quantization, FC2 grouped GEMM with fused routing-weight finalize (BF16 atomic "
+            "reduction into native rows), output zeroing, launch gaps"
+        )
         self.common = dict(
             a_dtype="float8_e4m3fn",
             b_dtype="float4_e2m1fn",
@@ -190,6 +198,29 @@ class FlashInferMLP:
             out.zero_()
             return out
         torch.index_select(tokens.view(-1, self.hidden), 0, self.indices, out=self.packed)
+        self.result.zero_()
+        self._compute(self.schedule[0], self.unit_weights, self.result)
+        out.view(-1, self.hidden).index_copy_(0, self.indices, self.result)
+        return out
+
+    @torch.inference_mode()
+    def compute_routed(self, tokens, routes, weights, out):
+        """Compute native routes and add their weighted outputs into ``out`` token rows.
+
+        ``routes`` are expanded indices (token * topk + k) grouped by local expert
+        in this MLP's compact-row order, ``weights`` is [tokens, topk] FP32 and
+        ``out`` is [tokens, hidden] BF16. FC2's fused finalize applies the routing
+        weights and reduces with BF16 atomics, as in production FlashInfer MoE.
+        """
+        out.zero_()
+        if not self.rows:
+            return out
+        torch.index_select(tokens, 0, routes // weights.shape[1], out=self.packed)
+        self.routed_slots.index_copy_(0, self.slot_positions, routes.to(torch.int32))
+        self._compute(self.routed_slots, weights, out)
+        return out
+
+    def _compute(self, fc2_slots, final_scales, out):
         slots, experts, limits, tiles = self.schedule
         # Allocations are graph-private during capture. Both quantization AND
         # the copies run on every replay, not just when the graph is constructed.
@@ -216,7 +247,6 @@ class FlashInferMLP:
             **self.fc1_activation,
             **self.common,
         )
-        self.result.zero_()
         self.fc2(
             self.activation,
             self.weights[1],
@@ -226,10 +256,8 @@ class FlashInferMLP:
             experts,
             tiles,
             limits,
-            slots,
-            self.unit_weights,
-            out=self.result,
+            fc2_slots,
+            final_scales,
+            out=out,
             **self.common,
         )
-        out.view(-1, self.hidden).index_copy_(0, self.indices, self.result)
-        return out

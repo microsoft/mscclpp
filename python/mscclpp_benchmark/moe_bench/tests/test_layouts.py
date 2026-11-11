@@ -114,9 +114,10 @@ def test_initial_layout_failure_drains_native_collective(monkeypatch):
     assert not pipeline.expert_output.count_nonzero()
 
 
+@pytest.mark.parametrize("routed", [False, True])
 @pytest.mark.parametrize("empty", [False, True])
 @pytest.mark.parametrize("base", [0, 4])
-def test_pack_reduce_multiple_sources_padding_empty_experts(empty, base):
+def test_pack_reduce_multiple_sources_padding_empty_experts(empty, base, routed):
     # Two source-rank zones. Row zero selects two local experts; padding payload
     # is NaN and must never enter compute. Expert 2 has no assignments.
     ids = torch.tensor([[0, 1], [1, -1], [-1, -1], [0, 3], [-1, -1], [3, -1]])
@@ -142,7 +143,19 @@ def test_pack_reduce_multiple_sources_padding_empty_experts(empty, base):
             for expert, count in enumerate(counts):
                 result[expert, :count] = packed[expert, :count] * (expert + 1)
 
-    adapter = LayoutMLP(MLP(), counts, recv, out, backend)
+    class RoutedMLP(MLP):
+        # Like FlashInferMLP.compute_routed: compact rows in expert order, weighted add.
+        routed_timed_operations = "test routed"
+
+        def compute_routed(self, native, routes, route_weights, combine):
+            topk = route_weights.shape[1]
+            scale = torch.repeat_interleave(torch.arange(1, 5), torch.tensor(counts)).unsqueeze(1)
+            values = native.index_select(0, routes // topk).float() * scale
+            values *= route_weights.reshape(-1).index_select(0, routes).unsqueeze(1)
+            combine.zero_()
+            combine.copy_(combine.float().index_add_(0, routes // topk, values))
+
+    adapter = LayoutMLP(RoutedMLP() if routed else MLP(), counts, recv, out, backend)
     for _ in range(2):
         adapter(tokens, out)
         expected = torch.zeros(6, 4)
