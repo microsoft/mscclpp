@@ -40,7 +40,6 @@ variables:
 
 jobs:
 - job: SGLangTest
-  timeoutInMinutes: 120
   displayName: SGLang Test
   strategy:
     matrix:

@@ -61,7 +61,6 @@ variables:
 
 jobs:
 - job: SGLangTestMultiNode
-  timeoutInMinutes: 120
   displayName: SGLang Test Multi Node
   strategy:
     matrix:
