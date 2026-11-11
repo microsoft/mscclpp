@@ -1,5 +1,5 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #include <dlpack/dlpack.h>
 #include <nanobind/nanobind.h>
@@ -7,6 +7,7 @@
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
+#include <memory>
 #include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/gpu_utils.hpp>
 
@@ -26,10 +27,28 @@ static DLDeviceType getDeviceType() {
 static DLDataType getDlType(std::string type) {
   if (type == "torch.float32") {
     return DLDataType{kDLFloat, 32, 1};
+  } else if (type == "torch.float64") {
+    return DLDataType{kDLFloat, 64, 1};
+  } else if (type == "torch.int8") {
+    return DLDataType{kDLInt, 8, 1};
+  } else if (type == "torch.int16") {
+    return DLDataType{kDLInt, 16, 1};
   } else if (type == "torch.int32") {
     return DLDataType{kDLInt, 32, 1};
+  } else if (type == "torch.int64") {
+    return DLDataType{kDLInt, 64, 1};
+  } else if (type == "torch.uint16") {
+    return DLDataType{kDLUInt, 16, 1};
   } else if (type == "torch.uint32") {
     return DLDataType{kDLUInt, 32, 1};
+  } else if (type == "torch.uint64") {
+    return DLDataType{kDLUInt, 64, 1};
+  } else if (type == "torch.bool") {
+    return DLDataType{kDLBool, 8, 1};
+  } else if (type == "torch.complex64") {
+    return DLDataType{kDLComplex, 64, 1};
+  } else if (type == "torch.complex128") {
+    return DLDataType{kDLComplex, 128, 1};
   } else if (type == "torch.bfloat16") {
     return DLDataType{kDLBfloat, 16, 1};
   } else if (type == "torch.float16") {
@@ -52,46 +71,33 @@ static DLDataType getDlType(std::string type) {
   }
 }
 
-static nb::capsule toDlpack(GpuBuffer<char> buffer, std::string dataType, std::vector<int64_t>& shape,
-                            std::vector<int64_t>& strides) {
-  DLDataType dtype = getDlType(dataType);
-  int64_t* tensorShape = shape.size() > 0 ? new int64_t[shape.size()] : new int64_t[1];
-  int64_t* tensorStrides = strides.size() > 0 ? new int64_t[strides.size()] : nullptr;
-  if (shape.size() == 0) {
-    tensorShape[0] = (int64_t)(buffer.nelems() / ((dtype.bits * dtype.lanes + 7) / BYTE_BITS));
-  } else {
-    for (size_t i = 0; i < shape.size(); ++i) {
-      tensorShape[i] = shape[i];
-    }
-  }
-  for (size_t i = 0; i < strides.size(); ++i) {
-    tensorStrides[i] = strides[i];
-  }
+struct DlpackTensor {
+  DLManagedTensor tensor{};
+  std::shared_ptr<void> owner;
+  std::vector<int64_t> shape;
+  std::vector<int64_t> strides;
+};
 
-  DLManagedTensor* dlManagedTensor = new DLManagedTensor();
-  dlManagedTensor->dl_tensor.data = buffer.data();
+static nb::capsule toDlpack(void* data, int deviceId, std::shared_ptr<void> owner, DLDataType dtype,
+                            std::vector<int64_t> shape, std::vector<int64_t> strides) {
+  if (!strides.empty() && strides.size() != shape.size()) {
+    throw nb::value_error("Shape and strides must have the same number of dimensions");
+  }
+  auto managed = std::make_unique<DlpackTensor>();
+  managed->owner = std::move(owner);
+  managed->shape = std::move(shape);
+  managed->strides = std::move(strides);
+  DLManagedTensor* dlManagedTensor = &managed->tensor;
+  dlManagedTensor->dl_tensor.data = data;
   dlManagedTensor->dl_tensor.device.device_type = getDeviceType();
-  dlManagedTensor->dl_tensor.device.device_id = buffer.deviceId();
-  dlManagedTensor->dl_tensor.ndim = shape.size() == 0 ? 1 : shape.size();
-  dlManagedTensor->dl_tensor.strides = tensorStrides;
-  dlManagedTensor->dl_tensor.shape = tensorShape;
+  dlManagedTensor->dl_tensor.device.device_id = deviceId;
+  dlManagedTensor->dl_tensor.ndim = managed->shape.size();
+  dlManagedTensor->dl_tensor.strides = managed->strides.empty() ? nullptr : managed->strides.data();
+  dlManagedTensor->dl_tensor.shape = managed->shape.data();
   dlManagedTensor->dl_tensor.byte_offset = 0;
   dlManagedTensor->dl_tensor.dtype = dtype;
-  dlManagedTensor->manager_ctx = new GpuBuffer<char>(buffer);
-  dlManagedTensor->deleter = [](DLManagedTensor* self) {
-    delete static_cast<GpuBuffer<char>*>(self->manager_ctx);
-    self->manager_ctx = nullptr;
-    self->dl_tensor.data = nullptr;
-    if (self->dl_tensor.shape != nullptr) {
-      delete[] self->dl_tensor.shape;
-      self->dl_tensor.shape = nullptr;
-      if (self->dl_tensor.strides) {
-        delete[] self->dl_tensor.strides;
-        self->dl_tensor.strides = nullptr;
-      }
-    }
-    delete self;
-  };
+  dlManagedTensor->manager_ctx = managed.get();
+  dlManagedTensor->deleter = [](DLManagedTensor* self) { delete static_cast<DlpackTensor*>(self->manager_ctx); };
 
   PyObject* dlCapsule = PyCapsule_New(static_cast<void*>(dlManagedTensor), "dltensor", [](PyObject* capsule) {
     if (PyCapsule_IsValid(capsule, "used_dltensor")) {
@@ -108,12 +114,31 @@ static nb::capsule toDlpack(GpuBuffer<char> buffer, std::string dataType, std::v
       managedTensor->deleter(managedTensor);
     }
   });
+  if (dlCapsule == nullptr) {
+    throw nb::python_error();
+  }
+  managed.release();
   return nb::steal<nb::capsule>(dlCapsule);
 }
 
 void register_gpu_utils(nb::module_& m) {
+  m.attr("is_hip") = getDeviceType() == kDLROCM;
   m.def("is_nvls_supported", &isNvlsSupported);
   m.def("is_bulk_supported", &isBulkSupported);
+
+  m.def(
+      "cpp_gpu_buffer_to_dlpack",
+      [](uintptr_t ptr, std::string dataType, std::vector<int64_t> shape, std::vector<int64_t> strides, int deviceId,
+         nb::object owner) {
+        auto keepAlive = std::shared_ptr<nb::object>(new nb::object(std::move(owner)), [](nb::object* value) {
+          nb::gil_scoped_acquire gil;
+          delete value;
+        });
+        return toDlpack(reinterpret_cast<void*>(ptr), deviceId, std::move(keepAlive), getDlType(dataType),
+                        std::move(shape), std::move(strides));
+      },
+      nb::arg("ptr"), nb::arg("data_type"), nb::arg("shape"), nb::arg("strides"), nb::arg("device_id"),
+      nb::arg("owner"));
 
   nb::enum_<GpuBufferGranularity>(m, "CppGpuBufferGranularity")
       .value("MultiCastMinimum", GpuBufferGranularity::MultiCastMinimum)
@@ -129,7 +154,11 @@ void register_gpu_utils(nb::module_& m) {
       .def(
           "to_dlpack",
           [](GpuBuffer<char>& self, std::string dataType, std::vector<int64_t> shape, std::vector<int64_t> strides) {
-            return toDlpack(self, dataType, shape, strides);
+            DLDataType dtype = getDlType(dataType);
+            if (shape.empty()) {
+              shape.push_back(self.nelems() / ((dtype.bits * dtype.lanes + 7) / BYTE_BITS));
+            }
+            return toDlpack(self.data(), self.deviceId(), self.memory(), dtype, std::move(shape), std::move(strides));
           },
           nb::arg("data_type"), nb::arg("shape") = std::vector<int64_t>(), nb::arg("strides") = std::vector<int64_t>());
 }
