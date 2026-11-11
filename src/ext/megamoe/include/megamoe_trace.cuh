@@ -54,10 +54,17 @@ enum class KernelTracePhase : uint32_t {
 };
 
 #if MSCCLPP_MEGAMOE_TRACE
-constexpr int KernelTraceCtas = 2;
+// Trace builds may widen the traced CTAs (e.g. the whole grid) at a smaller per-track capacity.
+#ifndef MSCCLPP_MEGAMOE_TRACE_CTAS
+#define MSCCLPP_MEGAMOE_TRACE_CTAS 2
+#endif
+#ifndef MSCCLPP_MEGAMOE_TRACE_CAPACITY
+#define MSCCLPP_MEGAMOE_TRACE_CAPACITY 8192
+#endif
+constexpr int KernelTraceCtas = MSCCLPP_MEGAMOE_TRACE_CTAS;
 constexpr int KernelTraceWarpsPerCta = 16;
 constexpr int KernelTraceTracks = KernelTraceCtas * KernelTraceWarpsPerCta;
-constexpr int KernelTraceCapacity = 8192;
+constexpr int KernelTraceCapacity = MSCCLPP_MEGAMOE_TRACE_CAPACITY;
 struct KernelTraceEvent {
   uint64_t timestamp;
   uint32_t code;

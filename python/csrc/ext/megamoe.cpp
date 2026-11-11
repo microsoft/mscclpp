@@ -152,6 +152,7 @@ void register_megamoe(nb::module_& m) {
       .def_prop_ro("kernel_expert_major_tasks", &MegaMoeContext::kernelExpertMajorTasks)
       .def_prop_ro("kernel_cache_weights", &MegaMoeContext::kernelCacheWeights)
       .def_prop_ro("kernel_adaptive_cache_weights", &MegaMoeContext::kernelAdaptiveCacheWeights)
+      .def_prop_ro("kernel_fuse_static_quantize", &MegaMoeContext::kernelFuseStaticQuantize)
       .def(
           "forward_shared",
           [](MegaMoeContext& self, uintptr_t input, uintptr_t output, int tokens, uintptr_t stream) {

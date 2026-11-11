@@ -38,6 +38,8 @@ class W4A8KernelConfig:
     mutually exclusive and independent of ``expert_major_tasks``; all default to false.
     ``cluster_size`` selects one or two cooperating CTAs. The output-feature
     tile is 128 elements per CTA (128 or 256 per cluster); ``tile_n`` is unchanged.
+    ``fuse_static_quantize`` (default true) quantizes small static-FP8 batches (and the fused
+    shared-expert input) inside the kernel instead of a separate launch; false keeps the launch.
     """
 
     tile_n: int = 128
@@ -58,6 +60,7 @@ class W4A8KernelConfig:
     cache_weights: bool = False
     cluster_size: int = 2
     adaptive_cache_weights: bool = False
+    fuse_static_quantize: bool = True
 
     def __post_init__(self):
         allowed = (
@@ -87,7 +90,7 @@ class W4A8KernelConfig:
             raise ValueError("split_pipelines must be bool")
         if type(self.fixed_token_count) is not bool:
             raise ValueError("fixed_token_count must be bool")
-        for name in ("expert_major_tasks", "cache_weights", "adaptive_cache_weights"):
+        for name in ("expert_major_tasks", "cache_weights", "adaptive_cache_weights", "fuse_static_quantize"):
             if type(getattr(self, name)) is not bool:
                 raise ValueError(f"{name} must be bool")
         if self.cache_weights and self.adaptive_cache_weights:
@@ -170,6 +173,7 @@ def _compile_definitions(config):
             "expert_major_tasks": "EXPERT_MAJOR_TASKS",
             "cache_weights": "CACHE_WEIGHTS",
             "adaptive_cache_weights": "ADAPTIVE_CACHE_WEIGHTS",
+            "fuse_static_quantize": "FUSE_STATIC_QUANTIZE",
             "cluster_size": "CLUSTER_SIZE",
         }
         return [

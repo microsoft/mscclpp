@@ -399,6 +399,7 @@ class MegaMoE:
             "expert_major_tasks": self._native.kernel_expert_major_tasks,
             "cache_weights": self._native.kernel_cache_weights,
             "adaptive_cache_weights": self._native.kernel_adaptive_cache_weights,
+            "fuse_static_quantize": self._native.kernel_fuse_static_quantize,
             "cluster_size": self._native.kernel_cluster_size,
         }
         if self.config.is_w8a16:

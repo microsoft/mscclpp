@@ -45,14 +45,6 @@ __device__ __forceinline__ auto makeW4A8LoadPipeline(Storage& storage, int warp,
   return pipeline;
 }
 
-template <class KernelParams>
-MSCCLPP_DEVICE_INLINE bool cacheExpertWeights(const KernelParams& params, int expert) {
-  // A local expert reads each weight tile once per token block and has no routing cursors.
-  if constexpr (KernelParams::LocalExpert) return false;
-  // After prepareRoutes, each cursor is the expert's total routed row count for this launch.
-  return params.workspace.cursors[expert] > KernelParams::Tiles::N;
-}
-
 template <class P, class Storage, class State>
 __device__ __forceinline__ void runW4A8LoadTasks(const P& p, Storage& s, typename P::Collective::Load& loadPipeline,
                                                  typename P::Collective::Load& activationPipeline,
@@ -66,18 +58,38 @@ __device__ __forceinline__ void runW4A8LoadTasks(const P& p, Storage& s, typenam
   using Schedule = typename Types::WarpSchedule;
   auto& producerPipeline =
       Types::SplitPipelines && warp == Schedule::ActivationLoadWarp ? activationPipeline : loadPipeline;
+  const int clusters = gridDim.x / P::Tiles::ClusterSize;
+  const bool checkReady = Types::LoadWarps == 1 || warp == Schedule::ActivationLoadWarp;
+  int prefetchedBlock = -1;
+  int prefetchedReady = -1;
   auto load1 = fc1.load_init(shape1, s.tensors);
   auto load2 = fc2.load_init(shape2, s.tensors);
-  const int clusters = gridDim.x / P::Tiles::ClusterSize;
-  for (int i = firstTaskOrdinal(range, cluster, clusters); i < range.end; i += taskOrdinalStride(range, clusters)) {
+  for (TaskWalk walk(range, cluster, clusters, P::WeightMxfp4); !walk.done(); walk.advance()) {
+    const int i = walk.ordinal();
+    const int nextI = walk.nextOrdinal();
     Task task = taskAt(p, range, i, hidden, intermediate, tokens);
-    const bool cacheWeights =
-        (Types::LoadWarps == 1 || warp == Schedule::LoadWarp) && cacheExpertWeights(p, task.tokens.expert);
-    if (!task.fc1 && (Types::LoadWarps == 1 || warp == Schedule::ActivationLoadWarp)) {
+    int curPrefBlock = prefetchedBlock;
+    int curPrefReady = prefetchedReady;
+    auto prefetchNextReady = [&] {
+      if (checkReady && nextI < range.end && lane == 0) {
+        Task nextTask = taskAt(p, range, nextI, hidden, intermediate, tokens);
+        // Local FC1 inputs are ready at entry and have no inputReady counters.
+        if (P::LocalExpert && nextTask.fc1) {
+          prefetchedBlock = -1;
+          return;
+        }
+        prefetchedBlock = nextTask.block;
+        int* counter = (nextTask.fc1 ? p.workspace.inputReady : p.workspace.hiddenReady) +
+                       size_t(nextTask.block) * W4ReadyCounterStride;
+        asm volatile("ld.acquire.gpu.global.s32 %0, [%1];" : "=r"(prefetchedReady) : "l"(counter));
+      }
+    };
+    const bool cacheWeights = (Types::LoadWarps == 1 || warp == Schedule::LoadWarp) && bool(task.tokens.cacheWeights);
+    if (!task.fc1 && checkReady) {
       traceKernel(KernelTracePhase::TokenReady, true, int(task.fc1));
-      if (lane == 0)
-        waitAtLeast<int, scopeDevice>(p.workspace.hiddenReady + size_t(task.block) * W4ReadyCounterStride,
-                                      fc1CompletionCount<P>(intermediate));
+      int needed = fc1CompletionCount<P>(intermediate);
+      if (lane == 0 && (task.block != curPrefBlock || curPrefReady < needed))
+        waitAtLeast<int, scopeDevice>(p.workspace.hiddenReady + size_t(task.block) * W4ReadyCounterStride, needed);
       __syncwarp();
       traceKernel(KernelTracePhase::TokenReady, false, int(task.fc1));
     }
@@ -108,18 +120,21 @@ __device__ __forceinline__ void runW4A8LoadTasks(const P& p, Storage& s, typenam
       }(fc1, fc2);
       state = get<0>(result);
     };
-    if (!P::LocalExpert && task.fc1 && (Types::LoadWarps == 1 || warp == Schedule::ActivationLoadWarp)) {
+    if (!P::LocalExpert && task.fc1 && checkReady) {
       constexpr int TilesPerChunk = Types::DispatchChunk / P::Tiles::K;
+      int needed = task.tokens.rows;
       for (int first = 0; first < kTiles; first += TilesPerChunk) {
         traceKernel(KernelTracePhase::TokenReady, true, first / TilesPerChunk);
-        if (lane == 0)
+        if (lane == 0 && (task.block != curPrefBlock || curPrefReady < needed))
           waitAtLeast<int, scopeDevice>(
-              w4InputChunkCounter<Types>(p.workspace, hidden, task.block, first / TilesPerChunk), task.tokens.rows);
+              w4InputChunkCounter<Types>(p.workspace, hidden, task.block, first / TilesPerChunk), needed);
         __syncwarp();
         traceKernel(KernelTracePhase::TokenReady, false, first / TilesPerChunk);
+        if (first + TilesPerChunk >= kTiles) prefetchNextReady();
         loadTiles(first, min(TilesPerChunk, kTiles - first));
       }
     } else {
+      prefetchNextReady();
       loadTiles(0, kTiles);
     }
     traceKernel(phase, false, i);

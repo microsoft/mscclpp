@@ -139,7 +139,8 @@ __device__ __forceinline__ void runMmaTasks(const P& p, Storage& s, typename P::
       if (elect_one_sync()) copy(get<8>(mmaInputs), get<9>(mmaInputs)(_, _, _, _, 0), get<10>(mmaInputs));
     }
     const int clusters = gridDim.x / P::Tiles::ClusterSize;
-    for (int i = firstTaskOrdinal(range, cluster, clusters); i < range.end; i += taskOrdinalStride(range, clusters)) {
+    for (TaskWalk walk(range, cluster, clusters, P::WeightMxfp4); !walk.done(); walk.advance()) {
+      const int i = walk.ordinal();
       Task task = taskAt(p, range, i, hidden, intermediate, tokens);
       auto coord = taskCoord(p, task, cta);
       int kTiles = taskKTiles(p, task, hidden, intermediate);

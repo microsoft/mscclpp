@@ -383,3 +383,242 @@ Findings:
     fused static placement making it a few us worse.
   - A size-aware switch (fused up to 128 tokens, two-kernel at 256) would be best of both today. Multi-block shared
     tasks (proposal 1 above) target the root cause.
+
+## Merge with the small-batch optimization (`binyli/megamoe-opt`)
+
+Branch `caiorocha/megamoe_shared_com_opt` merges `caiorocha/small_bs` (Binyang's optimization) into fused v2.
+The **routed-only kernel is unchanged** from `small_bs`: an A/B against a `small_bs` build with the same defines gives the
+same latency (16 tokens, margin 4: balanced 91.8 vs 91.7 µs, zipf_skewed 97.5 vs 97.6 µs).
+
+### Merge decisions
+
+- **Shared memory.** `W4A8FusedSharedStorage` wraps Binyang's `W4A8SharedStorage` at offset 0, because routing,
+  dispatch and the epilogue reinterpret SMEM as `P::SharedStorage`. The fused routing scratch overlays the dispatch
+  buffers and epilogue staging, which this CTA does not use until its routing finishes. The shared expert reuses the
+  routed tensor buffers.
+- **Routing.**
+  - The routed kernel keeps Binyang's `processSourceRouteChunks` and `processReceivedRouteChunks` verbatim.
+  - The fused kernel uses `*Subset` copies that run on the routing warp subset. They are selected through
+    `processSourceRoutes` and `processReceivedRoutes`.
+  - A first merge generalized the shared functions instead. That cost the routed-only kernel about 0.5 µs, found by
+    bisection, so the routed path now uses the untouched code.
+- **Task order.** `TaskWalk` reproduces Binyang's wave order for whole-grid ranges, which covers the routed tasks and
+  shared FC1. It uses round-robin for cluster-subset ranges (shared FC2). Load, MMA and epilogue use the same walk.
+  Binyang's readiness prefetch uses `TaskWalk::nextOrdinal`.
+- **Combine.**
+  - The routed kernel spreads combine over every CTA.
+  - The fused kernel keeps it on the first `combineCtaCount` CTAs, so shared FC2 never sits on the combine path. That
+    count now follows Binyang's `effectiveLoads` item sizing.
+  - Spreading the fused combine over 2× or 4× more CTAs was tested and did not help (balanced +0.2 to +0.4 µs worse,
+    zipf at 32 tokens 1.4 µs better, hot_experts at 32 tokens 1.1 µs worse). It was reverted.
+- **Dispatch overlap.** Before the shared FC1 epilogue, the epilogue warps wait on Binyang's `dispatchDone` when the
+  epilogue staging aliases the dispatch buffers.
+
+### Results (k128, e16w8, LS10, dispatch warps 2, dispatch stages 1, fixed token count; best of margin {0,4,8} × FC1 delay {0,2500,5000} ns)
+
+| Pattern | 8 tokens | 16 tokens | 32 tokens | 64 tokens |
+|---|---|---|---|---|
+| balanced | 91.54 → 95.92 (+4.37) | 92.33 → 96.60 (+4.27) | 92.82 → 97.35 (+4.53) | 102.49 → 107.08 (+4.59) |
+| hot_experts | 74.58 → 78.40 (+3.83) | 79.38 → 83.19 (+3.80) | 94.58 → 99.85 (+5.27) | 102.18 → 106.26 (+4.08) |
+| lognormal | 91.31 → 95.60 (+4.30) | 92.85 → 97.14 (+4.29) | 101.50 → 104.82 (+3.32) | 118.60 → 123.72 (+5.12) |
+| zipf | 79.45 → 82.84 (+3.38) | 82.36 → 86.28 (+3.92) | 91.25 → 94.38 (+3.13) | 106.58 → 112.91 (+6.33) |
+| zipf_skewed | 86.46 → 88.74 (+2.28) | 98.41 → 100.53 (+2.13) | 129.97 → 134.42 (+4.45) | 183.09 → 189.81 (+6.72) |
+
+Each cell is routed-only → routed + shared (delta) in µs.
+
+- **Latency.** Routed + shared is about 7 µs faster than before the merge (balanced, 16 tokens: 103.9 → 96.6 µs).
+- **Overhead.** The shared-expert overhead grows by about 1 µs for balanced/lognormal: it was about +3.3 µs and is now
+  about +4.3 µs.
+- **Likely cause.** Binyang's routed kernel uses HBM more efficiently, so it has less idle bandwidth left to hide the
+  shared expert's 53.5 MB of weights:
+  - The routed weights are about 428 MB per rank, so the shared expert adds about 12.5% more bytes.
+  - If the shared expert were not hidden at all, it would cost about 7–9 µs.
+- **Routed-only reference.** The user's routed-only reference table took the best JIT policy per case, for example
+  adaptive-cache or adaptive-expert-major for the hot and skewed patterns. With this fixed e16w8-ls10 configuration,
+  routed-only at hot_experts/zipf_skewed 32–64 tokens matches `small_bs` built the same way, not that best-of table.
+
+### Per-case config tuning (merged branch)
+
+Fused v2 now supports Binyang's policy knobs. I rebuilt it with five configs (all k128, dispatch warps 2, dispatch stages 1, fixed token count):
+
+| Name | Epilogue (tokens / warps / registers) | Load stages | Adaptive cache weights |
+|---|---|---:|---|
+| e16w8-ls10 | 16 / 8 / 160 | 10 | no |
+| e16w8-ls8 | 16 / 8 / 160 | 8 | no |
+| e32w4-r192 | 32 / 4 / 192 | 8 | no |
+| e32w4-adaptive | 32 / 4 / 224 | 8 | yes |
+| e16w8-ls10-adaptive | 16 / 8 / 160 | 10 | yes (new combination) |
+
+`expert_major_tasks` is a no-op in the current kernel code (only reported as a flag), so `adaptive-expert-major` is the same as `adaptive-cache`.
+
+Sweeps:
+- Routed-only: margin {0, 2, 4}. All 20 cases reproduce the reference table within ±0.3 µs.
+- Routed + shared: margin {0, 4, 8} × shared FC1 delay {0, 2500} ns, plus margin 2 for the best configs of each case.
+
+"Routed-only with the routed + shared config" is a standalone routed-only run with the same build and margin as the winning fused run. The routed-only control measured inside the fused benchmark reads on average 0.6 µs slower than a standalone run (measured over 452 pairs), so the table does not use it.
+
+| Pattern | Tokens | Your routed ref | Best routed-only (config, margin) | Best routed + shared (config, margin, FC1 delay) | Routed-only with the routed + shared config | Overhead vs same config | Overhead vs best routed |
+|---|---:|---:|---|---|---:|---:|---:|
+| balanced | 8 | 91.01 | 90.90 (e16w8-ls10, m4) | 95.95 (e16w8-ls10-adaptive, m4, 0 ns) | 91.17 | +4.78 | +5.05 |
+| balanced | 16 | 91.81 | 91.69 (e16w8-ls10, m4) | 96.53 (e16w8-ls10, m4, 2500 ns) | 91.69 | +4.84 | +4.84 |
+| balanced | 32 | 92.90 | 92.78 (e16w8-ls10-adaptive, m4) | 97.22 (e16w8-ls10-adaptive, m4, 2500 ns) | 92.78 | +4.44 | +4.44 |
+| balanced | 64 | 98.33 | 98.36 (e32w4-r192, m4) | 103.19 (e32w4-adaptive, m4, 0 ns) | 98.58 | +4.60 | +4.82 |
+| hot_experts | 8 | 72.67 | 72.57 (e16w8-ls10, m2) | 78.20 (e16w8-ls10, m2, 0 ns) | 72.57 | +5.63 | +5.63 |
+| hot_experts | 16 | 76.21 | 76.04 (e16w8-ls8, m2) | 81.25 (e16w8-ls8, m0, 0 ns) | 76.15 | +5.10 | +5.21 |
+| hot_experts | 32 | 82.83 | 82.51 (e32w4-adaptive, m4) | 88.03 (e32w4-adaptive, m2, 2500 ns) | 82.78 | +5.25 | +5.52 |
+| hot_experts | 64 | 88.73 | 88.44 (e32w4-adaptive, m2) | 93.96 (e32w4-adaptive, m2, 2500 ns) | 88.44 | +5.52 | +5.52 |
+| lognormal | 8 | 91.03 | 90.70 (e16w8-ls10, m4) | 95.40 (e16w8-ls10, m4, 0 ns) | 90.70 | +4.71 | +4.71 |
+| lognormal | 16 | 92.52 | 92.23 (e16w8-ls10, m4) | 97.14 (e16w8-ls10, m4, 2500 ns) | 92.23 | +4.92 | +4.92 |
+| lognormal | 32 | 96.73 | 96.74 (e16w8-ls8, m2) | 100.83 (e16w8-ls8, m4, 0 ns) | 96.84 | +3.99 | +4.08 |
+| lognormal | 64 | 101.40 | 101.14 (e32w4-adaptive, m0) | 106.57 (e32w4-adaptive, m0, 2500 ns) | 101.14 | +5.43 | +5.43 |
+| zipf | 8 | 78.30 | 77.89 (e16w8-ls10-adaptive, m2) | 82.81 (e16w8-ls10-adaptive, m4, 0 ns) | 77.89 | +4.91 | +4.91 |
+| zipf | 16 | 81.37 | 81.04 (e16w8-ls10-adaptive, m4) | 86.28 (e16w8-ls10, m4, 2500 ns) | 81.27 | +5.01 | +5.24 |
+| zipf | 32 | 82.70 | 82.70 (e16w8-ls8, m4) | 87.92 (e16w8-ls8, m4, 2500 ns) | 82.70 | +5.22 | +5.22 |
+| zipf | 64 | 89.56 | 89.26 (e32w4-r192, m4) | 95.00 (e32w4-adaptive, m0, 2500 ns) | 89.77 | +5.23 | +5.74 |
+| zipf_skewed | 8 | 75.43 | 75.34 (e16w8-ls8, m2) | 80.82 (e16w8-ls8, m0, 0 ns) | 75.34 | +5.48 | +5.49 |
+| zipf_skewed | 16 | 82.94 | 82.70 (e32w4-r192, m4) | 87.80 (e32w4-adaptive, m2, 0 ns) | 83.12 | +4.68 | +5.09 |
+| zipf_skewed | 32 | 96.56 | 96.22 (e32w4-adaptive, m4) | 101.76 (e32w4-adaptive, m2, 2500 ns) | 96.63 | +5.13 | +5.54 |
+| zipf_skewed | 64 | 123.66 | 123.05 (e32w4-r192, m4) | 129.64 (e32w4-adaptive, m0, 2500 ns) | 123.87 | +5.78 | +6.59 |
+
+Findings:
+- With the right config per case, routed + shared adds +4.0 to +6.6 µs over the best routed-only result (median about +5.2).
+- The tuned routed + shared latency is under 110 µs for every case except zipf_skewed at 64 tokens (129.6 µs, where routed-only alone is already 123 µs).
+- The best fused config is usually the best routed config, or a close neighbour of it:
+  - hot and skewed patterns: adaptive-cache;
+  - balanced and lognormal at 8–16 tokens: e16w8-ls10.
+- Fused prefers the same or a smaller SM margin than routed-only (m0–m4).
+
+## Gap diagnosis (post-merge, ~4–5 µs)
+
+### Method
+- **Attribution build** (`-DMSCCLPP_MEGAMOE_FUSED_DEBUG_SKIP=1`, debug only, unstaged). The env `MSCCLPP_MEGAMOE_FUSED_SKIP` takes these flags:
+  - 2 skips shared FC2.
+  - 3 skips both shared GEMMs. Ordinals are kept, so the routed placement is unchanged.
+  - +4 starts the routed ordinals at 0.
+  - +8 spreads the combine over the whole grid.
+- **Whole-grid trace build** (`TRACE=1 TRACE_CTAS=148 TRACE_CAPACITY=4096`), with routing sub-phase marks (`TokenReady` payload 1..5 in `prepareRoutesImpl`).
+- Analyzers: `fused-analysis/{ftrace,fgap,froute}.py`.
+
+### Attribution (real timing, margin 4, FC1 delay 2500, in-run routed control)
+
+| Case | Full | No shared FC2 | No shared work | Of which: spread combine | Of which: routed ordinals at 0 |
+|---|---|---|---|---|---|
+| balanced 16 | +4.3 | +3.7 | +1.85 | −0.1 | +0.1 |
+| hot_experts 8 | +2.6 | +2.3 | +1.25 | −0.1 | +1.4 (worse) |
+
+The gap therefore splits into three parts:
+- **Structure:** about 1.3–1.9 µs, present even with no shared work.
+- **Shared FC1:** about 1.1–1.8 µs.
+- **Shared FC2:** about 0.4–0.75 µs.
+
+### Where the time goes (trace, balanced 16; trace µs are inflated about 1.5×)
+
+1. **Routing is slower.** The routing end moves 8.8 → 11.6 µs. The routing sub-phases show two causes:
+   - The subset routing (12 of 16 warps) adds about 0.8 µs, mostly in receiving routes (m3) and in the first grid barrier.
+   - The shared FC1 weight stream adds about 1.6 µs more, mostly in the two grid barriers. Device-scope atomic and poll latency grows under 16 clusters of TMA traffic.
+   - Even in routed-only, each routing grid barrier costs about 1.3 µs after the last arrival.
+2. **Routed work starts later.** The first routed load moves 10.1 → 13.6 µs.
+   - The 16 FC1 clusters (2–17) start routed work only at about 21.5 µs. One shared FC1 tile is 2.2 MB of fp8 at about 220 GB/s per cluster, about 1.7 routed tasks long.
+   - The static wave gives those clusters one routed task fewer only when the partial wave avoids them. At 16 tokens, 800 tasks = 10 waves + 60, the partial wave wraps onto FC1 clusters 2 and 3. They do FC1 plus 11 tasks and are the rank's slowest clusters (+3 µs over the median).
+   - The FC1 delay sweep confirms the FC1 clusters are near-critical. The optimum is flat over 1000–2500 ns, and every µs beyond 3000 ns adds about 1 µs.
+3. **Routed tasks are not HBM-bound.** A W4 task moves about 0.5 MB in about 7 µs; the MXFP4 transform/MMA path is the limit. The shared fp8 tiles are per-SM-bandwidth-bound instead. So the hiding capacity is idle SM-time (the routing window and the tail spread), not spare HBM.
+4. **The tail spread is large in routed-only too.** Per-cluster routed completion ranges about 92–106 µs (10- vs 11-task clusters, plus expert/FC1-vs-FC2 heterogeneity).
+   - Shared FC2 is placed statically on clusters 8–41, regardless of which clusters finish first.
+   - On the slowest rank, those FC2 tasks extend past the routed done.
+5. **Combine concentration** (16 CTAs instead of the whole grid) costs only about 0.1–0.3 µs.
+
+### Improvement plan (ordered by expected gain / effort)
+
+| # | Change | Expected gain | Effort / risk |
+|---|---|---|---|
+| P1 | Dynamic (atomic) task claiming per rank for routed + shared tasks. The cluster leader claims ordinals in order (no deadlock: FC2 only waits on earlier-claimed FC1); a DSMEM mailbox feeds the load/MMA/epilogue warps of both CTAs. This absorbs the FC1 cluster lag, the partial-wave quantization, task heterogeneity and the FC2 placement. It also helps routed-only. | 1.5–3 µs on the gap, plus some for routed-only | High (task walk replaced in 3 roles) |
+| P2 | Weighted static placement (cheap P1 subset): pick the routed ordinal begin at run time so the partial wave avoids the FC1 clusters, and put FC2 first on the clusters with the fewest routed tasks. | 0.5–1.5 µs (case dependent) | Low |
+| P3 | Full-thread routing on clusters without shared FC1 (58 of 74; they include CTA 0 and all received-segment CTAs). The barrier protocol is compatible, so mixing per-CTA thread counts is safe. | about 0.5 µs | Medium |
+| P4 | Smaller FC1 footprint per cluster: split-K × 2 (32 tasks with an fp32 fix-up by the last arrival) or FC1 on 32 clusters. This shortens the FC1 cluster lag and its interference burst. | 0.5–1 µs | Medium–High |
+| P5 | Cheaper grid barriers (cluster-first hierarchical arrival, fewer polling CTAs). This helps both kernels and removes most of the FC1 sensitivity of the barriers. | 0.5–1 µs in both kernels | Medium |
+| P6 | In-kernel static-FP8 quantization of the routed and shared inputs (Binyang's `fuseQuantize` is MXFP8 only). | 1–2 µs in both kernels (not the gap) | Medium |
+| P7 | Let CTAs that finish FC2 join the combine (spread combine). | about 0.1–0.3 µs | Low |
+
+### P2 result: static placement (not adopted)
+
+- **What already holds.** The current placement already does what P2 asked:
+  - The routed ordinals start right after the shared FC1 clusters, so the partial wave avoids the FC1 clusters whenever it fits (rem ≤ clusters − sharedFc1Tasks).
+  - Shared FC2 starts at the first cluster without a partial-wave task.
+- **What was tried.** The remaining lever was to make the FC1 clusters skip one whole routed wave, via placeholder ("hole") ordinals in wave 0. The code is kept in `fused-analysis/p2-holes/`.
+  - Unconditional holes: worse in 16 of 20 cases (about +3 µs balanced, up to +7 µs).
+  - Holes only when they add no wave:
+
+    | Effect | Cases |
+    |---|---|
+    | Better | zipf 64 −2.4, zipf_skewed 8 −1.3, lognormal 64 −1.0 |
+    | Worse | zipf 32 +4.0, hot_experts 32 +3.5, zipf_skewed 16 +2.4, hot_experts 64 +2.3 |
+    | Neutral | the rest |
+- **Conclusion.**
+  - Placement swings the result by ±2–4 µs depending on which tasks share a wave (FC1→FC2 readiness waits, hot experts).
+  - A per-case static rule cannot predict this, so the hole code was reverted.
+  - The remaining placement upside needs run-time balancing (P1), or a per-case policy selected by the tuner.
+
+### P6 result: in-kernel static-FP8 quantization (adopted, JIT toggle)
+
+**Toggle.** `W4A8KernelConfig.fuse_static_quantize` (default `True`) → `-DMSCCLPP_MEGAMOE_W4_FUSE_STATIC_QUANTIZE=0/1`
+(builtin builds: pass the define; benchmark: `--fuse-static-quantize/--no-fuse-static-quantize`). It is exported in the
+JIT optimization flags (`MSCCLPP_MEGAMOE_JIT_FUSE_STATIC_QUANTIZE = 8`) and reported as
+`effective_kernel_config["fuse_static_quantize"]`. With 0 the separate quantize launches are kept unchanged.
+
+**When it applies.** Shared host/device predicate `fusesInputQuantize` (`megamoe_device.cuh`): captured fixed-token
+launches, H4096, 1–64 tokens, `tokens * topK <= RouteChunk`, `ctas >= worldSize + 2 + tokens` — the same conditions as
+Binyang's MXFP8 `fuseQuantize`, now also for `Fp8Static`. The fused kernel additionally requires a shared hidden size
+different from the routed one (otherwise the shared expert reads the routed quantized input, so the separate launch is
+kept).
+
+**What changed.**
+
+| Where | Change |
+|---|---|
+| `megamoe_routing.cuh` | `quantizeTokenStaticInRouting<DispatchOnly>`: CTAs 1..tokens quantize one token each (x · 1/scale → e4m3), looping for the 384-thread fused routing, then `fence.proxy.async.global` (peers read it with bulk copies after the routing barriers). `stageSourceRouteWeights` loops over routes for the fused routing thread count. The `fuseQuantize` condition now uses `fusesInputQuantize` and also runs in dispatch-only (fused) routing for static FP8. |
+| `megamoe_w4a8.cu` (fused) | The idle init warp (warp 11) of every CTA quantizes a grid-strided slice of the shared input during the shared FC1 delay; CTA 0 also clears the shared FC1 readiness counters (previously done by the quantize kernel). Each init warp arrives once on `Control::sharedQuantizeSyncState` (own cache line, sense-reversing). Only the shared FC1 activation producer waits for the flip (its phase is read before the CTA init barrier so the flip cannot be missed); the weight producer streams FC1 weights meanwhile. The kernel takes the BF16 `input` / `sharedInput` (null = not fused). |
+| `megamoe_launch.cu` | Routed and fused launches skip the quantize kernel and pass the BF16 inputs when the predicate holds. |
+| JIT / bindings | `megamoe_specialization.hpp`, `megamoe_jit.{hpp,cu}`, `runtime.cc`, `megamoe.hpp`, `python/csrc/ext/megamoe.cpp`, `jit.py`, `w4a8.py`, `api.py`, `benchmark.py`, README, `test_megamoe_jit.py`. |
+
+**Variants measured** (EP32, margin 4, FC1 delay 2500 ns, 20 cases, 2–3 reps, medians; mean over cases):
+
+| Variant | Routed | Fused | Gap |
+|---|---:|---:|---:|
+| Off (separate quantize kernels) | 100.61 | 105.44 | +4.83 |
+| Shared quantize by warps 8–11, 592 arrivals, all producers wait | 99.24 | 104.64 | +5.39 |
+| Init warp only, 1 arrival per CTA, own cache line | 99.24 | 104.31 | +5.08 |
+| + 4-deep batched shared loads | 99.24 | 104.72 | +5.48 |
+| + shared quantize start delayed 1 µs | 99.25 | 104.80 | +5.56 |
+| **Init warp, serial loads, only the activation producer waits (final)** | **99.24** | **104.21** | **+4.97** |
+
+- Routed-only: −1.37 µs mean, every case improved (−1.19 to −2.02 µs; the quantize launch is gone).
+- Fused: −1.23 µs mean, every case improved (−0.47 to −2.33 µs). The gap is unchanged (+0.14 µs), as predicted.
+- Faster (batched) shared quantization is worse: its burst competes with the latency-bound routing exchange. Blocking
+  the FC1 weight producer on the quantization is also worse.
+- `--check` passes for routed and fused (8/16/32 tokens). The 64-token shared check fails on the same single element as
+  with the toggle off (pre-existing tolerance issue).
+
+Per-case table (µs):
+
+| Case | Off routed | Off fused | On routed | On fused | Δ routed | Δ fused |
+|---|---:|---:|---:|---:|---:|---:|
+| balanced 8 | 91.72 | 96.63 | 90.53 | 95.92 | -1.19 | -0.71 |
+| balanced 16 | 92.53 | 96.84 | 91.20 | 95.50 | -1.33 | -1.34 |
+| balanced 32 | 92.96 | 97.69 | 91.71 | 97.22 | -1.25 | -0.47 |
+| balanced 64 | 102.67 | 107.59 | 101.39 | 106.66 | -1.28 | -0.92 |
+| hot_experts 8 | 79.02 | 81.68 | 77.64 | 80.56 | -1.38 | -1.12 |
+| hot_experts 16 | 82.71 | 85.34 | 81.27 | 84.20 | -1.44 | -1.13 |
+| hot_experts 32 | 94.92 | 100.21 | 93.56 | 98.66 | -1.36 | -1.55 |
+| hot_experts 64 | 104.41 | 110.04 | 102.91 | 109.17 | -1.50 | -0.87 |
+| lognormal 8 | 91.51 | 96.02 | 90.22 | 94.94 | -1.29 | -1.08 |
+| lognormal 16 | 93.06 | 97.55 | 91.67 | 96.16 | -1.38 | -1.39 |
+| lognormal 32 | 101.57 | 106.26 | 99.98 | 104.50 | -1.59 | -1.76 |
+| lognormal 64 | 119.36 | 128.88 | 118.13 | 128.05 | -1.23 | -0.84 |
+| zipf 8 | 79.63 | 83.32 | 78.33 | 82.09 | -1.30 | -1.23 |
+| zipf 16 | 82.50 | 86.70 | 81.17 | 85.91 | -1.33 | -0.79 |
+| zipf 32 | 92.32 | 96.53 | 91.00 | 95.58 | -1.32 | -0.95 |
+| zipf 64 | 111.53 | 117.98 | 110.28 | 116.54 | -1.24 | -1.45 |
+| zipf_skewed 8 | 87.54 | 92.22 | 86.26 | 90.68 | -1.28 | -1.54 |
+| zipf_skewed 16 | 98.58 | 101.55 | 97.24 | 100.03 | -1.34 | -1.52 |
+| zipf_skewed 32 | 130.12 | 135.24 | 128.73 | 133.47 | -1.39 | -1.77 |
+| zipf_skewed 64 | 183.62 | 190.63 | 181.60 | 188.30 | -2.02 | -2.33 |

@@ -51,6 +51,9 @@ struct Control {
   uint64_t epoch;
   int tokenBlocks;
   uint32_t residentGridSyncState;
+  // Fused shared expert with in-kernel static-FP8 quantization: one sense-reversing arrival per CTA. Its own cache
+  // line keeps these atomics off the routing grid barrier.
+  alignas(128) uint32_t sharedQuantizeSyncState;
 };
 
 // Routing exchanges a rank's routes in chunks of one route per kernel thread; even an empty batch has one chunk.
@@ -58,6 +61,16 @@ constexpr int RouteChunk = W4Threads;
 
 __host__ __device__ constexpr int routeChunks(int routes) {
   return routes > RouteChunk ? routes / RouteChunk + (routes % RouteChunk != 0) : 1;
+}
+
+// Small batches quantize the BF16 input inside the kernel's routing instead of a separate launch: CTAs 1..tokens each
+// quantize one token while CTA ctas - worldSize - 1 stages the source route weights. MXFP8 always fuses; static FP8
+// fuses only with MSCCLPP_MEGAMOE_W4_FUSE_STATIC_QUANTIZE. The host launch and the kernel must agree on this predicate.
+__host__ __device__ constexpr bool fusesInputQuantize(ActivationDtype activation, int hidden, int worldSize, int tokens,
+                                                      int topK, int ctas) {
+  return (activation == ActivationDtype::Mxfp8 || (W4FuseStaticQuantize && activation == ActivationDtype::Fp8Static)) &&
+         hidden == 4096 && worldSize > 1 && worldSize <= 64 && tokens > 0 && tokens <= 64 &&
+         tokens * topK <= RouteChunk && ctas >= worldSize + 2 + tokens;
 }
 
 struct alignas(16) Route {
@@ -70,8 +83,10 @@ struct alignas(16) Route {
 struct alignas(8) TokenBlock {
   int16_t expert;
   int16_t rows;
-  int16_t groupOffset;
-  int16_t groupShift;
+  int8_t groupOffset;
+  int8_t groupShift;
+  uint8_t cacheWeights;
+  uint8_t reserved;
 };
 
 static_assert(sizeof(TokenBlock) == sizeof(uint2));
@@ -97,6 +112,7 @@ struct Workspace {
   uint8_t* inputScale;
   uint8_t* quantizedHidden;
   uint8_t* hiddenScale;
+  const uint8_t* fc1Weights;
   int poolRows;
 };
 
@@ -138,22 +154,6 @@ struct W4DispatchStorageT {
 
 struct EmptyStorage {};
 
-template <class Types, bool Local = Types::LocalExpert>
-struct W4RoutingDispatchStorageT;
-
-template <class Types>
-struct W4RoutingDispatchStorageT<Types, false> {
-  union {
-    W4DispatchStorageT<Types> dispatch;
-    int routing[sizeof(W4DispatchStorageT<Types>) / sizeof(int)];
-  };
-};
-
-template <class Types>
-struct W4RoutingDispatchStorageT<Types, true> {
-  EmptyStorage dispatch;
-};
-
 // FC2 BF16 rows are padded by 16 bytes so transposing stmatrix row writes are bank-conflict free.
 constexpr int PackedRowStride = 128 + 8;
 constexpr int PackedFp8RowStride = 128 + 16;
@@ -183,36 +183,86 @@ struct alignas(1024) W8A16SharedStorageT {
   std::conditional_t<Types::LocalExpert, EmptyStorage, W4DispatchStorageT<Types>> dispatch;
 };
 
+template <int DispatchWarps, int DispatchStages, int DispatchChunk, int ScaleStageBytes>
+struct W4DispatchBuffersT {
+  alignas(128) uint8_t tiles[DispatchWarps][DispatchStages][DispatchChunk];
+  alignas(128) uint8_t scales[DispatchWarps][DispatchStages][ScaleStageBytes];
+};
+
 template <class Types>
-struct alignas(1024) W4A8SharedStorageT : W4RoutingDispatchStorageT<Types> {
-  typename Types::Mainloop::TensorStorage tensors;
+struct W4SharedDispatchStateT {
+  BulkBarrier barriers[Types::DispatchWarps][Types::DispatchStages];
+  uint32_t arrivals;
+  uint32_t publishedPhase;
+  uint32_t dispatchDone;
+};
+
+template <class Types>
+struct alignas(1024) W4A8SharedStorageT {
+  static constexpr int SharedBlockCapacity = 64;
+  static constexpr int SharedExpertCapacity = 32;
+  static constexpr int RequiredScaleStageBytes = (Types::DispatchChunk / 32 + 15) / 16 * 16;
+  static constexpr int ScaleStageBytes = RequiredScaleStageBytes < 128 ? 128 : RequiredScaleStageBytes;
+  static constexpr bool OverlapEpilogueAndDispatch = (Types::DispatchWarps * Types::DispatchStages > 2);
+  // Routing finishes before GEMM uses these buffers; pipeline state and dispatch flags remain separate.
+  union {
+    typename Types::Mainloop::TensorStorage tensors;
+    int routing[sizeof(typename Types::Mainloop::TensorStorage) / sizeof(int)];
+  };
+  // The local W8A8 kernel (LocalExpert) has no dispatch role and carries no dispatch buffers.
+  std::conditional_t<
+      OverlapEpilogueAndDispatch || Types::LocalExpert, EmptyStorage,
+      W4DispatchBuffersT<Types::DispatchWarps, Types::DispatchStages, Types::DispatchChunk, ScaleStageBytes>>
+      separateDispatchBuffers;
+  union {
+    EpilogueStorage<Types::EpilogueTokens> epilogue;
+    std::conditional_t<
+        OverlapEpilogueAndDispatch && !Types::LocalExpert,
+        W4DispatchBuffersT<Types::DispatchWarps, Types::DispatchStages, Types::DispatchChunk, ScaleStageBytes>,
+        EmptyStorage>
+        sharedDispatchBuffers;
+  };
   typename Types::Load::SharedStorage mainloop;
   std::conditional_t<Types::SplitPipelines, typename Types::Load::SharedStorage, EmptyStorage> activationLoad;
   typename Types::Accumulate::SharedStorage accumulated;
   uint32_t tmem;
-  cutlass::arch::ClusterBarrier tmemReady;
-  EpilogueStorage<Types::EpilogueTokens> epilogue;
+  int16_t expertFirstTile[SharedExpertCapacity];
+  int16_t expertRows[SharedExpertCapacity];
+  TokenBlock blocks[SharedBlockCapacity];
+  std::conditional_t<Types::LocalExpert, EmptyStorage, W4SharedDispatchStateT<Types>> dispatch;
+  // Routed kernels order TMEM allocation through the routing grid barrier; the local W8A8 kernel has no routing and
+  // keeps a cluster barrier. Placed last so routed member offsets are unchanged.
+  std::conditional_t<Types::LocalExpert, cutlass::arch::ClusterBarrier, EmptyStorage> tmemReady;
 };
 
 using W4A8SharedStorage = W4A8SharedStorageT<W4A8CollectiveTypes>;
 
-struct alignas(1024) W4A8FusedSharedStorage : W4RoutingDispatchStorageT<W4A8CollectiveTypes> {
+// Fused routed + shared-expert storage. `routed` keeps the routed kernel's layout at identical offsets because the
+// routed roles locate the token-block cache, dispatch state and epilogue through P::SharedStorage. The shared expert
+// reuses the GEMM tensor buffers, which stream its FC1 during routing, so the routing scratch instead overlays the
+// dispatch buffers and the epilogue staging: neither is used before this CTA's routing completes.
+struct alignas(1024) W4A8FusedSharedStorage {
+  using Routed = W4A8SharedStorage;
+  using SharedTensorStorage = W8A8LocalCollectiveTypes::Mainloop::TensorStorage;
   static_assert(std::is_same_v<W4A8CollectiveTypes::Load, W8A8LocalCollectiveTypes::Load>);
   static_assert(std::is_same_v<W4A8CollectiveTypes::Accumulate, W8A8LocalCollectiveTypes::Accumulate>);
-  union {
-    W4A8CollectiveTypes::Mainloop::TensorStorage tensors;
-    W8A8LocalCollectiveTypes::Mainloop::TensorStorage sharedTensors;
+  static_assert(sizeof(SharedTensorStorage) <= sizeof(W4A8CollectiveTypes::Mainloop::TensorStorage));
+  static constexpr size_t RoutingOffset = offsetof(Routed, separateDispatchBuffers);
+  static constexpr size_t RoutingInts = (offsetof(Routed, mainloop) - RoutingOffset) / sizeof(int);
+  struct RoutingOverlay {
+    uint8_t skipped[RoutingOffset];
+    int routing[RoutingInts];
   };
-  W4A8CollectiveTypes::Load::SharedStorage mainloop;
-  std::conditional_t<W4A8CollectiveTypes::SplitPipelines, W4A8CollectiveTypes::Load::SharedStorage, EmptyStorage>
-      activationLoad;
-  W4A8CollectiveTypes::Accumulate::SharedStorage accumulated;
-  uint32_t tmem;
+  union {
+    Routed routed;
+    RoutingOverlay routingOverlay;
+  };
   cutlass::arch::ClusterBarrier tmemReady;
   cutlass::arch::ClusterBarrier computeReady;
   cutlass::arch::ClusterBarrier phaseReady;
   cutlass::arch::ClusterBarrier routingReady;
-  EpilogueStorage<W4A8CollectiveTypes::EpilogueTokens> epilogue;
+
+  __device__ SharedTensorStorage& sharedTensors() { return reinterpret_cast<SharedTensorStorage&>(routed.tensors); }
 };
 
 template <class Types, bool Borrowed = false, ActivationDtype ActDtype = ActivationDtype::Mxfp8>
@@ -261,10 +311,10 @@ __device__ __forceinline__ auto w4a8ParameterView(const P& p, NativeConfig confi
 }
 
 using W4A8KernelEntry = void (*)(W4A8Parameters, int, __bfloat16*, uint32_t*, const int32_t*, const float*,
-                                 __bfloat16*);
+                                 const __bfloat16*);
 W4A8KernelEntry w4a8KernelEntry(const NativeConfig& config, bool capturing = false);
 using W4A8FusedKernelEntry = void (*)(W4A8FusedParameters, int, __bfloat16*, uint32_t*, const int32_t*, const float*,
-                                      __bfloat16*);
+                                      __bfloat16*, const __bfloat16*, const __bfloat16*);
 W4A8FusedKernelEntry w4a8FusedKernelEntry(const NativeConfig& config, bool capturing = false);
 
 template <int LocalMode = 0>
@@ -316,13 +366,24 @@ __device__ T* peerAt(const P& p, int rank, size_t offset) {
 }
 
 template <class P>
+__device__ __forceinline__ void signalPeer(const P& p, int peer) {
+  const uint64_t epoch = p.workspace.control->epoch;
+  if (peer != p.config.rank) {
+    auto* remote = peerAt<uint64_t>(p, peer, p.symmetric.peerSignals) + p.config.rank;
+    asm volatile("st.release.sys.global.u64 [%0], %1;" ::"l"(remote), "l"(epoch) : "memory");
+  } else {
+    at<uint64_t>(p.local, p.symmetric.peerSignals)[peer] = epoch;
+  }
+  at<uint64_t>(p.local, p.symmetric.expectedPeerSignals)[peer] = epoch;
+}
+
+template <class P>
 __device__ __forceinline__ void signalAndWait(const P& p, int peer) {
-  BaseMemoryChannelDeviceHandle channel{
-      MemoryDevice2DeviceSemaphoreDeviceHandle{at<uint64_t>(p.local, p.symmetric.peerSignals) + peer,
-                                               peerAt<uint64_t>(p, peer, p.symmetric.peerSignals) + p.config.rank,
-                                               at<uint64_t>(p.local, p.symmetric.expectedPeerSignals) + peer}};
-  channel.signal();
-  channel.wait(SpinLimit);
+  signalPeer(p, peer);
+  if (peer != p.config.rank) {
+    waitAtLeast<uint64_t, scopeSystem>(at<uint64_t>(p.local, p.symmetric.peerSignals) + peer,
+                                       p.workspace.control->epoch);
+  }
 }
 
 }  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail

@@ -151,6 +151,15 @@ compare policies on the same workload before enabling it.
 kernel = compile_kernel(W4A8KernelConfig(adaptive_cache_weights=True))
 ```
 
+`fuse_static_quantize=True` (default) lets captured fixed-token static-FP8 launches
+quantize their BF16 input inside the kernel instead of a separate launch when the
+batch is small (H4096, 1-64 tokens per rank, `tokens * top_k <= ` the CTA thread
+count, and enough CTAs). Routing CTAs `1..tokens` each quantize one token. With a
+fused shared expert of a different hidden size, the MMA/load warps of every CTA
+also quantize the shared input during the shared FC1 start delay, and the shared
+FC1 loads wait for a grid-wide arrival counter. Set it to false to keep the
+separate quantize launch.
+
 Packaged exact-match policies can be loaded with
 `resolve_w4a8_kernel_config`. Resident-grid results can be loaded with
 `resolve_resident_tuning`.

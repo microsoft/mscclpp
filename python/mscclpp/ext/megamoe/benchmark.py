@@ -566,6 +566,12 @@ def main():
         default=None,
         help="override W4A8KernelConfig.adaptive_cache_weights",
     )
+    parser.add_argument(
+        "--fuse-static-quantize",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="override W4A8KernelConfig.fuse_static_quantize",
+    )
     parser.add_argument("--cluster-size", type=int, default=None, help="override W4A8KernelConfig.cluster_size")
     parser.add_argument("--check", action="store_true", help="compare against an independent Torch reference")
     parser.add_argument("--rtol", type=float, default=None)
@@ -690,6 +696,7 @@ def main():
             "expert_major_tasks",
             "cache_weights",
             "adaptive_cache_weights",
+            "fuse_static_quantize",
             "cluster_size",
         )
         if getattr(args, name) is not None
@@ -1148,7 +1155,8 @@ def main():
 
         lib_path = sorted(_glob.glob(os.path.join(os.path.dirname(_m.__file__), "lib", "libmscclpp_megamoe.so*")))[0]
         lib = ctypes.CDLL(lib_path)
-        tracks, capacity = 32, 8192
+        tracks = int(os.environ.get("MEGAMOE_KTRACE_TRACKS", "32"))
+        capacity = int(os.environ.get("MEGAMOE_KTRACE_CAPACITY", "8192"))
         os.makedirs(ktrace_dir, exist_ok=True)
         for label, graph in [("routed", routed_graph)] + ([("fused", fused_graph)] if fused_graph is not None else []):
             for replay in range(2):
@@ -1170,8 +1178,19 @@ def main():
                     == 0
                 )
                 if rank < 4:
+                    # Keep only the recorded prefix of each track.
+                    used = _np.minimum(counts, capacity).astype(_np.int64)
+                    per_track = events.reshape(tracks, capacity, 2)
+                    kept = (
+                        _np.concatenate([per_track[t, : used[t]] for t in range(tracks)])
+                        if used.sum()
+                        else per_track[:0, 0]
+                    )
                     _np.savez(
-                        os.path.join(ktrace_dir, f"{label}-r{replay}-rank{rank}.npz"), events=events, counts=counts
+                        os.path.join(ktrace_dir, f"{label}-r{replay}-rank{rank}.npz"),
+                        events=kept,
+                        counts=counts,
+                        capacity=capacity,
                     )
     kernel_trace = None
     if args.trace_dir and routed_graph is not None:

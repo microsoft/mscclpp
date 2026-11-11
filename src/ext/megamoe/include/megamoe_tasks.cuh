@@ -50,6 +50,70 @@ __device__ __forceinline__ int fc1CompletionCount(int intermediate) {
   return P::Tiles::ClusterSize * fc1TaskTiles<P>(intermediate);
 }
 
+__device__ __forceinline__ int stepClusterOffset(int c, int stride) {
+  if constexpr (!W4AdaptiveCacheWeights) {
+    if (stride > 29) {
+      c += 29;
+      if (c >= stride) c -= stride;
+    }
+  }
+  return c;
+}
+
+__device__ __forceinline__ int waveTaskOrdinal(int base, int c, int cluster, int stride, int tasks) {
+  return base + stride <= tasks ? base + c : base + cluster;
+}
+
+// Walks one cluster's ordinals of a TaskRange. Whole-grid ranges in wave order take ordinal begin + local, where full
+// waves rotate the cluster slot with stepClusterOffset and the last partial wave keeps the cluster's local index
+// (cluster - begin) mod clusters; with begin == 0 this is the routed kernel's wave order. Cluster-subset ranges and
+// non-wave ranges go round-robin from firstTaskOrdinal.
+struct TaskWalk {
+  int begin;
+  int count;
+  int stride;
+  int base;
+  int c;
+  int localCluster;
+  int roundRobin;
+  bool wave;
+
+  __device__ __forceinline__ TaskWalk(const TaskRange& range, int cluster, int clusters, bool waveOrder)
+      : begin(range.begin), count(range.end - range.begin), base(0) {
+    wave = waveOrder && range.clusterCount == 0;
+    stride = taskOrdinalStride(range, clusters);
+    if (wave) {
+      localCluster = (cluster - range.begin) % clusters;
+      if (localCluster < 0) localCluster += clusters;
+      c = localCluster;
+    } else {
+      roundRobin = firstTaskOrdinal(range, cluster, clusters) - range.begin;
+    }
+  }
+
+  __device__ __forceinline__ int localAt(int waveBase, int waveC) const {
+    return waveTaskOrdinal(waveBase, waveC, localCluster, stride, count);
+  }
+  __device__ __forceinline__ bool done() const {
+    return wave ? (base >= count || localAt(base, c) >= count) : roundRobin >= count;
+  }
+  __device__ __forceinline__ int ordinal() const { return begin + (wave ? localAt(base, c) : roundRobin); }
+  // The ordinal after this one, or begin + count when none follows.
+  __device__ __forceinline__ int nextOrdinal() const {
+    int next = wave ? (base + stride >= count ? count : localAt(base + stride, stepClusterOffset(c, stride)))
+                    : roundRobin + stride;
+    return begin + min(next, count);
+  }
+  __device__ __forceinline__ void advance() {
+    if (wave) {
+      base += stride;
+      c = stepClusterOffset(c, stride);
+    } else {
+      roundRobin += stride;
+    }
+  }
+};
+
 template <class P>
 __device__ __forceinline__ int taskTokenBlocks(const P& p, int tokens) {
   if constexpr (P::LocalExpert) return (tokens + P::Tiles::N - 1) / P::Tiles::N;
@@ -59,9 +123,16 @@ __device__ __forceinline__ int taskTokenBlocks(const P& p, int tokens) {
 template <class P>
 __device__ __forceinline__ TokenBlock resolveTokenBlock(const P& p, int& block, int& m, int tiles, int tokens) {
   if constexpr (P::LocalExpert) {
-    return TokenBlock{0, int16_t(min(int(P::Tiles::N), tokens - block * P::Tiles::N)), 0, 0};
+    return TokenBlock{0, int16_t(min(int(P::Tiles::N), tokens - block * P::Tiles::N)), 0, 0, 0, 0};
   }
-  TokenBlock tokenBlock = p.workspace.blocks[block];
+  TokenBlock tokenBlock;
+  if constexpr (P::WeightMxfp4) {
+    extern __shared__ __align__(1024) char storage[];
+    const auto& s = *reinterpret_cast<const typename P::SharedStorage*>(storage);
+    tokenBlock = block < P::SharedStorage::SharedBlockCapacity ? s.blocks[block] : p.workspace.blocks[block];
+  } else {
+    tokenBlock = p.workspace.blocks[block];
+  }
   if (tokenBlock.groupShift > 0) {
     int inGroup = int(tokenBlock.groupOffset) * tiles + m;
     block += (inGroup & ((1 << tokenBlock.groupShift) - 1)) - int(tokenBlock.groupOffset);

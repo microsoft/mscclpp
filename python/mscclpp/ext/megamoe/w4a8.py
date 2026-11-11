@@ -67,6 +67,7 @@ def _validate_gpu_profile(value):
             "cache_weights",
             "cluster_size",
             "adaptive_cache_weights",
+            "fuse_static_quantize",
         )
         required_config = tuple(name for name in _CONFIG_FIELDS if name not in optional_config)
         _fields(entry["config"], _CONFIG_FIELDS, required_config, "W4A8 kernel config")

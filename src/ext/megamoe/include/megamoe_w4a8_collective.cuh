@@ -119,11 +119,16 @@ struct W4A8Mainloop {
                         cute::repeat_like(typename Base::StrideB{}, int32_t(0)), typename Base::StrideB{}),
       SmemLayoutB32{}(cute::_, cute::_, cute::_, cute::_0{}), KernelTile32{}, TiledMma32{}, ClusterLayout{}));
 
+  using AllocSmemLayoutB = cute::conditional_t<LoadStages >= 10, SmemLayoutB32,
+                                               cute::conditional_t<LoadStages == 9, SmemLayoutB64, SmemLayoutB>>;
+  using AllocTiledMmaB =
+      cute::conditional_t<LoadStages >= 10, TiledMma32, cute::conditional_t<LoadStages == 9, TiledMma64, TiledMma>>;
+
   struct TensorStorage : cute::aligned_struct<128, cute::_0> {
     cute::ArrayEngine<typename Base::SmemAllocTypeA, cute::cosize_v<SmemLayoutA>> smem_A;
-    cute::ArrayEngine<typename Base::SmemAllocTypeB, cute::cosize_v<SmemLayoutB>> smem_B;
     cute::ArrayEngine<ElementSF, cute::cosize_v<SmemLayoutSFA>> smem_SFA;
     cute::ArrayEngine<ElementSF, cute::cosize_v<SmemLayoutSFB>> smem_SFB;
+    cute::ArrayEngine<typename Base::SmemAllocTypeB, cute::cosize_v<AllocSmemLayoutB>> smem_B;
   };
   struct Params {
     typename Base::Params::TMA_A tma_load_a;
@@ -273,7 +278,7 @@ struct W4A8Mainloop {
   __device__ auto mma_init(Tmem tmem, TensorStorage& s) const {
     using namespace cute;
     auto a = TiledMma::make_fragment_A(make_tensor(make_smem_ptr(s.smem_A.begin()), SmemLayoutA{}));
-    auto b = TiledMma::make_fragment_B(make_tensor(make_smem_ptr(s.smem_B.begin()), SmemLayoutB{}));
+    auto b = AllocTiledMmaB::make_fragment_B(make_tensor(make_smem_ptr(s.smem_B.begin()), AllocSmemLayoutB{}));
     auto sa = make_tensor(make_smem_ptr(s.smem_SFA.begin()), SmemLayoutSFA{});
     auto sb = make_tensor(make_smem_ptr(s.smem_SFB.begin()), SmemLayoutSFB{});
     auto ta = make_tensor(tmem.tCtSFA.data(), filter_zeros(tmem.tCtSFA.layout()));
@@ -303,7 +308,8 @@ struct W4A8Mainloop {
     auto b = make_tensor(originalB.data() + rowOffset, originalB.layout());
     auto sfa = inputs.tAgSFA_mkl(_, m, _, expert);
     auto sfb = inputs.tBgSFB_nkl(_, n, _, expert);
-    const auto weightHint = cacheWeights ? CacheHint::EVICT_NORMAL : CacheHint::EVICT_FIRST;
+    const auto weightHint =
+        cacheWeights ? (W4CacheWeights ? CacheHint::EVICT_LAST : CacheHint::EVICT_NORMAL) : CacheHint::EVICT_FIRST;
     const cute::TmaDescriptor* bDesc = params.tma_load_b.get_tma_descriptor();
     uint32_t actTxBytes = ActivationTransactionBytes;
     if (TileN > 32 && validRows <= 32) {
@@ -316,33 +322,78 @@ struct W4A8Mainloop {
     if constexpr (ActDtype == ActivationDtype::Fp8Static) actTxBytes -= SfbTransactionBytes;
     const uint32_t txBytes =
         Operands == 1 ? WeightTransactionBytes : (Operands == 2 ? actTxBytes : WeightTransactionBytes + actTxBytes);
+    constexpr int BStageBytes = LoadStages >= 10 ? 2048 : (LoadStages == 9 ? 4096 : 8192);
+    const bool largeB = (BStageBytes < 8192) && (validRows > (BStageBytes / 64));
     uint64_t waitNs = 0, issueNs = 0;
     const int iterations = kTiles;
-    for (; kTiles > 0; --kTiles, ++iterator) {
-      auto start = traceKernelClock();
-      pipe.producer_acquire(state);
-      waitNs += traceKernelClock() - start;
-      auto* barrier = pipe.producer_get_barrier(state);
-      int stage = state.index();
-      start = traceKernelClock();
-      if (elect_one_sync()) {
-        if (cta == 0) cutlass::arch::ClusterTransactionBarrier::arrive_and_expect_tx(barrier, txBytes);
-        if constexpr (Operands != 2) {
-          copy(params.tma_load_a.with(*barrier, inputs.mcast_mask_a, weightHint), a(_, *iterator),
-               inputs.tAsA(_, stage));
-          copy(params.tma_load_sfa.with(*barrier, inputs.mcast_mask_sfa, weightHint), sfa(_, *iterator),
-               inputs.tAsSFA(_, stage));
+    if (!largeB) {
+      for (; kTiles > 0; --kTiles, ++iterator) {
+        auto start = traceKernelClock();
+        pipe.producer_acquire(state);
+        waitNs += traceKernelClock() - start;
+        auto* barrier = pipe.producer_get_barrier(state);
+        int stage = state.index();
+        start = traceKernelClock();
+        if (elect_one_sync()) {
+          if (cta == 0) cutlass::arch::ClusterTransactionBarrier::arrive_and_expect_tx(barrier, txBytes);
+          if constexpr (Operands != 2) {
+            copy(params.tma_load_a.with(*barrier, inputs.mcast_mask_a, weightHint), a(_, *iterator),
+                 inputs.tAsA(_, stage));
+            copy(params.tma_load_sfa.with(*barrier, inputs.mcast_mask_sfa, weightHint), sfa(_, *iterator),
+                 inputs.tAsSFA(_, stage));
+          }
+          if constexpr (Operands != 1) {
+            auto tBsBStage = make_tensor(inputs.tBsB(_, 0).data() + stage * BStageBytes, inputs.tBsB(_, 0).layout());
+            copy(params.tma_load_b.with(bDesc, *barrier, inputs.mcast_mask_b, CacheHint::EVICT_LAST), b(_, *iterator),
+                 tBsBStage);
+            if constexpr (ActDtype == ActivationDtype::Mxfp8)
+              copy(params.tma_load_sfb.with(*barrier, inputs.mcast_mask_sfb, CacheHint::EVICT_LAST), sfb(_, *iterator),
+                   inputs.tBsSFB(_, stage));
+          }
         }
-        if constexpr (Operands != 1) {
-          copy(params.tma_load_b.with(bDesc, *barrier, inputs.mcast_mask_b, CacheHint::EVICT_LAST), b(_, *iterator),
-               inputs.tBsB(_, stage));
-          if constexpr (ActDtype == ActivationDtype::Mxfp8)
-            copy(params.tma_load_sfb.with(*barrier, inputs.mcast_mask_sfb, CacheHint::EVICT_LAST), sfb(_, *iterator),
-                 inputs.tBsSFB(_, stage));
-        }
+        issueNs += traceKernelClock() - start;
+        ++state;
       }
-      issueNs += traceKernelClock() - start;
-      ++state;
+    } else {
+      const int largeBStride = validRows <= 64 ? 4096 : 8192;
+      const int largeBStages = validRows <= 64 ? 4 : 2;
+      auto waitReleased = [&](int stepsAgo) {
+        int curStage = state.index();
+        int prevStage = curStage >= stepsAgo ? curStage - stepsAgo : curStage + LoadStages - stepsAgo;
+        uint32_t waitPhase = curStage >= stepsAgo ? (state.phase() ^ 1u) : state.phase();
+        pipe.producer_acquire(MainloopPipelineState(prevStage, waitPhase, 0));
+      };
+      if (Operands != 1 && state.count() > 0) waitReleased(1);
+      for (int tileIdx = 0; kTiles > 0; --kTiles, ++iterator, ++tileIdx) {
+        auto start = traceKernelClock();
+        pipe.producer_acquire(state);
+        if (Operands != 1 && tileIdx >= largeBStages) waitReleased(largeBStages);
+        waitNs += traceKernelClock() - start;
+        auto* barrier = pipe.producer_get_barrier(state);
+        int stage = state.index();
+        int bByteOffset = (tileIdx & (largeBStages - 1)) * largeBStride;
+        start = traceKernelClock();
+        if (elect_one_sync()) {
+          if (cta == 0) cutlass::arch::ClusterTransactionBarrier::arrive_and_expect_tx(barrier, txBytes);
+          if constexpr (Operands != 2) {
+            copy(params.tma_load_a.with(*barrier, inputs.mcast_mask_a, weightHint), a(_, *iterator),
+                 inputs.tAsA(_, stage));
+            copy(params.tma_load_sfa.with(*barrier, inputs.mcast_mask_sfa, weightHint), sfa(_, *iterator),
+                 inputs.tAsSFA(_, stage));
+          }
+          if constexpr (Operands != 1) {
+            auto tBsBStage = make_tensor(inputs.tBsB(_, 0).data() + bByteOffset, inputs.tBsB(_, 0).layout());
+            copy(params.tma_load_b.with(bDesc, *barrier, inputs.mcast_mask_b, CacheHint::EVICT_LAST), b(_, *iterator),
+                 tBsBStage);
+            if constexpr (ActDtype == ActivationDtype::Mxfp8)
+              copy(params.tma_load_sfb.with(*barrier, inputs.mcast_mask_sfb, CacheHint::EVICT_LAST), sfb(_, *iterator),
+                   inputs.tBsSFB(_, stage));
+          }
+        }
+        issueNs += traceKernelClock() - start;
+        ++state;
+      }
+      if (Operands != 1 && iterations > 0) waitReleased(1);
     }
     traceKernelTotal(KernelTracePhase::LoadAcquire, waitNs, iterations);
     traceKernelTotal(KernelTracePhase::TmaIssue, issueNs, iterations);
@@ -363,69 +414,115 @@ struct W4A8Mainloop {
     accPipe.producer_acquire(accState);
     traceKernel(KernelTracePhase::AccumulatorFree, false, accState.index());
     tiled.accumulate_ = UMMA::ScaleOut::Zero;
+    constexpr int BStageBytes = LoadStages >= 10 ? 2048 : (LoadStages == 9 ? 4096 : 8192);
+    const bool largeB = (BStageBytes < 8192) && (validRows > (BStageBytes / 64));
     uint64_t waitNs = 0, activationWaitNs = 0, issueNs = 0, releaseNs = 0;
     uint32_t weightReady = 0, activationReady = 0;
     const int iterations = kTiles;
     const bool issuer = elect_one_sync();
     const uint32_t destination = raw_pointer_cast(get<0>(accumulators).data());
-    for (; kTiles > 0; --kTiles) {
+    if (!largeB) {
+      for (; kTiles > 0; --kTiles) {
 #if MSCCLPP_MEGAMOE_TRACE == 1
-      // Nonblocking probes sample both operands before either blocking wait.
-      weightReady +=
-          cutlass::arch::ClusterBarrier::test_wait(loadPipe.producer_get_barrier(loadState), loadState.phase(), 1);
-      if constexpr (SplitPipelines)
-        activationReady += cutlass::arch::ClusterBarrier::test_wait(activationPipe.producer_get_barrier(loadState),
-                                                                    loadState.phase(), 1);
+        weightReady +=
+            cutlass::arch::ClusterBarrier::test_wait(loadPipe.producer_get_barrier(loadState), loadState.phase(), 1);
+        if constexpr (SplitPipelines)
+          activationReady += cutlass::arch::ClusterBarrier::test_wait(activationPipe.producer_get_barrier(loadState),
+                                                                      loadState.phase(), 1);
 #endif
-      auto start = traceKernelClock();
-      loadPipe.consumer_wait(loadState);
-      waitNs += traceKernelClock() - start;
-      if constexpr (SplitPipelines) {
+        auto start = traceKernelClock();
+        loadPipe.consumer_wait(loadState);
+        waitNs += traceKernelClock() - start;
+        if constexpr (SplitPipelines) {
+          start = traceKernelClock();
+          activationPipe.consumer_wait(loadState);
+          activationWaitNs += traceKernelClock() - start;
+        }
+        int stage = loadState.index();
         start = traceKernelClock();
-        activationPipe.consumer_wait(loadState);
-        activationWaitNs += traceKernelClock() - start;
-      }
-      int stage = loadState.index();
-      start = traceKernelClock();
-      if (issuer) {
-        copy(copyA, sourceA(_, _, _, _, stage), targetA);
-        if constexpr (ActDtype == ActivationDtype::Mxfp8) copy(copyB, sourceB(_, _, _, _, stage), targetB);
-// Pipeline waits/releases remain warp-wide.
+        if (issuer) {
+          copy(copyA, sourceA(_, _, _, _, stage), targetA);
+          if constexpr (ActDtype == ActivationDtype::Mxfp8) copy(copyB, sourceB(_, _, _, _, stage), targetB);
 #pragma unroll
-        for (int k = 0; k < size<2>(a); ++k) {
-          uint32_t scaleA = raw_pointer_cast(sfa(_, _, k).data());
-          uint32_t scaleB = raw_pointer_cast(sfb(_, _, k).data());
-          uint32_t instruction =
-              uint32_t(UMMA::make_runtime_instr_desc_block_scaled<>(tiled.idesc_, scaleA, scaleB) >> 32);
-          uint64_t descriptorA = a(_, _, k, stage)(0);
-          uint64_t descriptorB = b(_, _, k, stage)(0);
-          uint32_t accumulate = k == 0 ? uint32_t(tiled.accumulate_) : 1;
-          if constexpr (ClusterSize == 1) {
-            asm volatile(
-                "{ .reg .pred p; setp.ne.b32 p, %6, 0;"
-                "tcgen05.mma.cta_group::1.kind::mxf8f6f4.block_scale"
-                " [%0], %1, %2, %3, [%4], [%5], p; }"
-                :
-                : "r"(destination), "l"(descriptorA), "l"(descriptorB), "r"(instruction), "r"(scaleA), "r"(scaleB),
-                  "r"(accumulate));
-          } else {
-            asm volatile(
-                "{ .reg .pred p; setp.ne.b32 p, %6, 0;"
-                "tcgen05.mma.cta_group::2.kind::mxf8f6f4.block_scale"
-                " [%0], %1, %2, %3, [%4], [%5], p; }"
-                :
-                : "r"(destination), "l"(descriptorA), "l"(descriptorB), "r"(instruction), "r"(scaleA), "r"(scaleB),
-                  "r"(accumulate));
+          for (int k = 0; k < size<2>(a); ++k) {
+            uint32_t scaleA = raw_pointer_cast(sfa(_, _, k).data());
+            uint32_t scaleB = raw_pointer_cast(sfb(_, _, k).data());
+            uint32_t instruction =
+                uint32_t(UMMA::make_runtime_instr_desc_block_scaled<>(tiled.idesc_, scaleA, scaleB) >> 32);
+            uint64_t descriptorA = a(_, _, k, stage)(0);
+            uint64_t descriptorB = b(_, _, k, stage)(0);
+            uint32_t accumulate = k == 0 ? uint32_t(tiled.accumulate_) : 1;
+            if constexpr (ClusterSize == 1) {
+              asm volatile(
+                  "{ .reg .pred p; setp.ne.b32 p, %6, 0;"
+                  "tcgen05.mma.cta_group::1.kind::mxf8f6f4.block_scale"
+                  " [%0], %1, %2, %3, [%4], [%5], p; }"
+                  :
+                  : "r"(destination), "l"(descriptorA), "l"(descriptorB), "r"(instruction), "r"(scaleA), "r"(scaleB),
+                    "r"(accumulate));
+            } else {
+              asm volatile(
+                  "{ .reg .pred p; setp.ne.b32 p, %6, 0;"
+                  "tcgen05.mma.cta_group::2.kind::mxf8f6f4.block_scale"
+                  " [%0], %1, %2, %3, [%4], [%5], p; }"
+                  :
+                  : "r"(destination), "l"(descriptorA), "l"(descriptorB), "r"(instruction), "r"(scaleA), "r"(scaleB),
+                    "r"(accumulate));
+            }
           }
         }
+        tiled.accumulate_ = UMMA::ScaleOut::One;
+        issueNs += traceKernelClock() - start;
+        start = traceKernelClock();
+        loadPipe.consumer_release(loadState);
+        if constexpr (SplitPipelines) activationPipe.consumer_release(loadState);
+        releaseNs += traceKernelClock() - start;
+        ++loadState;
       }
-      tiled.accumulate_ = UMMA::ScaleOut::One;
-      issueNs += traceKernelClock() - start;
-      start = traceKernelClock();
-      loadPipe.consumer_release(loadState);
-      if constexpr (SplitPipelines) activationPipe.consumer_release(loadState);
-      releaseNs += traceKernelClock() - start;
-      ++loadState;
+    } else {
+      const int largeBStride = validRows <= 64 ? 4096 : 8192;
+      const int largeBStages = validRows <= 64 ? 4 : 2;
+      for (int tileIdx = 0; kTiles > 0; --kTiles, ++tileIdx) {
+        loadPipe.consumer_wait(loadState);
+        if constexpr (SplitPipelines) activationPipe.consumer_wait(loadState);
+        int stage = loadState.index();
+        int bStage = (tileIdx & (largeBStages - 1)) * (largeBStride / BStageBytes);
+        if (issuer) {
+          copy(copyA, sourceA(_, _, _, _, stage), targetA);
+          if constexpr (ActDtype == ActivationDtype::Mxfp8) copy(copyB, sourceB(_, _, _, _, stage), targetB);
+#pragma unroll
+          for (int k = 0; k < size<2>(a); ++k) {
+            uint32_t scaleA = raw_pointer_cast(sfa(_, _, k).data());
+            uint32_t scaleB = raw_pointer_cast(sfb(_, _, k).data());
+            uint32_t instruction =
+                uint32_t(UMMA::make_runtime_instr_desc_block_scaled<>(tiled.idesc_, scaleA, scaleB) >> 32);
+            uint64_t descriptorA = a(_, _, k, stage)(0);
+            uint64_t descriptorB = b(_, _, k, bStage)(0);
+            uint32_t accumulate = k == 0 ? uint32_t(tiled.accumulate_) : 1;
+            if constexpr (ClusterSize == 1) {
+              asm volatile(
+                  "{ .reg .pred p; setp.ne.b32 p, %6, 0;"
+                  "tcgen05.mma.cta_group::1.kind::mxf8f6f4.block_scale"
+                  " [%0], %1, %2, %3, [%4], [%5], p; }"
+                  :
+                  : "r"(destination), "l"(descriptorA), "l"(descriptorB), "r"(instruction), "r"(scaleA), "r"(scaleB),
+                    "r"(accumulate));
+            } else {
+              asm volatile(
+                  "{ .reg .pred p; setp.ne.b32 p, %6, 0;"
+                  "tcgen05.mma.cta_group::2.kind::mxf8f6f4.block_scale"
+                  " [%0], %1, %2, %3, [%4], [%5], p; }"
+                  :
+                  : "r"(destination), "l"(descriptorA), "l"(descriptorB), "r"(instruction), "r"(scaleA), "r"(scaleB),
+                    "r"(accumulate));
+            }
+          }
+        }
+        tiled.accumulate_ = UMMA::ScaleOut::One;
+        loadPipe.consumer_release(loadState);
+        if constexpr (SplitPipelines) activationPipe.consumer_release(loadState);
+        ++loadState;
+      }
     }
     if constexpr (SplitPipelines) {
       traceKernelTotal(KernelTracePhase::MmaWeightWait, waitNs, iterations);

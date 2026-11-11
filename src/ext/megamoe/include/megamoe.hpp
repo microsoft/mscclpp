@@ -112,6 +112,9 @@ class MegaMoeContext {
   /// Return whether W4A8 weights and their scales use normal L2 priority only for experts spanning multiple token
   /// tiles.
   bool kernelAdaptiveCacheWeights() const;
+  /// Return whether small static-FP8 batches quantize their BF16 inputs inside the W4A8 kernel instead of a separate
+  /// launch.
+  bool kernelFuseStaticQuantize() const;
 
   /// Stage inputs and enqueue routed SwiGLU expert computation and combination.
   ///

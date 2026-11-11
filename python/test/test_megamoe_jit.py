@@ -41,6 +41,7 @@ from mscclpp.ext.megamoe import jit
         {"adaptive_cache_weights": 1},
         {"adaptive_cache_weights": "true"},
         {"adaptive_cache_weights": True, "cache_weights": True},
+        {"fuse_static_quantize": 1},
         {"cluster_size": 0},
         {"cluster_size": 3},
         {"cluster_size": True},
@@ -163,6 +164,7 @@ def test_compile_is_cached_and_uses_every_policy_flag(compiler_fixture):
         "-DMSCCLPP_MEGAMOE_W4_EXPERT_MAJOR_TASKS=1",
         "-DMSCCLPP_MEGAMOE_W4_CACHE_WEIGHTS=1",
         "-DMSCCLPP_MEGAMOE_W4_ADAPTIVE_CACHE_WEIGHTS=0",
+        "-DMSCCLPP_MEGAMOE_W4_FUSE_STATIC_QUANTIZE=1",
         "-DMSCCLPP_MEGAMOE_W4_CLUSTER_SIZE=2",
     }
     for command in commands[:-1]:
@@ -199,6 +201,7 @@ def test_cache_policies_have_distinct_keys_and_preserve_task_order(compiler_fixt
         _tuned(cache_weights=True),
         _tuned(adaptive_cache_weights=True),
         _tuned(adaptive_cache_weights=True, expert_major_tasks=True),
+        _tuned(fuse_static_quantize=False),
     ]
     keys = set()
     for policy in policies:
@@ -210,11 +213,13 @@ def test_cache_policies_have_distinct_keys_and_preserve_task_order(compiler_fixt
             assert f"-DMSCCLPP_MEGAMOE_W4_ADAPTIVE_CACHE_WEIGHTS={int(policy.adaptive_cache_weights)}" in command
             assert f"-DMSCCLPP_MEGAMOE_W4_CACHE_WEIGHTS={int(policy.cache_weights)}" in command
             assert f"-DMSCCLPP_MEGAMOE_W4_EXPERT_MAJOR_TASKS={int(policy.expert_major_tasks)}" in command
+            assert f"-DMSCCLPP_MEGAMOE_W4_FUSE_STATIC_QUANTIZE={int(policy.fuse_static_quantize)}" in command
         assert jit.load_cached_kernel(kernel.key, cache_dir=cache).config == policy
         assert jit.compile_kernel(policy, cache_dir=cache).cache_hit
         assert len(commands) == before + 4
     assert len(keys) == len(policies)
     assert jit.W4A8KernelConfig().adaptive_cache_weights is False
+    assert jit.W4A8KernelConfig().fuse_static_quantize is True
 
 
 @pytest.mark.parametrize("capability", [(10, 0), (10, 3), (10, 7)])

@@ -52,16 +52,16 @@ __device__ __forceinline__ void publishDispatchChunk(Storage& storage, int local
 #endif
 }
 
-template <int DispatchBytes, int DispatchStages, class P, class Storage, class NextLoad>
-__device__ __forceinline__ void storeDispatchChunk(const P& p, Storage& storage, int localWarp, int row, int chunk,
-                                                   uint8_t* destination, int bytes, uint32_t& phase, bool issueNext,
-                                                   NextLoad&& loadNext) {
+template <int DispatchBytes, int DispatchStages, class P, class Storage, class Buffers, class NextLoad>
+__device__ __forceinline__ void storeDispatchChunk(const P& p, Storage& storage, Buffers& buffers, int localWarp,
+                                                   int row, int chunk, uint8_t* destination, int bytes, uint32_t& phase,
+                                                   bool issueNext, NextLoad&& loadNext) {
 #if MSCCLPP_BULK_AVAILABLE
   int lane = threadIdx.x % warpSize;
   int stage = chunk % DispatchStages;
   if (lane == 0) {
     storage.barriers[localWarp][stage].wait(phase, SpinLimit);
-    bulkStore(destination + chunk * DispatchBytes, storage.tiles[localWarp][stage], bytes);
+    bulkStore(destination + chunk * DispatchBytes, buffers.tiles[localWarp][stage], bytes);
     bulkStoreCommit();
     bulkFence();
   }
@@ -72,7 +72,7 @@ __device__ __forceinline__ void storeDispatchChunk(const P& p, Storage& storage,
       size_t offset =
           p.fc1.layout_SFB(cute::make_coord(w4StorageRow<typename P::Tiles>(row), chunk * DispatchBytes + k * 32, 0));
       *reinterpret_cast<uint32_t*>(p.workspace.inputScale + offset) =
-          *reinterpret_cast<const uint32_t*>(storage.scales[localWarp][stage] + k);
+          *reinterpret_cast<const uint32_t*>(buffers.scales[localWarp][stage] + k);
     }
   }
   asm volatile("fence.proxy.async.global;" ::: "memory");
@@ -99,12 +99,27 @@ struct ExpertWindow {
 
 // Load the window of experts starting at firstExpert, whose groups start at firstGroup. All lanes of the warp must call
 // this.
-template <int TileN, int DispatchWarps>
-MSCCLPP_DEVICE_INLINE ExpertWindow loadExpertWindow(const Workspace& w, int nLocalExperts, int firstExpert,
-                                                    int firstGroup, int lane) {
+template <int TileN, int DispatchWarps, bool UseSharedMeta = false, class Storage>
+MSCCLPP_DEVICE_INLINE ExpertWindow loadExpertWindow(const Workspace& w, const Storage& s, int nLocalExperts,
+                                                    int firstExpert, int firstGroup, int lane) {
   constexpr int nDispatchGroupsPerTile = (TileN + DispatchWarps - 1) / DispatchWarps;
   const int expert = firstExpert + lane;
-  const int nExpertRows = expert < nLocalExperts ? w.cursors[expert] : 0;
+  int nExpertRows = 0;
+  int firstTile = 0;
+  if (expert < nLocalExperts) {
+    if constexpr (UseSharedMeta) {
+      if (expert < Storage::SharedExpertCapacity && s.expertRows[expert] >= 0) {
+        nExpertRows = s.expertRows[expert];
+        firstTile = s.expertFirstTile[expert];
+      } else {
+        nExpertRows = w.cursors[expert];
+        firstTile = w.starts[expert] / TileN;
+      }
+    } else {
+      nExpertRows = w.cursors[expert];
+      firstTile = w.starts[expert] / TileN;
+    }
+  }
   const int nFullTiles = nExpertRows / TileN;
   const int nTailRows = nExpertRows - nFullTiles * TileN;
   const int nExpertGroups = nFullTiles * nDispatchGroupsPerTile + (nTailRows + DispatchWarps - 1) / DispatchWarps;
@@ -118,20 +133,21 @@ MSCCLPP_DEVICE_INLINE ExpertWindow loadExpertWindow(const Workspace& w, int nLoc
   window.firstExpert = firstExpert;
   window.endGroup = firstGroup + __shfl_sync(0xffffffff, scan, warpSize - 1);
   window.expertFirstGroup = firstGroup + scan - nExpertGroups;
-  window.expertFirstTile = expert < nLocalExperts ? w.starts[expert] / TileN : 0;
+  window.expertFirstTile = firstTile;
   return window;
 }
 
 // Map a live group to its tile and its group within the tile. Groups must arrive in increasing order, so the window
 // only moves forward. Returns false past the last live group. All lanes of the warp must call this.
-template <int TileN, int DispatchWarps>
-MSCCLPP_DEVICE_INLINE bool mapGroupToTile(const Workspace& w, int nLocalExperts, ExpertWindow& window,
+template <int TileN, int DispatchWarps, bool UseSharedMeta = false, class Storage>
+MSCCLPP_DEVICE_INLINE bool mapGroupToTile(const Workspace& w, const Storage& s, int nLocalExperts, ExpertWindow& window,
                                           int dispatchGroupIdx, int lane, int& tile, int& groupIdxInTile) {
   constexpr int nDispatchGroupsPerTile = (TileN + DispatchWarps - 1) / DispatchWarps;
   while (dispatchGroupIdx >= window.endGroup) {
     const int nextExpert = window.firstExpert + warpSize;
     if (nextExpert >= nLocalExperts) return false;
-    window = loadExpertWindow<TileN, DispatchWarps>(w, nLocalExperts, nextExpert, window.endGroup, lane);
+    window =
+        loadExpertWindow<TileN, DispatchWarps, UseSharedMeta>(w, s, nLocalExperts, nextExpert, window.endGroup, lane);
   }
   // The group belongs to the last expert whose first group does not follow it, which skips experts without rows.
   const unsigned int startedExperts = __ballot_sync(
@@ -143,28 +159,55 @@ MSCCLPP_DEVICE_INLINE bool mapGroupToTile(const Workspace& w, int nLocalExperts,
   return true;
 }
 
+template <int DispatchStages, class Schedule, class Storage>
+__device__ __forceinline__ void initDispatchStorage(Storage& s, int warp, int lane) {
+#if MSCCLPP_BULK_AVAILABLE
+  if (warp >= Schedule::DispatchBegin && warp < Schedule::DispatchEnd) {
+    int localWarp = warp - Schedule::DispatchBegin;
+    if (lane == 0 && localWarp == 0) {
+      s.dispatch.arrivals = 0;
+      s.dispatch.publishedPhase = 0;
+      s.dispatch.dispatchDone = 0;
+    }
+    if (lane < DispatchStages) s.dispatch.barriers[localWarp][lane].relaxedInit();
+  }
+#endif
+}
+
 template <int Hidden, int DispatchBytes, int DispatchStages, class P, class Storage>
 __device__ __forceinline__ void dispatchTokens(const P& p, Storage& s, int localWarp) {
 #if MSCCLPP_BULK_AVAILABLE
   using Types = typename P::Collective;
   static_assert(Hidden >= 0);
-  static_assert(DispatchBytes == sizeof(s.dispatch.tiles[0][0]));
+  auto& buffers = [&]() -> auto& {
+    if constexpr (P::WeightMxfp4) {
+      if constexpr (Storage::OverlapEpilogueAndDispatch)
+        return s.sharedDispatchBuffers;
+      else
+        return s.separateDispatchBuffers;
+    } else {
+      return s.dispatch;
+    }
+  }();
+  static_assert(DispatchBytes == sizeof(buffers.tiles[0][0]));
   static_assert(DispatchStages == std::extent_v<decltype(s.dispatch.barriers), 1>);
-  static_assert((DispatchBytes / 32 + 15) / 16 * 16 <= sizeof(s.dispatch.scales[0][0]));
+  static_assert((DispatchBytes / 32 + 15) / 16 * 16 <= sizeof(buffers.scales[0][0]));
   const auto& w = p.workspace;
   int lane = threadIdx.x % warpSize;
   auto& barriers = s.dispatch.barriers[localWarp];
-  if (lane == 0 && localWarp == 0) {
-    s.dispatch.arrivals = 0;
-    s.dispatch.publishedPhase = 0;
+  if constexpr (!P::WeightMxfp4) {
+    if (lane == 0 && localWarp == 0) {
+      s.dispatch.arrivals = 0;
+      s.dispatch.publishedPhase = 0;
+    }
+    // Each warp owns its stage barriers, so separate lanes initialize them concurrently.
+    if (lane < DispatchStages) {
+      barriers[lane].relaxedInit();
+      bulkFence();
+    }
+    // All dispatch warps must observe the leader's cleared counters and initialized barriers before publishing.
+    cutlass::arch::NamedBarrier::sync(Types::DispatchWarps * warpSize, 1);
   }
-  // Each warp owns its stage barriers, so separate lanes initialize them concurrently.
-  if (lane < DispatchStages) {
-    barriers[lane].relaxedInit();
-    bulkFence();
-  }
-  // All dispatch warps must observe the leader's cleared counters and initialized barriers before publishing.
-  cutlass::arch::NamedBarrier::sync(Types::DispatchWarps * warpSize, 1);
   uint32_t loadPhases[DispatchStages] = {};
   constexpr int ElemBytes = P::Activation == ActivationDtype::Bf16 ? sizeof(__bfloat16) : sizeof(uint8_t);
   const int hidden = Hidden > 0 ? Hidden : p.config.hidden;
@@ -177,14 +220,23 @@ __device__ __forceinline__ void dispatchTokens(const P& p, Storage& s, int local
   // This parity hands off the shared counter, independently of each TMA stage's parity.
   uint32_t publicationPhase = 0;
   const int nLocalExperts = p.config.numExperts / p.config.worldSize;
-  ExpertWindow window = loadExpertWindow<TileN, Types::DispatchWarps>(w, nLocalExperts, 0, 0, lane);
+  ExpertWindow window = loadExpertWindow<TileN, Types::DispatchWarps, P::WeightMxfp4>(w, s, nLocalExperts, 0, 0, lane);
   for (int dispatchGroupIdx = blockIdx.x;; dispatchGroupIdx += gridDim.x) {
     int tile;
     int groupIdxInTile;
-    if (!mapGroupToTile<TileN, Types::DispatchWarps>(w, nLocalExperts, window, dispatchGroupIdx, lane, tile,
-                                                     groupIdxInTile))
+    if (!mapGroupToTile<TileN, Types::DispatchWarps, P::WeightMxfp4>(w, s, nLocalExperts, window, dispatchGroupIdx,
+                                                                     lane, tile, groupIdxInTile))
       break;
-    int rows = w.blocks[tile].rows;
+    int rows;
+    if constexpr (P::WeightMxfp4) {
+      rows = (tile < Storage::SharedBlockCapacity ? s.blocks[tile] : w.blocks[tile]).rows;
+      if (tile >= 3 && dispatchGroupIdx == int(blockIdx.x) && s.blocks[0].rows <= 32) {
+        if (lane == 0) waitAtLeast<int, scopeDevice>(w.inputReady, int(s.blocks[0].rows));
+        __syncwarp();
+      }
+    } else {
+      rows = w.blocks[tile].rows;
+    }
     // Only full tiles are swizzled, so a tail tile's live groups stay first.
     if (rows == TileN) groupIdxInTile ^= tile & (nDispatchGroupsPerTile - 1);
     int firstRowIndexInGroup = groupIdxInTile * Types::DispatchWarps;
@@ -212,12 +264,12 @@ __device__ __forceinline__ void dispatchTokens(const P& p, Storage& s, int local
       int bytes = min(DispatchBytes, rowBytes - chunk * DispatchBytes);
       if constexpr (P::Activation != ActivationDtype::Mxfp8) {
         barriers[stage].arriveAndExpect(bytes);
-        bulkLoad(s.dispatch.tiles[localWarp][stage], source + chunk * DispatchBytes, bytes, barriers[stage]);
+        bulkLoad(buffers.tiles[localWarp][stage], source + chunk * DispatchBytes, bytes, barriers[stage]);
       } else {
         int scaleBytes = (bytes / 32 + 15) / 16 * 16;
         barriers[stage].arriveAndExpect(bytes + scaleBytes);
-        bulkLoad(s.dispatch.tiles[localWarp][stage], source + chunk * DispatchBytes, bytes, barriers[stage]);
-        bulkLoad(s.dispatch.scales[localWarp][stage], sourceScale + chunk * (DispatchBytes / 32), scaleBytes,
+        bulkLoad(buffers.tiles[localWarp][stage], source + chunk * DispatchBytes, bytes, barriers[stage]);
+        bulkLoad(buffers.scales[localWarp][stage], sourceScale + chunk * (DispatchBytes / 32), scaleBytes,
                  barriers[stage]);
       }
     };
@@ -233,8 +285,8 @@ __device__ __forceinline__ void dispatchTokens(const P& p, Storage& s, int local
       int stage = chunk % DispatchStages;
       int bytes = min(DispatchBytes, rowBytes - chunk * DispatchBytes);
       if (hasRow)
-        storeDispatchChunk<DispatchBytes, DispatchStages>(p, s.dispatch, localWarp, row, chunk, destination, bytes,
-                                                          loadPhases[stage], chunk + DispatchStages < chunks,
+        storeDispatchChunk<DispatchBytes, DispatchStages>(p, s.dispatch, buffers, localWarp, row, chunk, destination,
+                                                          bytes, loadPhases[stage], chunk + DispatchStages < chunks,
                                                           [&] { load(chunk + DispatchStages); });
       if (lane == 0) {
         auto* counter = w4InputChunkCounter<Types>(w, hidden, tile, chunk);
@@ -249,6 +301,8 @@ __device__ __forceinline__ void dispatchTokens(const P& p, Storage& s, int local
   if (lane == 0) {
 #pragma unroll
     for (int stage = 0; stage < DispatchStages; ++stage) barriers[stage].invalidate();
+    if constexpr (P::WeightMxfp4)
+      atomicFetchAdd<uint32_t, cuda::thread_scope_block>(&s.dispatch.dispatchDone, 1u, memoryOrderRelease);
   }
 #endif
 }

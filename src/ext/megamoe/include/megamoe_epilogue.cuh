@@ -440,9 +440,10 @@ MSCCLPP_DEVICE_INLINE void runEpilogueTasks(const KernelParams& params, Storage&
                                             const TaskRange& range, typename Accumulate::PipelineState& state,
                                             __bfloat16* finalOutput = nullptr, int tokens = 0) {
   const int clusters = gridDim.x / KernelParams::Tiles::ClusterSize;
-  for (int i = firstTaskOrdinal(range, cluster, clusters); i < range.end; i += taskOrdinalStride(range, clusters))
-    epilogue<Schedule, LocalMode>(params, taskAt(params, range, i, hidden, intermediate, tokens), s, pipeline, state,
-                                  accumulators, hidden, intermediate, finalOutput);
+  // Only routed W4A8 epilogues follow the wave order; other kernels keep plain round-robin.
+  for (TaskWalk walk(range, cluster, clusters, KernelParams::WeightMxfp4); !walk.done(); walk.advance())
+    epilogue<Schedule, LocalMode>(params, taskAt(params, range, walk.ordinal(), hidden, intermediate, tokens), s,
+                                  pipeline, state, accumulators, hidden, intermediate, finalOutput);
 }
 
 template <class Schedule, int LocalMode = 0, class KernelParams, class Storage, class Accumulate, class Accumulators>
@@ -450,6 +451,13 @@ MSCCLPP_DEVICE_INLINE void runEpilogueRole(const KernelParams& params, Storage& 
                                            Accumulators accumulators, int hidden, int intermediate, int cluster,
                                            int tasks, __bfloat16* finalOutput = nullptr, int tokens = 0) {
   cutlass::arch::warpgroup_reg_alloc<KernelParams::Collective::EpilogueRegisters>();
+  if constexpr (KernelParams::WeightMxfp4 && !KernelParams::LocalExpert &&
+                KernelParams::Collective::DispatchWarps * KernelParams::Collective::DispatchStages > 2) {
+    if (threadIdx.x % 32 == 0)
+      waitAtLeast<uint32_t, cuda::thread_scope_block>(&s.dispatch.dispatchDone,
+                                                      uint32_t(KernelParams::Collective::DispatchWarps));
+    __syncwarp();
+  }
   typename Accumulate::PipelineState state;
   runEpilogueTasks<Schedule, LocalMode>(params, s, pipeline, accumulators, hidden, intermediate, cluster,
                                         TaskRange{0, tasks, 0}, state, finalOutput, tokens);
@@ -479,17 +487,20 @@ MSCCLPP_DEVICE_INLINE void storeCombined(__bfloat16* destination, const mscclpp:
 // Sums the routed partial rows of every token in FP32 slot order and rounds once to BF16. A warp task covers Items
 // consecutive warp-wide vectors of one token row; each lane issues all Slots * Items 16-byte loads before accumulating.
 // Narrower batches require topK <= Slots, so their sums never stay live across loads.
-template <int Hidden, int Slots, bool ProcessMultipleSlotBatches = false, class KernelParams>
-MSCCLPP_DEVICE_INLINE void combineSlots(const KernelParams& params, int tokens, __bfloat16* output) {
+// CTAs [0, combineCtas) take the warp tasks; 0 spreads them over the whole grid.
+template <int Hidden, int Slots, bool ProcessMultipleSlotBatches = false, bool CombineRouteWeights = false,
+          class KernelParams>
+MSCCLPP_DEVICE_INLINE void combineSlots(const KernelParams& params, int tokens, __bfloat16* output,
+                                        int combineCtas = 0) {
   constexpr int WarpSize = 32;
   constexpr int Elements = mscclpp::bf16x8::Size;
   const int vectors = (Hidden > 0 ? Hidden : params.config.hidden) / Elements;
-  constexpr int Items = CombineLoads / Slots < CombineItems ? CombineLoads / Slots : CombineItems;
+  constexpr int EffectiveLoads = Slots == CombineSlots ? CombineLoads / 2 : CombineLoads;
+  constexpr int Items = EffectiveLoads / Slots < CombineItems ? EffectiveLoads / Slots : CombineItems;
   constexpr int TaskVectors = Items * WarpSize;
   const int tokenTasks = (vectors + TaskVectors - 1) / TaskVectors;
-  static_assert((Hidden == 0 || Hidden % Elements == 0) && CombineLoads % Slots == 0 && Slots <= CombineSlots);
+  static_assert((Hidden == 0 || Hidden % Elements == 0) && EffectiveLoads % Slots == 0 && Slots <= CombineSlots);
   const int topK = params.config.topK;
-  const bool combineRouteWeights = params.config.combineRouteWeights;
   auto partial = reinterpret_cast<const uint4*>(at<__bfloat16>(params.local, params.symmetric.partialOutput));
   auto partialFp8 = reinterpret_cast<const uint2*>(at<uint8_t>(params.local, params.symmetric.partialOutput));
   constexpr bool StaticScale = KernelParams::Activation == ActivationDtype::Fp8Static;
@@ -498,7 +509,8 @@ MSCCLPP_DEVICE_INLINE void combineSlots(const KernelParams& params, int tokens, 
   auto routeWeights = at<float>(params.local, params.symmetric.topkWeights);
   bool aligned = (reinterpret_cast<uintptr_t>(output) & 15) == 0;
   int lane = threadIdx.x % WarpSize;
-  int warps = gridDim.x * (KernelParams::ThreadCount / WarpSize);
+  const int ctas = combineCtas > 0 ? combineCtas : int(gridDim.x);
+  int warps = ctas * (KernelParams::ThreadCount / WarpSize);
   int tasks = tokens * tokenTasks;
   // Route ids of the first slot batch are loaded one task ahead, so partial loads never wait on them.
   auto loadIds = [&](int task, int(&ids)[Slots]) {
@@ -506,9 +518,16 @@ MSCCLPP_DEVICE_INLINE void combineSlots(const KernelParams& params, int tokens, 
     for (int slot = 0; slot < Slots; ++slot)
       ids[slot] = task < tasks && slot < topK ? routeIds[task / tokenTasks * topK + slot] : -1;
   };
-  int task = blockIdx.x * (KernelParams::ThreadCount / WarpSize) + threadIdx.x / WarpSize;
+  int task = (threadIdx.x / WarpSize) * ctas + int(blockIdx.x);
   int nextIds[Slots];
   loadIds(task, nextIds);
+  if (threadIdx.x < params.config.worldSize && threadIdx.x != params.config.rank) {
+    waitAtLeast<uint64_t, scopeSystem>(at<uint64_t>(params.local, params.symmetric.peerSignals) + threadIdx.x,
+                                       params.workspace.control->epoch);
+  }
+  __syncthreads();
+  traceKernel(KernelTracePhase::OutputJoin, false);
+  traceKernel(KernelTracePhase::Combine, true);
   for (; task < tasks; task += warps) {
     int token = task / tokenTasks;
     int first = task % tokenTasks * TaskVectors + lane;
@@ -545,14 +564,14 @@ MSCCLPP_DEVICE_INLINE void combineSlots(const KernelParams& params, int tokens, 
 #pragma unroll
         for (int slot = 0; slot < Slots; ++slot) {
           const float slotWeight =
-              (combineRouteWeights && routed[slot]) ? routeWeights[token * topK + base + slot] : 1.0f;
+              (CombineRouteWeights && routed[slot]) ? routeWeights[token * topK + base + slot] : 1.0f;
 #pragma unroll
           for (int item = 0; item < Items; ++item) {
             auto partialValues = dequantizeE4M3x8(rawValues[slot][item]);
 #pragma unroll
             for (int element = 0; element < Elements; ++element)
               sums[item].data[element] =
-                  combineRouteWeights ? __fmaf_rn(partialValues.data[element], slotWeight, sums[item].data[element])
+                  CombineRouteWeights ? __fmaf_rn(partialValues.data[element], slotWeight, sums[item].data[element])
                                       : sums[item].data[element] + partialValues.data[element];
           }
         }
@@ -574,14 +593,14 @@ MSCCLPP_DEVICE_INLINE void combineSlots(const KernelParams& params, int tokens, 
 #pragma unroll
         for (int slot = 0; slot < Slots; ++slot) {
           const float slotWeight =
-              (combineRouteWeights && routed[slot]) ? routeWeights[token * topK + base + slot] : 1.0f;
+              (CombineRouteWeights && routed[slot]) ? routeWeights[token * topK + base + slot] : 1.0f;
 #pragma unroll
           for (int item = 0; item < Items; ++item) {
             auto partialValues = mscclpp::to<mscclpp::f32x8>(values[slot][item]);
 #pragma unroll
             for (int element = 0; element < Elements; ++element)
               sums[item].data[element] =
-                  combineRouteWeights ? __fmaf_rn(partialValues.data[element], slotWeight, sums[item].data[element])
+                  CombineRouteWeights ? __fmaf_rn(partialValues.data[element], slotWeight, sums[item].data[element])
                                       : sums[item].data[element] + partialValues.data[element];
           }
         }
@@ -605,61 +624,60 @@ MSCCLPP_DEVICE_INLINE bool hasCombineWork(const KernelParams& params, int tokens
   const int vectors = (Hidden > 0 ? Hidden : params.config.hidden) / mscclpp::bf16x8::Size;
   const int topK = params.config.topK;
   const int slots = topK == 1 ? 1 : (topK == 2 ? 2 : (topK <= 4 ? 4 : CombineSlots));
-  const int items = CombineLoads / slots < CombineItems ? CombineLoads / slots : CombineItems;
+  const int effectiveLoads = slots == CombineSlots ? CombineLoads / 2 : CombineLoads;
+  const int items = effectiveLoads / slots < CombineItems ? effectiveLoads / slots : CombineItems;
   const int tokenTasks = (vectors + items * WarpSize - 1) / (items * WarpSize);
-  return blockIdx.x * (KernelParams::ThreadCount / WarpSize) < tokens * tokenTasks;
+  return int(blockIdx.x) < tokens * tokenTasks;
 }
 
-template <int Hidden = 0, class KernelParams>
-MSCCLPP_DEVICE_INLINE void combineResults(const KernelParams& params, int tokens, __bfloat16* output) {
+template <int Hidden = 0, bool CombineRouteWeights = false, class KernelParams>
+MSCCLPP_DEVICE_INLINE void combineResultsMode(const KernelParams& params, int tokens, __bfloat16* output,
+                                              int combineCtas) {
   const int topK = params.config.topK;
   if (topK == 1)
-    combineSlots<Hidden, 1>(params, tokens, output);
+    combineSlots<Hidden, 1, false, CombineRouteWeights>(params, tokens, output, combineCtas);
   else if (topK == 2)
-    combineSlots<Hidden, 2>(params, tokens, output);
+    combineSlots<Hidden, 2, false, CombineRouteWeights>(params, tokens, output, combineCtas);
   else if (topK <= 4)
-    combineSlots<Hidden, 4>(params, tokens, output);
+    combineSlots<Hidden, 4, false, CombineRouteWeights>(params, tokens, output, combineCtas);
   else if (topK <= CombineSlots)
-    combineSlots<Hidden, CombineSlots>(params, tokens, output);
+    combineSlots<Hidden, CombineSlots, false, CombineRouteWeights>(params, tokens, output, combineCtas);
   else
-    combineSlots<Hidden, CombineSlots, true>(params, tokens, output);
-}
-
-// Publishes this rank's completion to its peers, waits for theirs, and combines. Every CTA of the rank must have
-// passed the resident grid barrier; CTAs without combine work must already have returned.
-template <int Hidden = 0, class KernelParams>
-__device__ void signalAndCombine(const KernelParams& p, int tokens, __bfloat16* output) {
-  if (blockIdx.x == 0 && threadIdx.x == 0) *at<uint64_t>(p.local, p.symmetric.epoch) = p.workspace.control->epoch;
-  if (threadIdx.x < p.config.worldSize) {
-    // Only CTA0 consumes the peer notification; followers observe the same epoch.
-    if (blockIdx.x == 0)
-      signalAndWait(p, threadIdx.x);
-    else if (threadIdx.x != p.config.rank)
-      waitAtLeast<uint64_t, scopeSystem>(at<uint64_t>(p.local, p.symmetric.peerSignals) + threadIdx.x,
-                                         p.workspace.control->epoch);
-  }
-  __syncthreads();
-  traceKernel(KernelTracePhase::OutputJoin, false);
-  traceKernel(KernelTracePhase::Combine, true);
-  combineResults<Hidden>(p, tokens, output);
-  traceKernel(KernelTracePhase::Combine, false);
+    combineSlots<Hidden, CombineSlots, true, CombineRouteWeights>(params, tokens, output, combineCtas);
 }
 
 template <int Hidden = 0, class KernelParams>
+MSCCLPP_DEVICE_INLINE void combineResults(const KernelParams& params, int tokens, __bfloat16* output,
+                                          int combineCtas = 0) {
+  if (params.config.combineRouteWeights)
+    combineResultsMode<Hidden, true>(params, tokens, output, combineCtas);
+  else
+    combineResultsMode<Hidden, false>(params, tokens, output, combineCtas);
+}
+
+template <int Hidden = 0, bool DoGridSync = true, class KernelParams>
 __device__ void finishAndCombine(const KernelParams& p, int tokens, __bfloat16* output) {
   if constexpr (KernelParams::WeightMxfp4 && KernelParams::Activation == ActivationDtype::Mxfp8) {
     if (!p.config.combineRouteWeights && p.config.worldSize == 1 && p.config.topK == 1) return;
   }
-  traceKernel(KernelTracePhase::OutputJoin, true);
-  syncResidentGrid(&p.workspace.control->residentGridSyncState, gridDim.x);
+  if constexpr (DoGridSync) {
+    traceKernel(KernelTracePhase::OutputJoin, true);
+    syncResidentGrid(&p.workspace.control->residentGridSyncState, gridDim.x);
+  }
+  if (blockIdx.x == 0) {
+    if (threadIdx.x == 0) *at<uint64_t>(p.local, p.symmetric.epoch) = p.workspace.control->epoch;
+    if (threadIdx.x < p.config.worldSize) signalPeer(p, threadIdx.x);
+  }
   if (blockIdx.x > 0 && !hasCombineWork<Hidden>(p, tokens)) {
     traceKernel(KernelTracePhase::OutputJoin, false);
     return;
   }
-  signalAndCombine<Hidden>(p, tokens, output);
+  combineResults<Hidden>(p, tokens, output);
+  traceKernel(KernelTracePhase::Combine, false);
 }
 
-// CTAs [0, combineCtaCount) take combine work (see hasCombineWork); CTA0 always signals the peers.
+// Fused shared-expert combine concentrates the warp tasks on the fewest CTAs, so the remaining clusters can run shared
+// FC2 after their routed work. CTAs [0, combineCtaCount) combine; CTA0 always signals the peers.
 template <int Hidden = 0, class KernelParams>
 MSCCLPP_DEVICE_INLINE int combineCtaCount(const KernelParams& params, int tokens) {
   constexpr int WarpSize = 32;
@@ -667,9 +685,10 @@ MSCCLPP_DEVICE_INLINE int combineCtaCount(const KernelParams& params, int tokens
   const int vectors = (Hidden > 0 ? Hidden : params.config.hidden) / mscclpp::bf16x8::Size;
   const int topK = params.config.topK;
   const int slots = topK == 1 ? 1 : (topK == 2 ? 2 : (topK <= 4 ? 4 : CombineSlots));
-  const int items = CombineLoads / slots < CombineItems ? CombineLoads / slots : CombineItems;
+  const int effectiveLoads = slots == CombineSlots ? CombineLoads / 2 : CombineLoads;
+  const int items = effectiveLoads / slots < CombineItems ? effectiveLoads / slots : CombineItems;
   const int tokenTasks = (vectors + items * WarpSize - 1) / (items * WarpSize);
-  return max(1, (tokens * tokenTasks + Warps - 1) / Warps);
+  return min(int(gridDim.x), max(1, (tokens * tokenTasks + Warps - 1) / Warps));
 }
 
 // Split resident grid barrier: one thread per CTA arrives once (after the CTA's routed work), and only the CTAs that
@@ -689,15 +708,22 @@ MSCCLPP_DEVICE_INLINE void waitResidentGrid(uint32_t* state, int ctas, uint32_t 
 
 // finishAndCombine for kernels whose CTAs already arrived with arriveResidentGrid; `phase` is valid in thread 0.
 template <int Hidden = 0, class KernelParams>
-__device__ void finishAndCombineArrived(const KernelParams& p, int tokens, __bfloat16* output, uint32_t phase) {
+__device__ void finishAndCombineArrived(const KernelParams& p, int tokens, __bfloat16* output, uint32_t phase,
+                                        int combineCtasOverride = 0) {
   traceKernel(KernelTracePhase::OutputJoin, true);
-  if (blockIdx.x > 0 && !hasCombineWork<Hidden>(p, tokens)) {
+  const int combineCtas = combineCtasOverride > 0 ? combineCtasOverride : combineCtaCount<Hidden>(p, tokens);
+  if (int(blockIdx.x) >= combineCtas) {
     traceKernel(KernelTracePhase::OutputJoin, false);
     return;
   }
   if (threadIdx.x == 0) waitResidentGrid(&p.workspace.control->residentGridSyncState, gridDim.x, phase);
   __syncthreads();
-  signalAndCombine<Hidden>(p, tokens, output);
+  if (blockIdx.x == 0) {
+    if (threadIdx.x == 0) *at<uint64_t>(p.local, p.symmetric.epoch) = p.workspace.control->epoch;
+    if (threadIdx.x < p.config.worldSize) signalPeer(p, threadIdx.x);
+  }
+  combineResults<Hidden>(p, tokens, output, combineCtas);
+  traceKernel(KernelTracePhase::Combine, false);
 }
 
 }  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail
