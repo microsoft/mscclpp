@@ -258,3 +258,15 @@ jobs:
       targetPath: $(Build.ArtifactStagingDirectory)/ep-benchmark-results
       artifact: ep-benchmark-results-$(System.JobAttempt)
       publishLocation: pipeline
+
+  # install-ep-backends.sh installs into the hosts' RAM-backed /dev/shm, which outlives the container.
+  - task: Bash@3
+    displayName: Remove EP benchmark packages from /dev/shm
+    condition: and(always(), ne(variables['headNode'], ''))
+    inputs:
+      targetType: 'inline'
+      script: |
+        test/deploy/run-remote.sh --no-docker --hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --user azhpcuser <<'REMOTE_CMD'
+        sudo rm -rf /dev/shm/mscclpp-ep
+        REMOTE_CMD
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
