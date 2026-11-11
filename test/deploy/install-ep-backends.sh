@@ -7,6 +7,7 @@
 #
 # Environment overrides:
 #   NCCL_EP_SPEC          pip requirement for NCCL-EP  (default: nccl-extensions[cu13])
+#   CUDA_CORE_SPEC        pip requirement for cuda-core (default: cuda-core[cu13])
 #   DEEPEP_NCCL_SPEC      pip requirement for DeepEP's NCCL (default: nvidia-nccl-cu13, i.e. latest)
 #   DEEPEP_NCCL_DIR       install directory for DeepEP's NCCL (default: /opt/deepep-nccl)
 #   DEEPEP_REPO           DeepEP git URL               (default: deepseek-ai/DeepEP on GitHub)
@@ -19,6 +20,7 @@
 set -euo pipefail
 
 NCCL_EP_SPEC="${NCCL_EP_SPEC:-nccl-extensions[cu13]}"
+CUDA_CORE_SPEC="${CUDA_CORE_SPEC:-cuda-core[cu13]}"
 DEEPEP_NCCL_SPEC="${DEEPEP_NCCL_SPEC:-nvidia-nccl-cu13}"
 DEEPEP_NCCL_DIR="${DEEPEP_NCCL_DIR:-/opt/deepep-nccl}"
 DEEPEP_REPO="${DEEPEP_REPO:-https://github.com/deepseek-ai/DeepEP.git}"
@@ -32,7 +34,9 @@ export TORCH_CUDA_ARCH_LIST
 export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
 
 echo "=== Installing latest NCCL-EP (${NCCL_EP_SPEC}) and its validated NCCL"
-pip install --no-cache-dir --upgrade "${NCCL_EP_SPEC}"
+# NCCL-EP depends on cuda-core without its CUDA extra, so pip does not enforce cuda-core's
+# cuda-bindings floor (e.g. cuda-core 1.3.0 needs cuda-bindings>=13.5). Request the extra here.
+pip install --no-cache-dir --upgrade "${NCCL_EP_SPEC}" "${CUDA_CORE_SPEC}"
 
 echo "=== Installing latest NCCL for DeepEP (${DEEPEP_NCCL_SPEC}) into ${DEEPEP_NCCL_DIR}"
 rm -rf "${DEEPEP_NCCL_DIR}"

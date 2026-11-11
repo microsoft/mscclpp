@@ -1,7 +1,12 @@
 # Image for the unified EP benchmark job in .azure-pipelines/mnnvl-test.yml.
 # Adds PyTorch to a base-dev image. NCCL-EP and DeepEP are installed by the pipeline
 # on every run so that it always benchmarks their latest releases.
-ARG BASE_IMAGE=ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.3
+#
+# Like the other images, the base image is passed at build time, e.g.:
+#   docker build -f docker/base-dev-torch-x.dockerfile \
+#     --build-arg BASE_IMAGE=<registry>/mscclpp/mscclpp:base-dev-cuda13.3 \
+#     -t <registry>/mscclpp/mscclpp:base-dev-cuda13.3-torch2.x .
+ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
 LABEL maintainer="MSCCL++"
