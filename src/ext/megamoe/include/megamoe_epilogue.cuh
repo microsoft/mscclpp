@@ -301,7 +301,8 @@ MSCCLPP_DEVICE_INLINE void storeLocalOutputChunk(const Task& task, Storage& s, i
 
 template <int EpilogueWarps, int LocalMode = 0, class KernelParams, class Storage>
 MSCCLPP_DEVICE_INLINE void storeOutputChunk(const KernelParams& params, const Task& task, Storage& s, int tokenOffset,
-                                            int validRows, int hidden, int warp, int lane, __bfloat16* finalOutput) {
+                                            int validRows, int hidden, int warp, int lane, __bfloat16* finalOutput,
+                                            int runtimeTokens = 0) {
   if constexpr (LocalMode != 0) {
     storeLocalOutputChunk<EpilogueWarps, KernelParams>(task, s, tokenOffset, validRows, hidden, warp, lane,
                                                        finalOutput);
@@ -321,8 +322,7 @@ MSCCLPP_DEVICE_INLINE void storeOutputChunk(const KernelParams& params, const Ta
     Route route = params.workspace.routes[task.block * KernelTileN + tokenOffset + token];
     if (params.config.computeOnly) {
       size_t offset =
-          ((size_t(route.rank) * params.runtimeTokens + route.token) * params.config.topK + route.slot) * hidden +
-          feature;
+          ((size_t(route.rank) * runtimeTokens + route.token) * params.config.topK + route.slot) * hidden + feature;
       bulkStore(finalOutput + offset, s.epilogue.packed + token * PackedRowStride, CtaTileM * sizeof(__bfloat16));
       bulkStoreCommit();
       return;
@@ -356,7 +356,7 @@ MSCCLPP_DEVICE_INLINE void storeOutputChunk(const KernelParams& params, const Ta
 template <class Schedule, int LocalMode = 0, class KernelParams, class Storage, class Pipeline, class Accumulators>
 MSCCLPP_DEVICE_INLINE void epilogue(const KernelParams& params, const Task& task, Storage& s, Pipeline& pipeline,
                                     typename Pipeline::PipelineState& state, Accumulators accumulators, int hidden,
-                                    int intermediate, __bfloat16* finalOutput = nullptr) {
+                                    int intermediate, __bfloat16* finalOutput = nullptr, int tokens = 0) {
 #if MSCCLPP_BULK_AVAILABLE
   using namespace cute;
   using Tiles = typename KernelParams::Tiles;
@@ -418,8 +418,8 @@ MSCCLPP_DEVICE_INLINE void epilogue(const KernelParams& params, const Task& task
     bulkFence();
     cutlass::arch::NamedBarrier::sync(EpilogueThreads, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
     traceKernel(KernelTracePhase::Fc2Store, true, tokenOffset);
-    storeOutputChunk<EpilogueWarps, LocalMode>(params, task, s, tokenOffset, validRows, hidden, warp, lane,
-                                               finalOutput);
+    storeOutputChunk<EpilogueWarps, LocalMode>(params, task, s, tokenOffset, validRows, hidden, warp, lane, finalOutput,
+                                               tokens);
     traceKernel(KernelTracePhase::Fc2Store, false, tokenOffset);
   }
   ++state;
@@ -438,19 +438,18 @@ MSCCLPP_DEVICE_INLINE void runEpilogueRole(const KernelParams& params, Storage& 
   typename Accumulate::PipelineState state;
   for (int i = cluster; i < tasks; i += gridDim.x / KernelParams::Tiles::ClusterSize)
     epilogue<Schedule, LocalMode>(params, taskAt(params, i, hidden, intermediate, tokens), s, pipeline, state,
-                                  accumulators, hidden, intermediate, finalOutput);
+                                  accumulators, hidden, intermediate, finalOutput, tokens);
 #if MSCCLPP_BULK_AVAILABLE
   // Every lane may own FC2 bulk stores; they must complete before the CTA publishes its completion.
   bulkStoreWait();
 #endif
 }
 
-// 16-byte partial loads each combine thread keeps in flight; enough to cover memory latency at full bandwidth.
-constexpr int CombineLoads = 16;
-// Vectors per lane per warp task; more keeps their FP32 conversions live past the 128-register budget.
-constexpr int CombineItems = 8;
 // Widest slot batch. Only it loops over batches for larger topK, carrying FP32 sums between them.
 constexpr int CombineSlots = 8;
+
+// 16-byte vectors processed per thread per combine task; 8-slot batches use 1 vector to fit in 128 registers.
+__host__ __device__ constexpr int combineItems(int slots) { return slots <= 2 ? 8 : (slots <= 4 ? 4 : 1); }
 
 MSCCLPP_DEVICE_INLINE void storeCombined(__bfloat16* destination, const mscclpp::f32x8& sums, bool aligned) {
   auto values = mscclpp::to<mscclpp::bf16x8>(sums);
@@ -465,17 +464,17 @@ MSCCLPP_DEVICE_INLINE void storeCombined(__bfloat16* destination, const mscclpp:
 // Sums the routed partial rows of every token in FP32 slot order and rounds once to BF16. A warp task covers Items
 // consecutive warp-wide vectors of one token row; each lane issues all Slots * Items 16-byte loads before accumulating.
 // Narrower batches require topK <= Slots, so their sums never stay live across loads.
-template <int Hidden, int Slots, bool ProcessMultipleSlotBatches = false, class KernelParams>
+template <int Hidden, int Slots, bool ProcessMultipleSlotBatches = false, bool CombineRouteWeights = false,
+          class KernelParams>
 MSCCLPP_DEVICE_INLINE void combineSlots(const KernelParams& params, int tokens, __bfloat16* output) {
   constexpr int WarpSize = 32;
   constexpr int Elements = mscclpp::bf16x8::Size;
   const int vectors = (Hidden > 0 ? Hidden : params.config.hidden) / Elements;
-  constexpr int Items = CombineLoads / Slots < CombineItems ? CombineLoads / Slots : CombineItems;
+  constexpr int Items = combineItems(Slots);
   constexpr int TaskVectors = Items * WarpSize;
   const int tokenTasks = (vectors + TaskVectors - 1) / TaskVectors;
-  static_assert((Hidden == 0 || Hidden % Elements == 0) && CombineLoads % Slots == 0 && Slots <= CombineSlots);
+  static_assert((Hidden == 0 || Hidden % Elements == 0) && Slots <= CombineSlots);
   const int topK = params.config.topK;
-  const bool combineRouteWeights = params.config.combineRouteWeights;
   auto partial = reinterpret_cast<const uint4*>(at<__bfloat16>(params.local, params.symmetric.partialOutput));
   auto partialFp8 = reinterpret_cast<const uint2*>(at<uint8_t>(params.local, params.symmetric.partialOutput));
   constexpr bool StaticScale = KernelParams::Activation == ActivationDtype::Fp8Static;
@@ -492,7 +491,7 @@ MSCCLPP_DEVICE_INLINE void combineSlots(const KernelParams& params, int tokens, 
     for (int slot = 0; slot < Slots; ++slot)
       ids[slot] = task < tasks && slot < topK ? routeIds[task / tokenTasks * topK + slot] : -1;
   };
-  int task = blockIdx.x * (KernelParams::ThreadCount / WarpSize) + threadIdx.x / WarpSize;
+  int task = (threadIdx.x / WarpSize) * int(gridDim.x) + int(blockIdx.x);
   int nextIds[Slots];
   loadIds(task, nextIds);
   for (; task < tasks; task += warps) {
@@ -531,14 +530,14 @@ MSCCLPP_DEVICE_INLINE void combineSlots(const KernelParams& params, int tokens, 
 #pragma unroll
         for (int slot = 0; slot < Slots; ++slot) {
           const float slotWeight =
-              (combineRouteWeights && routed[slot]) ? routeWeights[token * topK + base + slot] : 1.0f;
+              (CombineRouteWeights && routed[slot]) ? routeWeights[token * topK + base + slot] : 1.0f;
 #pragma unroll
           for (int item = 0; item < Items; ++item) {
             auto partialValues = dequantizeE4M3x8(rawValues[slot][item]);
 #pragma unroll
             for (int element = 0; element < Elements; ++element)
               sums[item].data[element] =
-                  combineRouteWeights ? __fmaf_rn(partialValues.data[element], slotWeight, sums[item].data[element])
+                  CombineRouteWeights ? __fmaf_rn(partialValues.data[element], slotWeight, sums[item].data[element])
                                       : sums[item].data[element] + partialValues.data[element];
           }
         }
@@ -560,14 +559,14 @@ MSCCLPP_DEVICE_INLINE void combineSlots(const KernelParams& params, int tokens, 
 #pragma unroll
         for (int slot = 0; slot < Slots; ++slot) {
           const float slotWeight =
-              (combineRouteWeights && routed[slot]) ? routeWeights[token * topK + base + slot] : 1.0f;
+              (CombineRouteWeights && routed[slot]) ? routeWeights[token * topK + base + slot] : 1.0f;
 #pragma unroll
           for (int item = 0; item < Items; ++item) {
             auto partialValues = mscclpp::to<mscclpp::f32x8>(values[slot][item]);
 #pragma unroll
             for (int element = 0; element < Elements; ++element)
               sums[item].data[element] =
-                  combineRouteWeights ? __fmaf_rn(partialValues.data[element], slotWeight, sums[item].data[element])
+                  CombineRouteWeights ? __fmaf_rn(partialValues.data[element], slotWeight, sums[item].data[element])
                                       : sums[item].data[element] + partialValues.data[element];
           }
         }
@@ -591,24 +590,32 @@ MSCCLPP_DEVICE_INLINE bool hasCombineWork(const KernelParams& params, int tokens
   const int vectors = (Hidden > 0 ? Hidden : params.config.hidden) / mscclpp::bf16x8::Size;
   const int topK = params.config.topK;
   const int slots = topK == 1 ? 1 : (topK == 2 ? 2 : (topK <= 4 ? 4 : CombineSlots));
-  const int items = CombineLoads / slots < CombineItems ? CombineLoads / slots : CombineItems;
+  const int items = combineItems(slots);
   const int tokenTasks = (vectors + items * WarpSize - 1) / (items * WarpSize);
-  return blockIdx.x * (KernelParams::ThreadCount / WarpSize) < tokens * tokenTasks;
+  return int(blockIdx.x) < tokens * tokenTasks;
+}
+
+template <int Hidden = 0, bool CombineRouteWeights = false, class KernelParams>
+MSCCLPP_DEVICE_INLINE void combineResultsMode(const KernelParams& params, int tokens, __bfloat16* output) {
+  const int topK = params.config.topK;
+  if (topK == 1)
+    combineSlots<Hidden, 1, false, CombineRouteWeights>(params, tokens, output);
+  else if (topK == 2)
+    combineSlots<Hidden, 2, false, CombineRouteWeights>(params, tokens, output);
+  else if (topK <= 4)
+    combineSlots<Hidden, 4, false, CombineRouteWeights>(params, tokens, output);
+  else if (topK <= CombineSlots)
+    combineSlots<Hidden, CombineSlots, false, CombineRouteWeights>(params, tokens, output);
+  else
+    combineSlots<Hidden, CombineSlots, true, CombineRouteWeights>(params, tokens, output);
 }
 
 template <int Hidden = 0, class KernelParams>
 MSCCLPP_DEVICE_INLINE void combineResults(const KernelParams& params, int tokens, __bfloat16* output) {
-  const int topK = params.config.topK;
-  if (topK == 1)
-    combineSlots<Hidden, 1>(params, tokens, output);
-  else if (topK == 2)
-    combineSlots<Hidden, 2>(params, tokens, output);
-  else if (topK <= 4)
-    combineSlots<Hidden, 4>(params, tokens, output);
-  else if (topK <= CombineSlots)
-    combineSlots<Hidden, CombineSlots>(params, tokens, output);
+  if (params.config.combineRouteWeights)
+    combineResultsMode<Hidden, true>(params, tokens, output);
   else
-    combineSlots<Hidden, CombineSlots, true>(params, tokens, output);
+    combineResultsMode<Hidden, false>(params, tokens, output);
 }
 
 template <int Hidden = 0, class KernelParams>

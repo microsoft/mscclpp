@@ -68,12 +68,14 @@ __device__ __forceinline__ void runW8A16TransferRole(const P& p, int tokens, Sto
                                                      Mainloop& fc1, Mainloop& fc2, const ProblemShape& shape1,
                                                      const ProblemShape& shape2, Accumulators accumulators, int hidden,
                                                      int intermediate, int warp, int lane, int cta, int cluster,
-                                                     int tasks) {
+                                                     int tasks, const void* directInput = nullptr,
+                                                     const float* directScores = nullptr) {
   using namespace cute;
   using Types = typename P::Collective;
   cutlass::arch::warpgroup_reg_dealloc<TransferRegisters>();
   if constexpr (!Local) {
-    runDispatchRole<Hidden, Types::DispatchChunk, Types::DispatchStages>(p, s, warp);
+    runDispatchRole<Hidden, Types::DispatchChunk, Types::DispatchStages>(p, s, warp, tokens, directInput, nullptr,
+                                                                         directScores);
   }
   if (warp == Schedule::LoadAWarp && lane == 0) {
     auto state = cutlass::make_producer_start_state<LoadA>();

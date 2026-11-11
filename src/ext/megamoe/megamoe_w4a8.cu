@@ -40,9 +40,7 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   NativeConfig configuration = parameters.config;
   configuration.hidden = Hidden;
   configuration.intermediate = Intermediate;
-  auto view = w4a8ParameterView<ActDtype>(parameters, configuration);
-  auto p = FinalOutputParameterView<decltype(view)>{view,        output, static_cast<const uint8_t*>(input),
-                                                    inputScales, scores, tokens};
+  auto p = w4a8ParameterView<ActDtype>(parameters, configuration);
   extern __shared__ __align__(1024) char storage[];
   auto& s = *reinterpret_cast<W4A8SharedStorageT<Types>*>(storage);
   int warp = threadIdx.x / warpSize;
@@ -114,7 +112,7 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
       Mainloop::set_tmem_offsets(tmemStorage, s.tmem);
       if (warp >= Schedule::EpilogueBegin && warp < Schedule::EpilogueEnd) {
         runEpilogueRole<Schedule>(p, s, accumulatePipeline, tmemStorage.accumulators, hidden, intermediate, cluster,
-                                  tasks, output);
+                                  tasks, output, tokens);
       } else {
         runMmaRole(p, s, loadPipeline, activationPipeline, accumulatePipeline, fc1, tmemStorage, hidden, intermediate,
                    warp, cta, cluster, tasks);
@@ -123,7 +121,8 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   } else {
     // Lower dispatch/idle warp groups to 32 registers per thread to fund epilogue growth.
     cutlass::arch::warpgroup_reg_dealloc<TransferRegisters>();
-    runDispatchRole<Hidden, Types::DispatchChunk, Types::DispatchStages>(p, s, warp);
+    runDispatchRole<Hidden, Types::DispatchChunk, Types::DispatchStages>(p, s, warp, tokens, input, inputScales,
+                                                                         scores);
   }
   // Join even idle roles before the next register reconfiguration.
   __syncthreads();

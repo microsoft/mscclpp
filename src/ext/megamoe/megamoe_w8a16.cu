@@ -62,9 +62,7 @@ __global__ __launch_bounds__((LocalMode ? LocalThreads : W4Threads),
   NativeConfig configuration = parameters.config;
   configuration.hidden = Hidden;
   configuration.intermediate = Intermediate;
-  auto view = w8a16ParameterView(parameters, configuration);
-  auto p = FinalOutputParameterView<decltype(view)>{view,    output, static_cast<const uint8_t*>(input),
-                                                    nullptr, scores, tokens};
+  auto p = w8a16ParameterView(parameters, configuration);
   auto& s = *reinterpret_cast<SharedStorage*>(storage);
   int warp = threadIdx.x / warpSize;
   int lane = threadIdx.x % warpSize;
@@ -136,7 +134,7 @@ __global__ __launch_bounds__((LocalMode ? LocalThreads : W4Threads),
   } else {
     runW8A16TransferRole<Hidden, Local, Schedule>(p, tokens, s, aPipeline, bPipeline, tPipeline, cPipeline, fc1, fc2,
                                                   shape1, shape2, acc, hidden, intermediate, warp, lane, cta, cluster,
-                                                  tasks);
+                                                  tasks, input, scores);
   }
   __syncthreads();
   if ((warp >= Schedule::EpilogueBegin && warp < Schedule::EpilogueEnd) ||
