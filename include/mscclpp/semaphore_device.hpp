@@ -13,16 +13,29 @@
 
 namespace mscclpp {
 
+#if defined(MSCCLPP_DEVICE_COMPILE)
+namespace detail {
+template <typename Semaphore>
+MSCCLPP_DEVICE_INLINE bool pollSemaphore(Semaphore& semaphore) {
+  auto expected = semaphore.loadExpectedInbound();
+  const auto inbound = semaphore.loadInbound();
+  while (expected < inbound) {
+    if (atomicCompareExchangeWeak<uint64_t, scopeDevice>(semaphore.expectedInboundToken, expected, expected + 1,
+                                                         memoryOrderRelaxed, memoryOrderRelaxed)) {
+      return true;
+    }
+  }
+  return false;
+}
+}  // namespace detail
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
+
 /// Device-side handle for Host2DeviceSemaphore.
 struct Host2DeviceSemaphoreDeviceHandle {
 #if defined(MSCCLPP_DEVICE_COMPILE)
-  /// Poll if the host has signaled.
-  /// @return true if the host has signaled.
-  MSCCLPP_DEVICE_INLINE bool poll() {
-    bool signaled = (loadInbound() > loadExpectedInbound());
-    if (signaled) incExpectedInbound();
-    return signaled;
-  }
+  /// Try to consume one signal from the host.
+  /// @return true if this caller claimed a signal.
+  MSCCLPP_DEVICE_INLINE bool poll() { return detail::pollSemaphore(*this); }
 
   /// Wait for the host to signal.
   MSCCLPP_DEVICE_INLINE void wait([[maybe_unused]] int64_t maxSpinCount = 100000000) {
@@ -60,13 +73,9 @@ struct Host2DeviceSemaphoreDeviceHandle {
 /// Device-side handle for MemoryDevice2DeviceSemaphore.
 struct MemoryDevice2DeviceSemaphoreDeviceHandle {
 #if defined(MSCCLPP_DEVICE_COMPILE)
-  /// Poll if remote device has signaled.
-  /// @return true if remote device has signaled.
-  MSCCLPP_DEVICE_INLINE bool poll() {
-    bool signaled = (loadInbound() > loadExpectedInbound());
-    if (signaled) incExpectedInbound();
-    return signaled;
-  }
+  /// Try to consume one signal from the remote device.
+  /// @return true if this caller claimed a signal.
+  MSCCLPP_DEVICE_INLINE bool poll() { return detail::pollSemaphore(*this); }
 
   /// Wait for remote device to signal.
   MSCCLPP_DEVICE_INLINE void wait([[maybe_unused]] int64_t maxSpinCount = 100000000) {

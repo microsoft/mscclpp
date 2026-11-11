@@ -75,6 +75,21 @@ MSCCLPP_HOST_DEVICE_INLINE T atomicFetchAdd(T* ptr, const T& val, int memoryOrde
 
 #endif  // !defined(MSCCLPP_DEVICE_CUDA)
 
+#if defined(MSCCLPP_DEVICE_COMPILE)
+namespace detail {
+template <typename T, auto Scope>
+MSCCLPP_DEVICE_INLINE bool atomicCompareExchangeWeak(T* ptr, T& expected, T desired,
+                                                     decltype(memoryOrderRelaxed) success,
+                                                     decltype(memoryOrderRelaxed) failure) {
+#if defined(MSCCLPP_DEVICE_CUDA)
+  return cuda::atomic_ref<T, Scope>{*ptr}.compare_exchange_weak(expected, desired, success, failure);
+#elif defined(MSCCLPP_DEVICE_HIP)
+  return __hip_atomic_compare_exchange_weak(ptr, &expected, desired, success, failure, Scope);
+#endif
+}
+}  // namespace detail
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
+
 }  // namespace mscclpp
 
 #endif  // MSCCLPP_ATOMIC_DEVICE_HPP_
