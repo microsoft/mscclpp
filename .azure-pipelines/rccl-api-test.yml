@@ -30,6 +30,7 @@ variables:
 
 jobs:
 - job: RcclTestMI300X
+  timeoutInMinutes: 120
   displayName: Run MSCCLPP over RCCL Test (MI300X)
   pool:
     name: msccl-ci-mi300x

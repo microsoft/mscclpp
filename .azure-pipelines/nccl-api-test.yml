@@ -30,6 +30,7 @@ variables:
 
 jobs:
 - job: NcclTestA100
+  timeoutInMinutes: 120
   displayName: Run MSCCLPP over NCCL Test (A100)
   pool:
     name: msccl-ci
@@ -53,6 +54,7 @@ jobs:
       nvccGencode:      "-gencode=arch=compute_80,code=sm_80"
 
 - job: NcclTestH100
+  timeoutInMinutes: 120
   displayName: Run MSCCLPP over NCCL Test (H100)
   pool:
     name: msccl-ci-h100

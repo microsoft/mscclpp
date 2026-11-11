@@ -30,6 +30,7 @@ variables:
 
 jobs:
 - job: IntegrationTestA100
+  timeoutInMinutes: 120
   displayName: Integration test A100
   strategy:
     matrix:
@@ -51,6 +52,7 @@ jobs:
       gpuArch: '80'
 
 - job: IntegrationTestH100
+  timeoutInMinutes: 120
   displayName: Integration test H100
   strategy:
     matrix:

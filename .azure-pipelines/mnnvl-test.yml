@@ -26,6 +26,7 @@ variables:
 
 jobs:
 - job: MultiNodesTest
+  timeoutInMinutes: 120
   displayName: Multi nodes test
   strategy:
     matrix:
