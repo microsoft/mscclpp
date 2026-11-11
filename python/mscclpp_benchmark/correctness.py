@@ -11,7 +11,7 @@ import numpy as np
 from mpi4py import MPI
 
 from mscclpp.gpu import device_synchronize
-from .arrays import array_module, buffer_array, copy_into
+from mscclpp_benchmark.arrays import array_module, buffer_array, copy_into
 
 _mscclpp_module = None
 
