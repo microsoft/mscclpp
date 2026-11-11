@@ -622,3 +622,56 @@ Per-case table (µs):
 | zipf_skewed 16 | 98.58 | 101.55 | 97.24 | 100.03 | -1.34 | -1.52 |
 | zipf_skewed 32 | 130.12 | 135.24 | 128.73 | 133.47 | -1.39 | -1.77 |
 | zipf_skewed 64 | 183.62 | 190.63 | 181.60 | 188.30 | -2.02 | -2.33 |
+
+
+The table above uses one config for every case (e16w8-ls10, margin 4, FC1 delay 2500 ns), so it is not comparable
+with the per-case tuned tables. The tuned comparison follows.
+
+### P6 tuned results (per-case config re-selection)
+
+**Method.** P6 was rebuilt on all five build configs (e16w8-ls10, e16w8-ls8, e32w4-r192, e32w4-adaptive,
+e16w8-ls10-adaptive; packages `x-p6*`). Every case was swept again:
+- routed-only: 5 configs × margin {0, 2, 4};
+- routed + shared: 4 configs (r192 never won) × margin {0, 2, 4} × FC1 delay {0, 2500} ns.
+
+"Before" is the pre-P6 tuned table ("Per-case config tuning"). Medians of max-across-ranks, µs.
+Scripts: `fused-analysis/sweep/{tuned_cmp,p6_retune,sweep_cfg,table_p6}.py`.
+
+| Pattern | Tokens | Best routed before | Best routed now (config, margin) | Best routed + shared before | Best routed + shared now (config, margin, FC1 delay) | Gap now vs best routed | Gap vs in-run routed control |
+|---|---:|---:|---|---:|---|---:|---:|
+| balanced | 8 | 90.90 | 89.77 (e16w8-ls10, m4) | 95.95 | 95.09 (e16w8-ls10, m2, 2500 ns) | +5.32 | +4.09 |
+| balanced | 16 | 91.69 | 90.59 (e16w8-ls10, m4) | 96.53 | 95.31 (e16w8-ls10-adaptive, m4, 2500 ns) | +4.72 | +3.89 |
+| balanced | 32 | 92.78 | 91.66 (e16w8-ls10-adaptive, m4) | 97.22 | 96.81 (e16w8-ls10-adaptive, m2, 2500 ns) | +5.16 | +4.69 |
+| balanced | 64 | 98.36 | 97.14 (e32w4-r192, m4) | 103.19 | 102.16 (e32w4-adaptive, m0, 2500 ns) | +5.02 | +5.23 |
+| hot_experts | 8 | 72.57 | 71.30 (e16w8-ls10, m2) | 78.20 | 77.52 (e16w8-ls10, m0, 0 ns) | +6.23 | +4.14 |
+| hot_experts | 16 | 76.04 | 75.00 (e16w8-ls8, m2) | 81.25 | 81.58 (e16w8-ls8, m2, 2500 ns) | +6.58 | +5.22 |
+| hot_experts | 32 | 82.51 | 81.06 (e32w4-adaptive, m4) | 88.03 | 86.70 (e32w4-adaptive, m4, 2500 ns) | +5.64 | +4.61 |
+| hot_experts | 64 | 88.44 | 86.64 (e32w4-adaptive, m2) | 93.96 | 93.05 (e16w8-ls8, m0, 2500 ns) | +6.41 | +5.25 |
+| lognormal | 8 | 90.70 | 89.64 (e16w8-ls10, m4) | 95.40 | 94.68 (e16w8-ls10-adaptive, m4, 0 ns) | +5.04 | +4.43 |
+| lognormal | 16 | 92.23 | 91.00 (e16w8-ls10, m4) | 97.14 | 96.12 (e16w8-ls10, m2, 2500 ns) | +5.12 | +3.95 |
+| lognormal | 32 | 96.74 | 95.79 (e16w8-ls8, m2) | 100.83 | 100.10 (e16w8-ls8, m2, 2500 ns) | +4.31 | +4.44 |
+| lognormal | 64 | 101.14 | 99.67 (e32w4-adaptive, m0) | 106.57 | 106.97 (e32w4-adaptive, m4, 2500 ns) | +7.30 | +5.32 |
+| zipf | 8 | 77.89 | 76.77 (e16w8-ls10-adaptive, m4) | 82.81 | 81.91 (e16w8-ls10-adaptive, m4, 0 ns) | +5.14 | +3.82 |
+| zipf | 16 | 81.04 | 79.94 (e16w8-ls10-adaptive, m4) | 86.28 | 85.44 (e16w8-ls10-adaptive, m4, 2500 ns) | +5.50 | +4.40 |
+| zipf | 32 | 82.70 | 81.78 (e16w8-ls8, m4) | 87.92 | 86.98 (e16w8-ls8, m4, 2500 ns) | +5.20 | +4.18 |
+| zipf | 64 | 89.26 | 87.55 (e32w4-adaptive, m2) | 95.00 | 94.28 (e32w4-adaptive, m4, 2500 ns) | +6.72 | +6.04 |
+| zipf_skewed | 8 | 75.34 | 74.41 (e16w8-ls8, m2) | 80.82 | 81.92 (e16w8-ls8, m0, 2500 ns) | +7.52 | +5.97 |
+| zipf_skewed | 16 | 82.70 | 81.27 (e32w4-adaptive, m4) | 87.80 | 86.70 (e32w4-adaptive, m2, 2500 ns) | +5.43 | +4.04 |
+| zipf_skewed | 32 | 96.22 | 94.70 (e32w4-adaptive, m4) | 101.76 | 101.07 (e32w4-adaptive, m0, 2500 ns) | +6.36 | +5.55 |
+| zipf_skewed | 64 | 123.05 | 120.80 (e32w4-r192, m4) | 129.64 | 129.40 (e32w4-adaptive, m2, 2500 ns) | +8.60 | +8.30 |
+| **mean** | | 89.12 | **87.82** | 94.31 | **93.69** | +5.87 (before +5.20) | |
+
+**Summary.**
+- Routed-only: −1.30 µs mean; every case is better (−0.9 to −2.3 µs). The best config per case is unchanged except
+  zipf 64 and zipf_skewed 16 (now e32w4-adaptive).
+- Routed + shared: −0.62 µs mean; 17 of 20 cases are better. Regressions: zipf_skewed 8 (+1.10), lognormal 64 (+0.40),
+  hot_experts 16 (+0.33).
+- Gap vs best routed-only: +5.87 µs (before +5.20). The routed kernel gains the whole quantize launch, while in the
+  fused kernel part of that gain is lost to the shared quantization competing with the routing exchange (see variants
+  above).
+- Same-config A/B before re-tuning (pre-P6 tuned config/margin/delay, interleaved, 2 reps): routed −1.27, fused −0.16.
+  So the margin/delay tuning moves with P6.
+
+**Rejected follow-up: fuse only the routed quantization.** The shared input stayed on a separate (shared-only) quantize
+launch, with the routed input quantized in routing. At the P6-tuned margin/delay this is worse in all 20 cases
+(+1.26 µs mean): the extra launch costs more than the in-kernel shared quantization. Reverted.
