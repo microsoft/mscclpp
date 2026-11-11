@@ -36,8 +36,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export MASTER_ADDR="${MASTER_ADDR:-127.0.0.1}"
 export MASTER_PORT="${MASTER_PORT:-51703}"
 export NCCL_IB_DISABLE="${NCCL_IB_DISABLE:-1}"
+CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
 
 DEEPEP_PYTHONPATH=""
+DEEPEP_CUDA_HOME=""
 if [ -f "${EP_BACKEND_ENV}" ]; then
     # shellcheck disable=SC1090
     source "${EP_BACKEND_ENV}"
@@ -50,7 +52,7 @@ fi
 if [ -n "${EP_BENCH_TCP_IF:-}" ]; then
     MPI_ARGS+=(-mca btl_tcp_if_include "${EP_BENCH_TCP_IF}")
 fi
-for var in MASTER_ADDR MASTER_PORT NCCL_IB_DISABLE PATH LD_LIBRARY_PATH CUDA_HOME; do
+for var in MASTER_ADDR MASTER_PORT NCCL_IB_DISABLE PATH LD_LIBRARY_PATH; do
     MPI_ARGS+=(-x "${var}")
 done
 
@@ -74,13 +76,14 @@ failed=0
 for mode in ${EP_BENCH_MODES}; do
     for backend in ${EP_BENCH_BACKENDS}; do
         log="${EP_BENCH_LOG_DIR}/ep-${mode}-${backend}.log"
-        backend_mpi_args=()
+        backend_mpi_args=(-x "CUDA_HOME=${CUDA_HOME}")
         if [ "${backend}" = deepep ]; then
-            if [ -z "${DEEPEP_PYTHONPATH}" ]; then
-                echo "ERROR: DeepEP's NCCL is unknown; run install-ep-backends.sh first" >&2
+            if [ -z "${DEEPEP_PYTHONPATH}" ] || [ -z "${DEEPEP_CUDA_HOME}" ]; then
+                echo "ERROR: DeepEP's NCCL or CUDA is unknown; run install-ep-backends.sh first" >&2
                 exit 1
             fi
-            backend_mpi_args=(-x "PYTHONPATH=${DEEPEP_PYTHONPATH}")
+            # DeepEP JIT-compiles kernels with ${CUDA_HOME}/bin/nvcc.
+            backend_mpi_args=(-x "PYTHONPATH=${DEEPEP_PYTHONPATH}" -x "CUDA_HOME=${DEEPEP_CUDA_HOME}")
         fi
         echo "=== Unified EP benchmark: mode=${mode}, backend=${backend}, ranks=${EP_BENCH_NP}"
         status=0

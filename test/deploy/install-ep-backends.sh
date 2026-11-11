@@ -1,28 +1,42 @@
 #!/bin/bash
-# Install the latest NCCL-EP and DeepEP for the unified EP benchmark. Run after MSCCL++ is installed.
+# Install PyTorch and the latest NCCL-EP and DeepEP for the unified EP benchmark. Run after
+# MSCCL++ is installed, in the base-dev-cuda13.x image. Installing PyTorch here rather than
+# using a separate torch image avoids pulling a second multi-GB image onto the GB200 nodes.
 #
 # NCCL-EP requires the NCCL version it is validated with, while DeepEP requires a newer one.
 # NCCL-EP's NCCL stays in the Python environment. DeepEP is built against the latest NCCL,
 # installed into DEEPEP_NCCL_DIR, which run-ep-benchmark.sh adds to PYTHONPATH for DeepEP only.
 #
+# DeepEP JIT-compiles kernels at run time with ${CUDA_HOME}/bin/nvcc, and CUDA 13.0's ptxas
+# rejects its PTX. A newer nvcc is installed into DEEPEP_CUDA_DIR, which run-ep-benchmark.sh
+# uses as CUDA_HOME for DeepEP only.
+#
 # Environment overrides:
+#   TORCH_SPEC            pip requirement for PyTorch (default: torch==2.11.0)
+#   TORCH_INDEX_URL       PyTorch wheel index (default: https://download.pytorch.org/whl/cu130)
 #   NCCL_EP_SPEC          pip requirement for NCCL-EP  (default: nccl-extensions[cu13])
 #   CUDA_CORE_SPEC        pip requirement for cuda-core (default: cuda-core[cu13])
 #   DEEPEP_NCCL_SPEC      pip requirement for DeepEP's NCCL (default: nvidia-nccl-cu13, i.e. latest)
 #   DEEPEP_NCCL_DIR       install directory for DeepEP's NCCL (default: /opt/deepep-nccl)
+#   DEEPEP_CUDA_VERSION   CUDA version of DeepEP's JIT compiler (default: 13.3.*)
+#   DEEPEP_CUDA_DIR       install directory for DeepEP's JIT compiler (default: /opt/deepep-cuda)
 #   DEEPEP_REPO           DeepEP git URL               (default: deepseek-ai/DeepEP on GitHub)
 #   DEEPEP_REF            DeepEP branch, tag or commit (default: the repository's default branch)
 #   TORCH_CUDA_ARCH_LIST  GPU architecture for DeepEP  (default: detected with nvidia-smi)
-#   EP_BACKEND_ENV        file recording DeepEP's NCCL location for run-ep-benchmark.sh
+#   EP_BACKEND_ENV        file recording DeepEP's NCCL and CUDA locations for run-ep-benchmark.sh
 #                         (default: /tmp/ep-backend-env)
 #   EP_VERSIONS_FILE      JSON file recording installed versions (default: /tmp/ep-backend-versions.json)
 
 set -euo pipefail
 
+TORCH_SPEC="${TORCH_SPEC:-torch==2.11.0}"
+TORCH_INDEX_URL="${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu130}"
 NCCL_EP_SPEC="${NCCL_EP_SPEC:-nccl-extensions[cu13]}"
 CUDA_CORE_SPEC="${CUDA_CORE_SPEC:-cuda-core[cu13]}"
 DEEPEP_NCCL_SPEC="${DEEPEP_NCCL_SPEC:-nvidia-nccl-cu13}"
 DEEPEP_NCCL_DIR="${DEEPEP_NCCL_DIR:-/opt/deepep-nccl}"
+DEEPEP_CUDA_VERSION="${DEEPEP_CUDA_VERSION:-13.3.*}"
+DEEPEP_CUDA_DIR="${DEEPEP_CUDA_DIR:-/opt/deepep-cuda}"
 DEEPEP_REPO="${DEEPEP_REPO:-https://github.com/deepseek-ai/DeepEP.git}"
 DEEPEP_REF="${DEEPEP_REF:-}"
 EP_BACKEND_ENV="${EP_BACKEND_ENV:-/tmp/ep-backend-env}"
@@ -32,6 +46,15 @@ if [ -z "${TORCH_CUDA_ARCH_LIST:-}" ]; then
 fi
 export TORCH_CUDA_ARCH_LIST
 export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
+
+echo "=== Installing PyTorch (${TORCH_SPEC}) and DeepEP build dependencies"
+pip install --no-cache-dir "${TORCH_SPEC}" ninja \
+    --index-url "${TORCH_INDEX_URL}" --extra-index-url https://pypi.org/simple
+if [ ! -f /usr/include/elfutils/libdwfl.h ]; then
+    apt-get update
+    apt-get install -y --no-install-recommends libdw-dev
+    rm -rf /var/lib/apt/lists/*
+fi
 
 echo "=== Installing latest NCCL-EP (${NCCL_EP_SPEC}) and its validated NCCL"
 # NCCL-EP depends on cuda-core without its CUDA extra, so pip does not enforce cuda-core's
@@ -44,6 +67,16 @@ pip install --no-cache-dir --no-deps --target "${DEEPEP_NCCL_DIR}" "${DEEPEP_NCC
 DEEPEP_NCCL_ROOT="${DEEPEP_NCCL_DIR}/nvidia/nccl"
 DEEPEP_NCCL_VERSION="$(PYTHONPATH="${DEEPEP_NCCL_DIR}" python -c \
     "from importlib.metadata import version; print(version('${DEEPEP_NCCL_SPEC%%[<>=!~ ]*}'))")"
+
+echo "=== Installing CUDA ${DEEPEP_CUDA_VERSION} nvcc for DeepEP's JIT into ${DEEPEP_CUDA_DIR}"
+rm -rf "${DEEPEP_CUDA_DIR}"
+pip install --no-cache-dir --no-deps --target "${DEEPEP_CUDA_DIR}" \
+    "nvidia-cuda-nvcc==${DEEPEP_CUDA_VERSION}" "nvidia-cuda-crt==${DEEPEP_CUDA_VERSION}" \
+    "nvidia-nvvm==${DEEPEP_CUDA_VERSION}" "nvidia-cuda-runtime==${DEEPEP_CUDA_VERSION}" \
+    "nvidia-cuda-cccl==${DEEPEP_CUDA_VERSION}"
+DEEPEP_CUDA_HOME="${DEEPEP_CUDA_DIR}/nvidia/cu13"
+DEEPEP_NVCC_VERSION="$("${DEEPEP_CUDA_HOME}/bin/nvcc" --version | sed -n 's/.*release \([0-9.]*\).*/\1/p')"
+echo "DeepEP JIT nvcc: ${DEEPEP_NVCC_VERSION}"
 
 echo "=== Building latest DeepEP for TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}"
 DEEPEP_SRC="$(mktemp -d)"
@@ -63,7 +96,7 @@ echo "DeepEP commit: ${DEEPEP_COMMIT}"
     pip install --no-cache-dir --no-deps --force-reinstall dist/*.whl
 )
 
-printf 'DEEPEP_PYTHONPATH=%s\n' "${DEEPEP_NCCL_DIR}" > "${EP_BACKEND_ENV}"
+printf 'DEEPEP_PYTHONPATH=%s\nDEEPEP_CUDA_HOME=%s\n' "${DEEPEP_NCCL_DIR}" "${DEEPEP_CUDA_HOME}" > "${EP_BACKEND_ENV}"
 
 echo "=== Verifying EP backends"
 # Run outside the repository so Python imports the installed packages.
@@ -77,6 +110,7 @@ assert hasattr(deep_ep, 'EPBuffer'), 'Installed DeepEP does not provide deep_ep.
 "
 
 DEEPEP_COMMIT="${DEEPEP_COMMIT}" DEEPEP_NCCL_VERSION="${DEEPEP_NCCL_VERSION}" \
+DEEPEP_NVCC_VERSION="${DEEPEP_NVCC_VERSION}" \
 EP_VERSIONS_FILE="${EP_VERSIONS_FILE}" python - <<'PY'
 import json
 import os
@@ -94,6 +128,7 @@ versions = {
     "deep_ep": version("deep_ep"),
     "deep_ep_commit": os.environ["DEEPEP_COMMIT"],
     "nccl_for_deep_ep": os.environ["DEEPEP_NCCL_VERSION"],
+    "nvcc_for_deep_ep_jit": os.environ["DEEPEP_NVCC_VERSION"],
 }
 with open(os.environ["EP_VERSIONS_FILE"], "w") as f:
     json.dump(versions, f, indent=2)

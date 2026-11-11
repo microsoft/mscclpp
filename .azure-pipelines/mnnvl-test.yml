@@ -21,7 +21,6 @@ pr:
   paths:
     include:
     - .azure-pipelines/mnnvl-test.yml
-    - docker/base-dev-torch-x.dockerfile
     - python/mscclpp/ep/**
     - python/mscclpp_benchmark/ep/**
     - src/ext/ep/**
@@ -151,13 +150,13 @@ jobs:
   strategy:
     matrix:
       cuda13:
-        # agentImage runs on the x86_64 agent; containerImage runs on the aarch64 GB200 nodes.
-        agentImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.3-torch2.x
+        # Same image as MultiNodesTest, which is already on the GB200 nodes; PyTorch is
+        # installed by install-ep-backends.sh. A separate torch image does not fit on the nodes' root disk.
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0
   pool:
     name: msccl-ci-gb200
   container:
-    image: $[ variables['agentImage'] ]
+    image: $[ variables['containerImage'] ]
 
   steps:
   - task: Bash@3
