@@ -26,7 +26,7 @@ void sendAll(int fd, const void* buffer, size_t size) {
   const char* data = static_cast<const char*>(buffer);
   size_t written = 0;
   while (written < size) {
-    ssize_t sent = send(fd, data + written, size - written, 0);
+    ssize_t sent = send(fd, data + written, size - written, MSG_NOSIGNAL);
     if (sent < 0) {
       if (errno == EINTR) continue;
       throw SysError("send() on unix socket failed", errno);
@@ -254,6 +254,21 @@ UnixSocketServer::UnixSocketServer() : abortFlagStorage_(new uint32_t(0)), abort
 
 std::string UnixSocketServer::getSocketPath() const { return listenUnixSockPath_; }
 
+struct UnixSocketClient::Connection {
+  std::mutex mutex;
+  int fd = -1;
+
+  ~Connection() { close(); }
+  void close() {
+    if (fd != -1) {
+      ::close(fd);
+      fd = -1;
+    }
+  }
+  void open(const std::string& socketPath);
+  int request(uint32_t fdId);
+};
+
 UnixSocketClient& UnixSocketClient::instance() {
   static UnixSocketClient client;
   return client;
@@ -261,56 +276,54 @@ UnixSocketClient& UnixSocketClient::instance() {
 
 void UnixSocketClient::reset() {
   std::lock_guard<std::mutex> lock(mutex_);
-  for (const auto& pair : cachedFds_) {
-    ::close(pair.second);
-  }
-  cachedFds_.clear();
+  connections_.clear();
 }
-
-UnixSocketClient::~UnixSocketClient() { reset(); }
 
 int UnixSocketClient::requestFd(const std::string& socketPath, uint32_t fdId) {
   INFO(MSCCLPP_P2P, "Requesting fdId %u from unix socket server at %s", fdId, socketPath.c_str());
 
-  int connectedFd = -1;
+  std::shared_ptr<Connection> connection;
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    auto it = cachedFds_.find(socketPath);
-    if (it != cachedFds_.end()) {
-      connectedFd = it->second;
-    }
-  }
-  if (connectedFd != -1) {
-    return requestFdInternal(connectedFd, fdId);
+    auto it = connections_.find(socketPath);
+    if (it == connections_.end()) it = connections_.emplace(socketPath, std::make_shared<Connection>()).first;
+    connection = it->second;
   }
 
-  connectedFd = socket(AF_UNIX, SOCK_STREAM, 0);
-  if (connectedFd < 0) {
-    throw SysError("socket() failed for unix domain socket", errno);
+  // The reply carries an fd, not a request ID. Keep one request in flight per stream.
+  std::lock_guard<std::mutex> lock(connection->mutex);
+  int receivedFd;
+  try {
+    if (connection->fd == -1) connection->open(socketPath);
+    receivedFd = connection->request(fdId);
+  } catch (...) {
+    connection->close();
+    std::lock_guard<std::mutex> cacheLock(mutex_);
+    auto it = connections_.find(socketPath);
+    if (it != connections_.end() && it->second == connection) connections_.erase(it);
+    throw;
   }
+  if (receivedFd < 0) throw SysError("Failed to request fd from unix socket server", -receivedFd);
+  return receivedFd;
+}
+
+void UnixSocketClient::Connection::open(const std::string& socketPath) {
+  fd = socket(AF_UNIX, SOCK_STREAM, 0);
+  if (fd < 0) throw SysError("socket() failed for unix domain socket", errno);
+
   sockaddr_un addr;
   std::memset(&addr, 0, sizeof(addr));
   addr.sun_family = AF_UNIX;
   std::strncpy(addr.sun_path, socketPath.c_str(), sizeof(addr.sun_path) - 1);
 
   INFO(MSCCLPP_P2P, "Connecting to unix socket server at %s", socketPath.c_str());
-  if (connect(connectedFd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
-    ::close(connectedFd);
+  if (connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
     throw SysError("connect() failed for unix socket to " + socketPath, errno);
   }
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto [it, inserted] = cachedFds_.emplace(socketPath, connectedFd);
-    if (!inserted) {
-      ::close(it->second);
-      it->second = connectedFd;
-    }
-  }
-  return requestFdInternal(connectedFd, fdId);
 }
 
-int UnixSocketClient::requestFdInternal(int connFd, uint32_t fdId) {
-  sendAll(connFd, &fdId, sizeof(fdId));
+int UnixSocketClient::Connection::request(uint32_t fdId) {
+  sendAll(fd, &fdId, sizeof(fdId));
 
   struct msghdr msg;
   std::memset(&msg, 0, sizeof(msg));
@@ -322,25 +335,32 @@ int UnixSocketClient::requestFdInternal(int connFd, uint32_t fdId) {
   msg.msg_iov = &iov;
   msg.msg_iovlen = 1;
 
-  char control[CMSG_SPACE(sizeof(int))];
-  std::memset(control, 0, sizeof(control));
+  alignas(cmsghdr) char control[CMSG_SPACE(sizeof(int))] = {};
   msg.msg_control = control;
-  msg.msg_controllen = sizeof(control);
+  msg.msg_controllen = CMSG_LEN(sizeof(int));
 
-  ssize_t bytes = ::recvmsg(connFd, &msg, 0);
-  if (bytes <= 0) {
-    throw SysError("recvmsg() on unix socket failed", errno);
-  }
+  ssize_t bytes;
+  do {
+    bytes = ::recvmsg(fd, &msg, MSG_WAITALL);
+  } while (bytes < 0 && errno == EINTR);
+  if (bytes < 0) throw SysError("recvmsg() on unix socket failed", errno);
+  if (bytes == 0) throw Error("Unix socket server closed before replying", ErrorCode::RemoteError);
 
-  int receivedFd = -1;
-  if (response != 0) {
-    throw SysError("Failed to request fd from unix socket server", -response);
-  }
   struct cmsghdr* cmsg = CMSG_FIRSTHDR(&msg);
-  if (cmsg == nullptr || cmsg->cmsg_level != SOL_SOCKET || cmsg->cmsg_type != SCM_RIGHTS) {
-    throw Error("Did not receive file descriptor over unix socket", ErrorCode::InternalError);
+  int receivedFd = -1;
+  if (cmsg && cmsg->cmsg_len == CMSG_LEN(sizeof(int)) && cmsg->cmsg_level == SOL_SOCKET &&
+      cmsg->cmsg_type == SCM_RIGHTS) {
+    std::memcpy(&receivedFd, CMSG_DATA(cmsg), sizeof(receivedFd));
   }
-  std::memcpy(&receivedFd, CMSG_DATA(cmsg), sizeof(receivedFd));
+  if (bytes != sizeof(response) || (msg.msg_flags & MSG_CTRUNC) || response == INT_MIN ||
+      (response != 0 && receivedFd != -1)) {
+    if (receivedFd != -1) ::close(receivedFd);
+    throw Error("Invalid file descriptor response from unix socket server", ErrorCode::RemoteError);
+  }
+  if (response < 0) return response;
+  if (response != 0 || receivedFd == -1) {
+    throw Error("Did not receive file descriptor over unix socket", ErrorCode::RemoteError);
+  }
   return receivedFd;
 }
 
