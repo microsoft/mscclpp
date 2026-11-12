@@ -48,15 +48,19 @@ test = [
     "netifaces",
 ]
 test-cuda12 = [
+    "mscclpp[test]",
     "cupy-cuda12x",
 ]
 test-cuda13 = [
+    "mscclpp[test]",
     "cupy-cuda13x",
 ]
 test-rocm6 = [
+    "mscclpp[test]",
     "cupy==13.6.0",
 ]
 test-rocm7 = [
+    "mscclpp[test]",
     "cupy>=14,<15",
 ]
 

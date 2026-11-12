@@ -62,15 +62,15 @@ fi
 
 cd /root/mscclpp
 if [[ "${CUDA_VERSION}" == *"12."* ]]; then
-    pip3 install ".[cuda12,benchmark,test,test-cuda12]"
+    pip3 install ".[cuda12,benchmark,test-cuda12]"
 elif [[ "${CUDA_VERSION}" == *"13."* ]]; then
-    pip3 install ".[cuda13,benchmark,test,test-cuda13]"
+    pip3 install ".[cuda13,benchmark,test-cuda13]"
 elif [ "${PLATFORM}" == "rocm" ]; then
     ROCM_VERSION=$(cat /opt/rocm/.info/version)
     ROCM_MAJOR="${ROCM_VERSION%%.*}"
     export CUPY_INSTALL_USE_HIP=1
     export ROCM_HOME=/opt/rocm
-    pip3 install ".[rocm${ROCM_MAJOR},benchmark,test,test-rocm${ROCM_MAJOR}]"
+    pip3 install ".[rocm${ROCM_MAJOR},benchmark,test-rocm${ROCM_MAJOR}]"
 else
     pip3 install ".[benchmark,test]"
 fi

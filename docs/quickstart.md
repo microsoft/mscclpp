@@ -123,16 +123,16 @@ Optional extras can be installed by specifying them in brackets. Available extra
 - **`rocm6`**, **`rocm7`**: Install HIP Python for the matching AMD ROCm major version.
 - **`benchmark`**: Install benchmark dependencies (mpi4py, prettytable, netifaces, matplotlib).
 - **`test`**: Install test dependencies (pytest, mpi4py, netifaces).
-- **`test-cuda12`**, **`test-cuda13`**: Add CuPy for CUDA testing alongside the matching platform and `test` extras. Select only one CUDA version.
-- **`test-rocm6`**, **`test-rocm7`**: Add HIP-built CuPy for ROCm testing alongside the matching platform and `test` extras. ROCm 6 uses CuPy 13.6.0; ROCm 7 uses CuPy 14.x. Set `CUPY_INSTALL_USE_HIP=1` and `ROCM_HOME` when building CuPy from source.
+- **`test-cuda12`**, **`test-cuda13`**: Include the shared `test` dependencies and CuPy for CUDA testing. Use alongside the matching platform extra and select only one CUDA version.
+- **`test-rocm6`**, **`test-rocm7`**: Include the shared `test` dependencies and HIP-built CuPy for ROCm testing. Use alongside the matching platform extra. ROCm 6 uses CuPy 13.6.0; ROCm 7 uses CuPy 14.x. Set `CUPY_INSTALL_USE_HIP=1` and `ROCM_HOME` when building CuPy from source.
 
 ```bash
 # Example: install with CUDA 12 and benchmark extras
 $ python -m pip install ".[cuda12,benchmark]"
 # Example: install with CuPy for testing and benchmarking on CUDA 12
-$ python -m pip install ".[cuda12,benchmark,test,test-cuda12]"
+$ python -m pip install ".[cuda12,benchmark,test-cuda12]"
 # Example: install with CuPy for testing and benchmarking on ROCm 6 / MI300X
-$ CUPY_INSTALL_USE_HIP=1 ROCM_HOME=/opt/rocm HCC_AMDGPU_TARGET=gfx942 CXX=/opt/rocm/bin/hipcc python -m pip install ".[rocm6,benchmark,test,test-rocm6]"
+$ CUPY_INSTALL_USE_HIP=1 ROCM_HOME=/opt/rocm HCC_AMDGPU_TARGET=gfx942 CXX=/opt/rocm/bin/hipcc python -m pip install ".[rocm6,benchmark,test-rocm6]"
 ```
 
 Production installs such as `.[cuda12]` and `.[rocm6]` remain CuPy-free. CI installs
