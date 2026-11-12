@@ -61,6 +61,8 @@ class CudaGpuTests(unittest.TestCase):
         self.api("GetDevice").return_value = (0, 1)
         self.props = SimpleNamespace(name=b"Test GPU", major=9, minor=0, gcnArchName=b"gfx942:sramecc+:xnack-")
         self.cuda.cudaGetDeviceProperties.return_value = (0, self.props)
+        self.attributes = SimpleNamespace(device=1)
+        self.cuda.cudaPointerGetAttributes.return_value = (0, self.attributes)
         self.api("GetErrorString").return_value = (0, b"test failure")
         self.utils = self.load_module("_gpu_utils_test", self.python_dir / "mscclpp" / "utils.py")
 
@@ -168,13 +170,20 @@ class CudaGpuTests(unittest.TestCase):
         self.assertEqual(self.gpu.version(), (6, 4, 0) if self.is_hip else (12, 4, 0))
 
     def test_pointer_attributes_and_capture_status_use_shared_runtime(self):
-        attributes = SimpleNamespace(device=1)
-        self.api("PointerGetAttributes").return_value = (0, attributes)
         self.api("StreamIsCapturing").return_value = (0, 1)
-        self.assertEqual(self.gpu.pointer_get_attributes(1234), (attributes,))
+        (attributes,) = self.gpu.pointer_get_attributes(1234)
+        self.assertEqual(vars(attributes), vars(self.attributes))
         self.assertEqual(self.gpu.stream_is_capturing(123), (1,))
-        self.api("PointerGetAttributes").assert_called_once_with(1234)
+        self.assert_pointer_query(1234)
         self.api("StreamIsCapturing").assert_called_once_with(123)
+
+    def assert_pointer_query(self, ptr):
+        self.api("PointerGetAttributes").assert_called_once_with(ptr)
+
+    def test_pointer_attributes_error_uses_shared_error_handling(self):
+        self.api("PointerGetAttributes").side_effect = lambda *args: (17,)
+        with self.assertRaisesRegex(RuntimeError, r"pointer_get_attributes failed: test failure \(17\)"):
+            self.gpu.pointer_get_attributes(1234)
 
     def test_memcpy_async_resolves_backend_direction_and_stream(self):
         for direction, kind in (("HostToDevice", 11 if self.is_hip else 1), ("DeviceToHost", 12 if self.is_hip else 2)):
@@ -218,6 +227,29 @@ class HipGpuTests(CudaGpuTests):
             return (0,)
 
         self.hip.hipGetDeviceProperties.side_effect = get_device_properties
+        self.hip.hipPointerAttribute_t = Mock(side_effect=SimpleNamespace)
+
+        def pointer_get_attributes(attributes, ptr):
+            vars(attributes).update(vars(self.attributes))
+            return (0,)
+
+        self.hip.hipPointerGetAttributes.side_effect = pointer_get_attributes
+
+    def assert_pointer_query(self, ptr):
+        self.hip.hipPointerAttribute_t.assert_called_once_with()
+        attributes, actual_ptr = self.api("PointerGetAttributes").call_args.args
+        self.assertEqual(vars(attributes), vars(self.attributes))
+        self.assertEqual(actual_ptr, ptr)
+        self.api("PointerGetAttributes").assert_called_once_with(attributes, ptr)
+
+    def test_pointer_queries_allocate_independent_output_objects(self):
+        (first,) = self.gpu.pointer_get_attributes(1234)
+        self.attributes.device = 2
+        (second,) = self.gpu.pointer_get_attributes(5678)
+        self.assertIsNot(first, second)
+        self.assertEqual(first.device, 1)
+        self.assertEqual(second.device, 2)
+        self.assertEqual(self.hip.hipPointerAttribute_t.call_count, 2)
 
     def assert_properties_query(self, device_id):
         self.hip.hipDeviceProp_t.assert_called_once_with()
