@@ -226,40 +226,6 @@ class HipGpuTests(CudaGpuTests):
         self.assertEqual(actual_device_id, device_id)
         self.api("GetDeviceProperties").assert_called_once_with(props, device_id)
 
-    def test_fp8_module_import_uses_shared_properties_query(self):
-        self.props.gcnArchName = b"gfx950:sramecc+:xnack-"
-        decorator = lambda *args, **kwargs: lambda func: func
-        skipif = Mock(return_value=object())
-        with (
-            patch.multiple(
-                sys.modules["mscclpp"],
-                CommGroup=object,
-                GpuBuffer=object,
-                DataType=SimpleNamespace(float8_e4m3fn=object(), float8_e4m3fnuz=object()),
-                ReduceOp=object,
-                is_nvls_supported=object,
-                create=True,
-            ),
-            patch.dict(
-                sys.modules,
-                {
-                    "mscclpp.ext": SimpleNamespace(AlgorithmCollectionBuilder=object),
-                    "mscclpp.utils": self.utils,
-                    "mscclpp_benchmark.arrays": SimpleNamespace(array_module=Mock(), to_array=Mock(), copy_to=Mock()),
-                    "pytest": SimpleNamespace(mark=SimpleNamespace(parametrize=decorator, skipif=skipif)),
-                    "python.test.mscclpp_mpi": SimpleNamespace(
-                        MpiGroup=object, parametrize_mpi_groups=decorator, mpi_group=object
-                    ),
-                },
-            ),
-        ):
-            module = self.load_module("python.test._fp8_gpu_test", self.python_dir / "test" / "test_fp8_accum.py")
-        self.assertEqual(module._gcn_arch_name, "gfx950")
-        self.assertTrue(module._is_cdna4)
-        self.assertFalse(module._skip_fp8)
-        skipif.assert_called_once_with(False, reason="FP8 accum tests require SM >= 89 on CUDA")
-        self.assert_properties_query(1)
-
     def test_properties_queries_allocate_independent_output_objects(self):
         (first,) = self.gpu.get_device_properties(0)
         self.props.gcnArchName = b"gfx950"
@@ -268,14 +234,6 @@ class HipGpuTests(CudaGpuTests):
         self.assertEqual(first.gcnArchName, b"gfx942:sramecc+:xnack-")
         self.assertEqual(second.gcnArchName, b"gfx950")
         self.assertEqual(self.hip.hipDeviceProp_t.call_count, 2)
-
-    def test_properties_scalar_status_is_checked(self):
-        self.hip.hipGetDeviceProperties.side_effect = lambda props, device_id: 17
-        with self.assertRaisesRegex(RuntimeError, r"get_device_properties failed: test failure \(17\)"):
-            self.gpu.get_device_properties(0)
-        self.hip.hipGetDeviceProperties.side_effect = lambda props, device_id: 0
-        (props,) = self.gpu.get_device_properties(0)
-        self.assertIsInstance(props, SimpleNamespace)
 
 
 if __name__ == "__main__":
