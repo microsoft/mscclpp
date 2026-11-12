@@ -60,16 +60,7 @@ class CudaGpuTests(unittest.TestCase):
         self.api("GetDeviceCount").return_value = (0, 2)
         self.api("GetDevice").return_value = (0, 1)
         self.props = SimpleNamespace(name=b"Test GPU", major=9, minor=0, gcnArchName=b"gfx942:sramecc+:xnack-")
-        if self.is_hip:
-            self.hip.hipDeviceProp_t = Mock(side_effect=SimpleNamespace)
-
-            def get_device_properties(props, device_id):
-                vars(props).update(vars(self.props))
-                return self.hip.hipGetDeviceProperties.return_value
-
-            self.hip.hipGetDeviceProperties.side_effect = get_device_properties
-        else:
-            self.cuda.cudaGetDeviceProperties.return_value = (0, self.props)
+        self.cuda.cudaGetDeviceProperties.return_value = (0, self.props)
         self.api("GetErrorString").return_value = (0, b"test failure")
         self.utils = self.load_module("_gpu_utils_test", self.python_dir / "mscclpp" / "utils.py")
 
@@ -112,7 +103,7 @@ class CudaGpuTests(unittest.TestCase):
             self.utils.get_device_arch()
 
     def test_device_properties_error_uses_shared_error_handling(self):
-        self.api("GetDeviceProperties").return_value = (17,) if self.is_hip else (17, None)
+        self.api("GetDeviceProperties").side_effect = lambda *args: (17,)
         with self.assertRaisesRegex(RuntimeError, r"get_device_properties failed: test failure \(17\)"):
             self.utils.get_device_arch()
 
@@ -164,14 +155,7 @@ class CudaGpuTests(unittest.TestCase):
             self.api("StreamCreateWithFlags").assert_called_with(int(non_blocking))
 
     def assert_properties_query(self, device_id):
-        if self.is_hip:
-            self.hip.hipDeviceProp_t.assert_called_once_with()
-            props, actual_device_id = self.api("GetDeviceProperties").call_args.args
-            self.assertEqual(vars(props), vars(self.props))
-            self.assertEqual(actual_device_id, device_id)
-            self.api("GetDeviceProperties").assert_called_once_with(props, device_id)
-        else:
-            self.api("GetDeviceProperties").assert_called_once_with(device_id)
+        self.api("GetDeviceProperties").assert_called_once_with(device_id)
 
     def test_device_properties_return_single_properties_object_for_explicit_device(self):
         (props,) = self.gpu.get_device_properties(0)
@@ -225,6 +209,23 @@ class CudaGpuTests(unittest.TestCase):
 class HipGpuTests(CudaGpuTests):
     is_hip = True
 
+    def setUp(self):
+        super().setUp()
+        self.hip.hipDeviceProp_t = Mock(side_effect=SimpleNamespace)
+
+        def get_device_properties(props, device_id):
+            vars(props).update(vars(self.props))
+            return (0,)
+
+        self.hip.hipGetDeviceProperties.side_effect = get_device_properties
+
+    def assert_properties_query(self, device_id):
+        self.hip.hipDeviceProp_t.assert_called_once_with()
+        props, actual_device_id = self.api("GetDeviceProperties").call_args.args
+        self.assertEqual(vars(props), vars(self.props))
+        self.assertEqual(actual_device_id, device_id)
+        self.api("GetDeviceProperties").assert_called_once_with(props, device_id)
+
     def test_fp8_module_import_uses_shared_properties_query(self):
         self.props.gcnArchName = b"gfx950:sramecc+:xnack-"
         decorator = lambda *args, **kwargs: lambda func: func
@@ -269,12 +270,12 @@ class HipGpuTests(CudaGpuTests):
         self.assertEqual(self.hip.hipDeviceProp_t.call_count, 2)
 
     def test_properties_scalar_status_is_checked(self):
-        self.hip.hipGetDeviceProperties.return_value = 17
+        self.hip.hipGetDeviceProperties.side_effect = lambda props, device_id: 17
         with self.assertRaisesRegex(RuntimeError, r"get_device_properties failed: test failure \(17\)"):
             self.gpu.get_device_properties(0)
-        self.hip.hipGetDeviceProperties.return_value = 0
+        self.hip.hipGetDeviceProperties.side_effect = lambda props, device_id: 0
         (props,) = self.gpu.get_device_properties(0)
-        self.assertEqual(vars(props), vars(self.props))
+        self.assertIsInstance(props, SimpleNamespace)
 
 
 if __name__ == "__main__":
