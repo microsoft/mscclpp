@@ -21,10 +21,14 @@ if [ -z "$DISK" ]; then
         echo "Configured NVMe is unavailable; refusing to format another disk." >&2
         exit 1
     fi
-    for candidate in $(lsblk -bdnpo NAME,SIZE,TYPE | awk '$1 ~ /^\/dev\/nvme[0-9]+n[0-9]+$/ && $2 >= 3298534883328 && $3 == "disk" {print $1}'); do
-        [ "$(lsblk -nrpo NAME "$candidate" | wc -l)" -eq 1 ] || continue
-        [ -z "$(lsblk -nro FSTYPE,MOUNTPOINTS "$candidate" | tr -d '[:space:]')" ] || continue
-        [ -z "$(wipefs --no-act --noheadings "$candidate")" ] || continue
+    CANDIDATES=$(lsblk -bdnpo NAME,SIZE,TYPE | awk '$1 ~ /^\/dev\/nvme[0-9]+n[0-9]+$/ && $2 >= 3298534883328 && $3 == "disk" {print $1}')
+    for candidate in $CANDIDATES; do
+        DEVICE_COUNT=$(lsblk -nrpo NAME "$candidate" | wc -l)
+        [ "$DEVICE_COUNT" -eq 1 ] || continue
+        DISK_USAGE=$(lsblk -nro FSTYPE,MOUNTPOINTS "$candidate" | tr -d '[:space:]')
+        [ -z "$DISK_USAGE" ] || continue
+        SIGNATURES=$(wipefs --no-act --noheadings "$candidate")
+        [ -z "$SIGNATURES" ] || continue
         fuser -s "$candidate" && continue
         DISK=$candidate
         break
