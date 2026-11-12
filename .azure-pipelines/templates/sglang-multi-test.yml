@@ -6,7 +6,7 @@
 # caller pipeline). Deployment has already installed MSCCL++ on each node;
 # SGLang and its CUDA dependencies are supplied by the selected container image.
 # Steps:
-#   1. Run a 2-node sglang.bench_one_batch smoke test with MSCCL++ enabled.
+#   1. Run a 2-node sglang.benchmark.one_batch smoke test with MSCCL++ enabled.
 #   2. Run the MSCCL++ all-reduce micro-benchmark via torchrun across both nodes.
 # =============================================================================
 
@@ -42,7 +42,7 @@ steps:
         exit 1
       fi
       cd /sgl-workspace/sglang/python
-      python -m sglang.bench_one_batch --model-path Qwen/Qwen3-8B --batch-size 1 2 4 8 16 32 64 128 256 512 --input-len 256 --output-len 256 --tp-size 16 --dist-init-addr ${VMSS}000000:20003 --nnodes 2 --node-rank $NODE_RANK --enable-mscclpp
+      python -m sglang.benchmark.one_batch --model-path Qwen/Qwen3-8B --batch-size 1 2 4 8 16 32 64 128 256 512 --input-len 256 --output-len 256 --tp-size 16 --dist-init-addr ${VMSS}000000:20003 --nnodes 2 --node-rank $NODE_RANK --enable-mscclpp
 
 - template: run-remote-task.yml
   parameters:
@@ -70,7 +70,7 @@ steps:
 
       # Port 20004 is the torchrun rendezvous port (arbitrary, must match
       # across ranks and be free on node 0). Distinct from 20003 used by
-      # sglang.bench_one_batch above.
+      # sglang.benchmark.one_batch above.
       torchrun --nproc_per_node $WORLD_SIZE \
         --nnodes $NODE_SIZE \
         --node_rank $NODE_RANK \
