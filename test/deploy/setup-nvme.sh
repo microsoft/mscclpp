@@ -58,11 +58,14 @@ done
 if [ "$READY" = false ]; then
     if systemctl is-active --quiet docker; then
         test "$(docker info --format '{{.DockerRootDir}}')" = /var/lib/docker
-        test -z "$(docker ps -q)"
+        CONTAINERS=$(docker ps -q)
+        test -z "$CONTAINERS"
     fi
     if systemctl is-active --quiet containerd; then
-        for namespace in $(ctr namespaces list -q); do
-            test -z "$(ctr --namespace "$namespace" tasks list -q)"
+        NAMESPACES=$(ctr namespaces list -q)
+        for namespace in $NAMESPACES; do
+            TASKS=$(ctr --namespace "$namespace" tasks list -q)
+            test -z "$TASKS"
         done
     fi
     systemctl stop docker.service docker.socket containerd.service
