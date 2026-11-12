@@ -33,7 +33,7 @@ from mscclpp import (
     DeviceType,
 )
 from mscclpp import CommGroup, GpuBuffer
-from mscclpp_benchmark.arrays import array_module, to_array, buffer_from_array, copy_to
+from mscclpp_benchmark.arrays import array_module, to_array, to_buffer, copy_to
 from mscclpp._mscclpp import is_hip
 from mscclpp.utils import Kernel, KernelBuilder, pack
 from mscclpp.gpu import (
@@ -503,7 +503,7 @@ def test_connection_write_and_signal(mpi_group: MpiGroup, connection_type: str, 
         memory = xp.zeros(nelem, dtype=np.float32)
     signal_memory = np.zeros(1, dtype=np.int64)
     if device == "cuda":
-        memory = buffer_from_array(memory)
+        memory = to_buffer(memory)
         signal_memory = GpuBuffer.from_numpy(signal_memory.view(np.uint8))
 
     all_reg_memories = group.register_tensor_with_connections(memory, connections)
@@ -942,7 +942,7 @@ def test_executor(mpi_group: MpiGroup, filename: str):
     buffer = xp.random.random(nelems).astype(np.float16)
     sub_arrays = xp.split(buffer, mpi_group.comm.size)
     nelems_per_rank = int(nelems / mpi_group.comm.size)
-    sendbuf = buffer_from_array(sub_arrays[mpi_group.comm.rank])
+    sendbuf = to_buffer(sub_arrays[mpi_group.comm.rank])
     expected = xp.zeros(nelems_per_rank, dtype=np.float16)
     for i in range(mpi_group.comm.size):
         expected += sub_arrays[i]

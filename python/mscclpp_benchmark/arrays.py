@@ -50,7 +50,7 @@ def copy_to(buffer, values):
         xp.cuda.get_current_stream().synchronize()
 
 
-def buffer_from_array(values):
+def to_buffer(values):
     from mscclpp import GpuBuffer
 
     buffer = GpuBuffer(values.shape, dtype=values.dtype)
