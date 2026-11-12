@@ -98,8 +98,11 @@ class CudaBufferTests(unittest.TestCase):
         setattr(self.runtime, self.prefix + "StreamNonBlocking", 1)
         package = ModuleType("mscclpp")
         package.__path__ = [str(self.python_dir / "mscclpp")]
+        benchmark_package = ModuleType("mscclpp_benchmark")
+        benchmark_package.__path__ = [str(self.python_dir / "mscclpp_benchmark")]
         modules = {
             "mscclpp": package,
+            "mscclpp_benchmark": benchmark_package,
             "mscclpp._mscclpp": SimpleNamespace(
                 CppRawGpuBuffer=self.allocate,
                 CppGpuBufferGranularity=SimpleNamespace(MultiCastMinimum=0),
@@ -621,9 +624,7 @@ class CudaBufferTests(unittest.TestCase):
         np.testing.assert_array_equal(tests[0].to_numpy(), np.zeros(64, dtype=np.uint16))
 
     def test_benchmark_uses_logical_dtype_for_allocations_and_execution(self):
-        package = ModuleType("mscclpp_benchmark")
-        package.__path__ = [str(self.python_dir / "mscclpp_benchmark")]
-        with patch.dict(sys.modules, {"mscclpp_benchmark": package, "mpi4py": SimpleNamespace(MPI=object)}):
+        with patch.dict(sys.modules, {"mpi4py": SimpleNamespace(MPI=object)}):
             comm = load_module("mscclpp_benchmark.comm", self.python_dir / "mscclpp_benchmark" / "comm.py")
             bench = load_module("_dtype_benchmark", self.python_dir / "mscclpp_benchmark" / "bench_collective.py")
         comm._mscclpp_module = bench._mscclpp_module = SimpleNamespace(GpuBuffer=self.GpuBuffer, DataType=DataType)

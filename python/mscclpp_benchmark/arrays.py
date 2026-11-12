@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""Optional CUDA array operations for tests and benchmarks, not the runtime."""
+"""Optional GPU array operations for tests and benchmarks, not the runtime."""
 
 import importlib.util
 
@@ -9,20 +9,21 @@ import numpy as np
 
 
 def array_module(array=None):
-    """Keep host references on NumPy; use installed CuPy for CUDA workloads."""
+    """Keep host references on NumPy; use matching CuPy for GPU workloads."""
     if isinstance(array, np.ndarray):
         return np
-    from mscclpp._mscclpp import is_hip
-
-    if is_hip or importlib.util.find_spec("cupy") is None:
+    if importlib.util.find_spec("cupy") is None:
         return np
     import cupy
+    from mscclpp._mscclpp import is_hip
 
+    if bool(cupy.cuda.runtime.is_hip) != is_hip:
+        raise RuntimeError("CuPy and MSCCL++ must use the same CUDA or HIP backend")
     return cupy if array is None else cupy.get_array_module(array)
 
 
 def buffer_array(buffer):
-    """Return a CUDA storage view retaining its owner, or a HIP host copy."""
+    """Return a GPU storage view retaining its owner, or a host copy without CuPy."""
     xp = array_module()
     if xp is np:
         return buffer.to_numpy()

@@ -53,6 +53,12 @@ test-cuda12 = [
 test-cuda13 = [
     "cupy-cuda13x",
 ]
+test-rocm6 = [
+    "cupy==13.6.0",
+]
+test-rocm7 = [
+    "cupy>=14,<15",
+]
 
 [tool.setuptools_scm]
 write_to = "python/mscclpp/_version.py"

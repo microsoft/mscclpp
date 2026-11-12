@@ -244,6 +244,9 @@ class HipGpuTests(CudaGpuTests):
                 {
                     "mscclpp.ext": SimpleNamespace(AlgorithmCollectionBuilder=object),
                     "mscclpp.utils": self.utils,
+                    "mscclpp_benchmark.arrays": SimpleNamespace(
+                        array_module=Mock(), buffer_array=Mock(), copy_into=Mock()
+                    ),
                     "pytest": SimpleNamespace(mark=SimpleNamespace(parametrize=decorator, skipif=skipif)),
                     "python.test.mscclpp_mpi": SimpleNamespace(
                         MpiGroup=object, parametrize_mpi_groups=decorator, mpi_group=object

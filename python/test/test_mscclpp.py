@@ -55,8 +55,6 @@ ethernet_interface_name = "eth0"
     [(DataType.float32, np.float32), (DataType.bfloat16, np.uint16), (DataType.float8_e4m3fn, np.uint8)],
 )
 def test_cupy_validation_view_retains_native_storage(mpi_group: MpiGroup, dtype, storage):
-    if is_hip:
-        pytest.skip("CUDA-only CuPy validation")
     cp = pytest.importorskip("cupy")
     original = GpuBuffer(8, dtype=dtype)
     with cp.cuda.Stream(non_blocking=True):
@@ -80,8 +78,6 @@ def test_cupy_validation_view_retains_native_storage(mpi_group: MpiGroup, dtype,
 
 @parametrize_mpi_groups(1)
 def test_cupy_validation_view_preserves_fortran_layout(mpi_group: MpiGroup):
-    if is_hip:
-        pytest.skip("CUDA-only CuPy validation")
     cp = pytest.importorskip("cupy")
     buffer = GpuBuffer((2, 3), dtype=np.float32, order="F")
     expected = cp.arange(6, dtype=cp.float32).reshape(2, 3)

@@ -22,10 +22,10 @@ from mscclpp_benchmark.correctness import (
 from mscclpp_benchmark.tuning_config import HardwareProfile, TunedConfig, TunedConfigStore
 
 
-@pytest.mark.parametrize("is_hip,cupy_available", [(True, True), (False, False)])
-def test_numpy_validation_without_cuda_cupy(monkeypatch, is_hip, cupy_available):
+@pytest.mark.parametrize("is_hip", [False, True])
+def test_numpy_validation_without_cupy(monkeypatch, is_hip):
     monkeypatch.setitem(sys.modules, "mscclpp._mscclpp", SimpleNamespace(is_hip=is_hip))
-    monkeypatch.setattr(arrays.importlib.util, "find_spec", lambda name: object() if cupy_available else None)
+    monkeypatch.setattr(arrays.importlib.util, "find_spec", lambda name: None)
     values = np.arange(4, dtype=np.uint8)
     buffer = SimpleNamespace(
         to_numpy=lambda: values.copy(), copy_from_numpy=lambda source: values.__setitem__(slice(None), source)
@@ -35,7 +35,25 @@ def test_numpy_validation_without_cuda_cupy(monkeypatch, is_hip, cupy_available)
     np.testing.assert_array_equal(arrays.buffer_array(buffer), [7, 7, 7, 7])
 
 
-def test_host_reference_does_not_import_cuda(monkeypatch):
+@pytest.mark.parametrize("is_hip", [False, True])
+@pytest.mark.parametrize("cupy_is_hip", [False, True])
+def test_cupy_validation_requires_matching_backend(monkeypatch, is_hip, cupy_is_hip):
+    cupy = SimpleNamespace(
+        cuda=SimpleNamespace(runtime=SimpleNamespace(is_hip=cupy_is_hip)),
+        get_array_module=lambda array: cupy,
+    )
+    monkeypatch.setitem(sys.modules, "mscclpp._mscclpp", SimpleNamespace(is_hip=is_hip))
+    monkeypatch.setitem(sys.modules, "cupy", cupy)
+    monkeypatch.setattr(arrays.importlib.util, "find_spec", lambda name: object())
+    if is_hip != cupy_is_hip:
+        with pytest.raises(RuntimeError, match="same CUDA or HIP backend"):
+            arrays.array_module()
+    else:
+        assert arrays.array_module() is cupy
+        assert arrays.array_module(object()) is cupy
+
+
+def test_host_reference_does_not_import_cupy(monkeypatch):
     def unexpected_import(name):
         raise AssertionError("Host references must not probe CuPy")
 
@@ -43,12 +61,9 @@ def test_host_reference_does_not_import_cuda(monkeypatch):
     assert arrays.array_module(np.arange(4)) is np
 
 
-def test_cuda_validation_encodings_match_numpy():
-    from mscclpp._mscclpp import is_hip
-
-    if is_hip:
-        pytest.skip("CUDA-only CuPy validation")
+def test_cupy_validation_encodings_match_numpy():
     cp = pytest.importorskip("cupy")
+    assert arrays.array_module() is cp
     bits = np.arange(256, dtype=np.uint8)
     for fmt in ("e4m3fn", "e4m3fnuz", "e4m3b15"):
         host = _decode_fp8_array(fmt, bits)
