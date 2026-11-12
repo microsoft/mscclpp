@@ -31,7 +31,7 @@ def test_numpy_validation_without_cupy(monkeypatch, is_hip):
         to_numpy=lambda: values.copy(), copy_from_numpy=lambda source: values.__setitem__(slice(None), source)
     )
     assert arrays.array_module() is np
-    arrays.copy_into(buffer, np.full(4, 7, dtype=np.uint8))
+    arrays.copy_to(buffer, np.full(4, 7, dtype=np.uint8))
     np.testing.assert_array_equal(arrays.buffer_array(buffer), [7, 7, 7, 7])
 
 

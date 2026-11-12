@@ -18,7 +18,7 @@ from mscclpp._mscclpp import is_hip as _is_hip
 from mscclpp.ext import AlgorithmCollectionBuilder
 from mscclpp.utils import get_device_arch
 from mscclpp.gpu import device_synchronize
-from mscclpp_benchmark.arrays import array_module, buffer_array, copy_into
+from mscclpp_benchmark.arrays import array_module, buffer_array, copy_to
 from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups, mpi_group
 
 # FP8 E4M3 (hardware) requires SM >= 89 (Ada / Hopper) on NVIDIA GPUs.
@@ -328,7 +328,7 @@ def test_fp8_e4m3_accum(mpi_group: MpiGroup, algo_name: str, size: int):
         src_fp8 = float_to_e4m3_native(src_f32)
 
         # Copy into symmetric buffer
-        copy_into(buf, src_fp8)
+        copy_to(buf, src_fp8)
         device_synchronize()
 
         # Run allreduce
@@ -425,7 +425,7 @@ def test_fp8_e4m3b15_accum(mpi_group: MpiGroup, algo_name: str, size: int):
         src_uint8 = xp.asarray(rng.randint(0, 256, (size,)).astype(np.uint8))
 
         # Copy into symmetric buffer
-        copy_into(buf, src_uint8)
+        copy_to(buf, src_uint8)
         device_synchronize()
 
         # Run allreduce

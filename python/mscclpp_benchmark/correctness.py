@@ -11,7 +11,7 @@ import numpy as np
 from mpi4py import MPI
 
 from mscclpp.gpu import device_synchronize
-from mscclpp_benchmark.arrays import array_module, buffer_array, copy_into
+from mscclpp_benchmark.arrays import array_module, buffer_array, copy_to
 
 _mscclpp_module = None
 
@@ -45,10 +45,10 @@ def fill_case_for_benchmark(case: Any, rank: int) -> None:
     values = _benchmark_input_values(case, rank)
     encoded = _encode_correctness_input(case, values)
     if case.collective == "allreduce":
-        copy_into(case.input, encoded)
+        copy_to(case.input, encoded)
         return
-    copy_into(case.output, array_module(encoded).zeros(case.output.shape, dtype=case.dtype_spec.storage_dtype))
-    copy_into(case.input, encoded)
+    copy_to(case.output, array_module(encoded).zeros(case.output.shape, dtype=case.dtype_spec.storage_dtype))
+    copy_to(case.input, encoded)
 
 
 def check_correctness(
@@ -111,10 +111,10 @@ def _fill_case_for_correctness(case: Any, rank: int, iteration: int) -> None:
     values = _correctness_input_values(case, rank, iteration)
     encoded = _encode_correctness_input(case, values)
     if case.collective == "allreduce":
-        copy_into(case.input, encoded)
+        copy_to(case.input, encoded)
         return
-    copy_into(case.output, array_module(encoded).zeros(case.output.shape, dtype=case.dtype_spec.storage_dtype))
-    copy_into(case.input, encoded)
+    copy_to(case.output, array_module(encoded).zeros(case.output.shape, dtype=case.dtype_spec.storage_dtype))
+    copy_to(case.input, encoded)
 
 
 def _correctness_input_values(case: Any, rank: int, iteration: int):

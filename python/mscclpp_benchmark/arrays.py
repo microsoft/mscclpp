@@ -39,7 +39,7 @@ def buffer_array(buffer):
         return xp.ndarray(buffer.shape, dtype=dtype, memptr=xp.cuda.MemoryPointer(memory, 0), strides=buffer.strides)
 
 
-def copy_into(buffer, values):
+def copy_to(buffer, values):
     """Write storage values and finish the write before native communication."""
     xp = array_module()
     if xp is np:
@@ -54,5 +54,5 @@ def buffer_from_array(values):
     from mscclpp import GpuBuffer
 
     buffer = GpuBuffer(values.shape, dtype=values.dtype)
-    copy_into(buffer, values)
+    copy_to(buffer, values)
     return buffer

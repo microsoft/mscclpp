@@ -33,7 +33,7 @@ from mscclpp import (
     DeviceType,
 )
 from mscclpp import CommGroup, GpuBuffer
-from mscclpp_benchmark.arrays import array_module, buffer_array, buffer_from_array, copy_into
+from mscclpp_benchmark.arrays import array_module, buffer_array, buffer_from_array, copy_to
 from mscclpp._mscclpp import is_hip
 from mscclpp.utils import Kernel, KernelBuilder, pack
 from mscclpp.gpu import (
@@ -58,8 +58,8 @@ def test_cupy_validation_view_retains_native_storage(mpi_group: MpiGroup, dtype,
     cp = pytest.importorskip("cupy")
     original = GpuBuffer(8, dtype=dtype)
     with cp.cuda.Stream(non_blocking=True):
-        copy_into(original, cp.arange(8, dtype=storage))
-    # copy_into must complete its non-default-stream write before native use.
+        copy_to(original, cp.arange(8, dtype=storage))
+    # copy_to must complete its non-default-stream write before native use.
     np.testing.assert_array_equal(original.to_numpy(), np.arange(8, dtype=storage))
     native_view = original[2:6]
     owner = weakref.ref(native_view)
@@ -81,7 +81,7 @@ def test_cupy_validation_view_preserves_fortran_layout(mpi_group: MpiGroup):
     cp = pytest.importorskip("cupy")
     buffer = GpuBuffer((2, 3), dtype=np.float32, order="F")
     expected = cp.arange(6, dtype=cp.float32).reshape(2, 3)
-    copy_into(buffer, expected)
+    copy_to(buffer, expected)
     view = buffer_array(buffer)
     assert view.strides == buffer.strides
     cp.testing.assert_array_equal(view, expected)
@@ -457,7 +457,7 @@ def test_connection_write(mpi_group: MpiGroup, connection_type: str, nelem: int)
     nelemPerRank = nelem // group.nranks
     sizePerRank = nelemPerRank * memory.itemsize
     view = memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))]
-    copy_into(view, xp.full(view.shape, group.my_rank + 1, dtype=np.int32))
+    copy_to(view, xp.full(view.shape, group.my_rank + 1, dtype=np.int32))
     memory_expected = xp.zeros(memory.shape, dtype=np.int32)
     for rank in range(group.nranks):
         memory_expected[(nelemPerRank * rank) : (nelemPerRank * (rank + 1))] = rank + 1
@@ -521,7 +521,7 @@ def test_connection_write_and_signal(mpi_group: MpiGroup, connection_type: str, 
     connections[next_rank].flush()
     if group.my_rank == 0:
         if device == "cuda":
-            copy_into(memory, xp.zeros(memory.shape, dtype=np.float32))
+            copy_to(memory, xp.zeros(memory.shape, dtype=np.float32))
             device_synchronize()
         else:
             memory.fill(0)
@@ -761,7 +761,7 @@ def test_memory_channels(mpi_group: MpiGroup, nelem: int, use_packet: bool):
         scratch = None
     nelemPerRank = nelem // group.nranks
     view = memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))]
-    copy_into(view, xp.full(view.shape, group.my_rank + 1, dtype=np.int32))
+    copy_to(view, xp.full(view.shape, group.my_rank + 1, dtype=np.int32))
     memory_expected = xp.zeros(memory.shape, dtype=np.int32)
     for rank in range(group.nranks):
         memory_expected[(nelemPerRank * rank) : (nelemPerRank * (rank + 1))] = rank + 1
@@ -808,7 +808,7 @@ def test_proxy(mpi_group: MpiGroup, nelem: int, connection_type: str):
     nelemPerRank = nelem // group.nranks
     nelemPerRank * memory.itemsize
     view = memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))]
-    copy_into(view, xp.full(view.shape, group.my_rank + 1, dtype=np.int32))
+    copy_to(view, xp.full(view.shape, group.my_rank + 1, dtype=np.int32))
     memory_expected = xp.zeros(memory.shape, dtype=np.int32)
     for rank in range(group.nranks):
         memory_expected[(nelemPerRank * rank) : (nelemPerRank * (rank + 1))] = rank + 1
@@ -864,7 +864,7 @@ def test_port_channel(mpi_group: MpiGroup, nelem: int, connection_type: str, use
     nelemPerRank = nelem // group.nranks
     nelemPerRank * memory.itemsize
     view = memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))]
-    copy_into(view, xp.full(view.shape, group.my_rank + 1, dtype=np.int32))
+    copy_to(view, xp.full(view.shape, group.my_rank + 1, dtype=np.int32))
     memory_expected = xp.zeros(memory.shape, dtype=np.int32)
     for rank in range(group.nranks):
         memory_expected[(nelemPerRank * rank) : (nelemPerRank * (rank + 1))] = rank + 1
@@ -968,7 +968,7 @@ def test_executor(mpi_group: MpiGroup, filename: str):
         mscclpp_group.barrier()
         executor.reset()
         mscclpp_group.barrier()
-        copy_into(sendbuf, sub_arrays[mpi_group.comm.rank])
+        copy_to(sendbuf, sub_arrays[mpi_group.comm.rank])
         executor.execute(
             mpi_group.comm.rank,
             sendbuf.data.ptr,

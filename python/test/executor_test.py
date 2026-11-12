@@ -13,7 +13,7 @@ from mscclpp import (
     env,
 )
 from mscclpp import CommGroup, GpuBuffer
-from mscclpp_benchmark.arrays import array_module, copy_into
+from mscclpp_benchmark.arrays import array_module, copy_to
 import mscclpp.gpu as gpu
 from mscclpp.utils import KernelBuilder, pack
 import os
@@ -192,7 +192,7 @@ def build_bufs(
         result_bufs = [GpuBuffer(nelems, dtype=dtype) for _ in range(n_slots)]
         test_bufs = [GpuBuffer(nelems, dtype=dtype) for _ in range(n_slots)]
         for buffer in test_bufs:
-            copy_into(buffer, xp.zeros(buffer.shape, dtype=storage_dtype))
+            copy_to(buffer, xp.zeros(buffer.shape, dtype=storage_dtype))
         return input_bufs, result_bufs, test_bufs, nelems
 
     if "allgather" in collective:
@@ -222,7 +222,7 @@ def build_bufs(
         input_buf = GpuBuffer(nelems_input, dtype=dtype)
 
     test_buf = GpuBuffer(nelems, dtype=dtype)
-    copy_into(test_buf, xp.zeros(test_buf.shape, dtype=storage_dtype))
+    copy_to(test_buf, xp.zeros(test_buf.shape, dtype=storage_dtype))
 
     return [input_buf], [result_buf], [test_buf], nelems
 
