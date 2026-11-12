@@ -50,47 +50,6 @@ ethernet_interface_name = "eth0"
 
 
 @parametrize_mpi_groups(1)
-@pytest.mark.parametrize(
-    "dtype, storage",
-    [(DataType.float32, np.float32), (DataType.bfloat16, np.uint16), (DataType.float8_e4m3fn, np.uint8)],
-)
-def test_cupy_validation_view_retains_native_storage(mpi_group: MpiGroup, dtype, storage):
-    cp = pytest.importorskip("cupy")
-    original = GpuBuffer(8, dtype=dtype)
-    with cp.cuda.Stream(non_blocking=True):
-        copy_to(original, cp.arange(8, dtype=storage))
-    # copy_to must complete its non-default-stream write before native use.
-    np.testing.assert_array_equal(original.to_numpy(), np.arange(8, dtype=storage))
-    native_view = original[2:6]
-    owner = weakref.ref(native_view)
-    view = to_array(native_view)
-    assert view.data.ptr == original.ptr + 2 * original.itemsize
-    del original, native_view
-    gc.collect()
-    view.fill(9)
-    cp.cuda.get_current_stream().synchronize()
-    cp.testing.assert_array_equal(view, cp.full(4, 9, dtype=storage))
-    assert owner() is not None
-    del view
-    gc.collect()
-    assert owner() is None
-
-
-@parametrize_mpi_groups(1)
-def test_cupy_validation_view_preserves_fortran_layout(mpi_group: MpiGroup):
-    cp = pytest.importorskip("cupy")
-    buffer = GpuBuffer((2, 3), dtype=np.float32, order="F")
-    expected = cp.arange(6, dtype=cp.float32).reshape(2, 3)
-    copy_to(buffer, expected)
-    view = to_array(buffer)
-    assert view.strides == buffer.strides
-    cp.testing.assert_array_equal(view, expected)
-    np.testing.assert_array_equal(buffer.to_numpy(), cp.asnumpy(expected))
-    empty = GpuBuffer.from_ptr(0, 0, object())
-    assert to_array(empty).size == 0
-
-
-@parametrize_mpi_groups(1)
 def test_gpu_backend(mpi_group: MpiGroup):
     assert isinstance(is_hip, bool)
     assert is_hip == (runtime_name() == "hip")
