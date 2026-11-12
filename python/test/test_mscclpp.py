@@ -33,7 +33,7 @@ from mscclpp import (
     DeviceType,
 )
 from mscclpp import CommGroup, GpuBuffer
-from mscclpp_benchmark.arrays import array_module, buffer_array, buffer_from_array, copy_to
+from mscclpp_benchmark.arrays import array_module, to_array, buffer_from_array, copy_to
 from mscclpp._mscclpp import is_hip
 from mscclpp.utils import Kernel, KernelBuilder, pack
 from mscclpp.gpu import (
@@ -63,7 +63,7 @@ def test_cupy_validation_view_retains_native_storage(mpi_group: MpiGroup, dtype,
     np.testing.assert_array_equal(original.to_numpy(), np.arange(8, dtype=storage))
     native_view = original[2:6]
     owner = weakref.ref(native_view)
-    view = buffer_array(native_view)
+    view = to_array(native_view)
     assert view.data.ptr == original.ptr + 2 * original.itemsize
     del original, native_view
     gc.collect()
@@ -82,12 +82,12 @@ def test_cupy_validation_view_preserves_fortran_layout(mpi_group: MpiGroup):
     buffer = GpuBuffer((2, 3), dtype=np.float32, order="F")
     expected = cp.arange(6, dtype=cp.float32).reshape(2, 3)
     copy_to(buffer, expected)
-    view = buffer_array(buffer)
+    view = to_array(buffer)
     assert view.strides == buffer.strides
     cp.testing.assert_array_equal(view, expected)
     np.testing.assert_array_equal(buffer.to_numpy(), cp.asnumpy(expected))
     empty = GpuBuffer.from_ptr(0, 0, object())
-    assert buffer_array(empty).size == 0
+    assert to_array(empty).size == 0
 
 
 @parametrize_mpi_groups(1)
@@ -473,7 +473,7 @@ def test_connection_write(mpi_group: MpiGroup, connection_type: str, nelem: int)
         )
     poll_for = 100
     for i in range(poll_for):
-        all_correct = bool(xp.array_equal(buffer_array(memory), memory_expected))
+        all_correct = bool(xp.array_equal(to_array(memory), memory_expected))
         if all_correct:
             break
         time.sleep(0.1)
@@ -532,7 +532,7 @@ def test_connection_write_and_signal(mpi_group: MpiGroup, connection_type: str, 
     if group.my_rank == 0:
         while (signal_memory.to_numpy().view(np.int64)[0] if device == "cuda" else signal_memory[0]) != signal_val:
             time.sleep(0.1)
-        all_correct = bool(xp.array_equal(buffer_array(memory) if device == "cuda" else memory, memory_expected))
+        all_correct = bool(xp.array_equal(to_array(memory) if device == "cuda" else memory, memory_expected))
     group.barrier()
     all_correct = mpi_group.comm.bcast(all_correct, 0)
     assert all_correct
@@ -777,7 +777,7 @@ def test_memory_channels(mpi_group: MpiGroup, nelem: int, use_packet: bool):
     kernel()
     device_synchronize()
     group.barrier()
-    assert bool(xp.array_equal(buffer_array(memory), memory_expected))
+    assert bool(xp.array_equal(to_array(memory), memory_expected))
 
 
 @parametrize_mpi_groups(2, 4, 8, 16)
@@ -845,7 +845,7 @@ def test_proxy(mpi_group: MpiGroup, nelem: int, connection_type: str):
     device_synchronize()
     proxy.stop()
     group.barrier()
-    assert bool(xp.array_equal(buffer_array(memory), memory_expected))
+    assert bool(xp.array_equal(to_array(memory), memory_expected))
 
 
 @parametrize_mpi_groups(2, 4, 8, 16)
@@ -892,7 +892,7 @@ def test_port_channel(mpi_group: MpiGroup, nelem: int, connection_type: str, use
     device_synchronize()
     proxy_service.stop_proxy()
     group.barrier()
-    assert bool(xp.array_equal(buffer_array(memory), memory_expected))
+    assert bool(xp.array_equal(to_array(memory), memory_expected))
 
 
 @parametrize_mpi_groups(4, 8)
@@ -963,7 +963,7 @@ def test_executor(mpi_group: MpiGroup, filename: str):
             stream_ptr,
         )
         stream_synchronize(stream)
-        assert bool(xp.allclose(buffer_array(sendbuf), expected, atol=1e-3 * mpi_group.comm.size))
+        assert bool(xp.allclose(to_array(sendbuf), expected, atol=1e-3 * mpi_group.comm.size))
 
         mscclpp_group.barrier()
         executor.reset()
@@ -980,7 +980,7 @@ def test_executor(mpi_group: MpiGroup, filename: str):
             stream_ptr,
         )
         stream_synchronize(stream)
-        assert bool(xp.allclose(buffer_array(sendbuf), expected, atol=1e-3 * mpi_group.comm.size))
+        assert bool(xp.allclose(to_array(sendbuf), expected, atol=1e-3 * mpi_group.comm.size))
 
         if npkit_dump_dir is not None:
             npkit.dump(npkit_dump_dir)

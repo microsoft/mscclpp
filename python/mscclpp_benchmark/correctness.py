@@ -11,7 +11,7 @@ import numpy as np
 from mpi4py import MPI
 
 from mscclpp.gpu import device_synchronize
-from mscclpp_benchmark.arrays import array_module, buffer_array, copy_to
+from mscclpp_benchmark.arrays import array_module, to_array, copy_to
 
 _mscclpp_module = None
 
@@ -73,7 +73,7 @@ def check_correctness(
             continue
 
         expected, stats_expected = _expected_outputs(case, comm.nranks, iteration, comm.rank)
-        output = buffer_array(case.output)
+        output = to_array(case.output)
         iter_stats = _local_diff_stats(case, output, expected, comm.nranks, stats_expected=stats_expected)
         local_ok = _compare_output(case, output, expected, comm.nranks)
         all_ok = all_ok and local_ok

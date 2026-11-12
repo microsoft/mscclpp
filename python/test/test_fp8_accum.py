@@ -18,7 +18,7 @@ from mscclpp._mscclpp import is_hip as _is_hip
 from mscclpp.ext import AlgorithmCollectionBuilder
 from mscclpp.utils import get_device_arch
 from mscclpp.gpu import device_synchronize
-from mscclpp_benchmark.arrays import array_module, buffer_array, copy_to
+from mscclpp_benchmark.arrays import array_module, to_array, copy_to
 from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups, mpi_group
 
 # FP8 E4M3 (hardware) requires SM >= 89 (Ada / Hopper) on NVIDIA GPUs.
@@ -266,7 +266,7 @@ def run_allreduce(algo, comm_group, buffer, dtype, accum_dtype=None, nblocks=0, 
     )
     device_synchronize()
     assert ret == 0, f"Allreduce failed with error code {ret}"
-    return buffer_array(buffer)
+    return to_array(buffer)
 
 
 # ---------------------------------------------------------------------------

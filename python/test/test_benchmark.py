@@ -32,7 +32,7 @@ def test_numpy_validation_without_cupy(monkeypatch, is_hip):
     )
     assert arrays.array_module() is np
     arrays.copy_to(buffer, np.full(4, 7, dtype=np.uint8))
-    np.testing.assert_array_equal(arrays.buffer_array(buffer), [7, 7, 7, 7])
+    np.testing.assert_array_equal(arrays.to_array(buffer), [7, 7, 7, 7])
 
 
 @pytest.mark.parametrize("is_hip", [False, True])

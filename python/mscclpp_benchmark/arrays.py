@@ -22,7 +22,7 @@ def array_module(array=None):
     return cupy if array is None else cupy.get_array_module(array)
 
 
-def buffer_array(buffer):
+def to_array(buffer):
     """Return a GPU storage view retaining its owner, or a host copy without CuPy."""
     xp = array_module()
     if xp is np:
@@ -46,7 +46,7 @@ def copy_to(buffer, values):
         buffer.copy_from_numpy(values)
         return
     with xp.cuda.Device(buffer.device_id):
-        buffer_array(buffer)[...] = xp.asarray(values)
+        to_array(buffer)[...] = xp.asarray(values)
         xp.cuda.get_current_stream().synchronize()
 
 

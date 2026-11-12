@@ -13,7 +13,7 @@ from mscclpp_benchmark.mscclpp_op import (
     MscclppAllReduce6,
 )
 from mscclpp_benchmark.nccl_op import NcclAllReduce, NcclCommunicator, get_unique_id
-from mscclpp_benchmark.arrays import array_module, buffer_array, copy_to
+from mscclpp_benchmark.arrays import array_module, to_array, copy_to
 from mpi4py import MPI
 from mscclpp import ProxyService, is_nvls_supported, CommGroup, GpuBuffer
 from mscclpp.gpu import (
@@ -101,7 +101,7 @@ def check_correctness(memory, func, niter=100):
         device_synchronize()
         output_memory = func(None)
         device_synchronize()
-        output = buffer_array(output_memory)
+        output = to_array(output_memory)
         expected = xp.zeros(memory.shape, dtype=data_type)
         for i in range(MPI.COMM_WORLD.size):
             expected += xp.ones(memory.shape).astype(data_type) * (p * MPI.COMM_WORLD.size + i)
