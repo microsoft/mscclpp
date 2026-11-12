@@ -10,14 +10,16 @@ try:
 except ModuleNotFoundError as exc:
     if exc.name != "mscclpp.mscclpp_ep_cpp":
         raise
-    raise ImportError(
+    raise ModuleNotFoundError(
         "mscclpp.ep requires the mscclpp_ep_cpp extension. "
-        "Rebuild MSCCL++ with its expert-parallel Python extension enabled."
+        "Rebuild MSCCL++ with its expert-parallel Python extension enabled.",
+        name="mscclpp.ep",
     ) from exc
 
 CombineMode = _cpp.CombineMode
 DispatchDataType = _cpp.DispatchDataType
 DispatchLayout = _cpp.DispatchLayout
+NativeQuantConfig = _cpp.QuantConfig
 MoEMode = _cpp.MoEMode
 MoERuntime = _cpp.MoERuntime
 PrepareHandle = _cpp.PrepareHandle

@@ -8,7 +8,10 @@ try:
 except ModuleNotFoundError as exc:
     if exc.name != "torch":
         raise
-    raise ImportError("mscclpp.ep requires PyTorch; install the optional 'mscclpp[ep]' dependencies.") from exc
+    raise ModuleNotFoundError(
+        "mscclpp.ep requires PyTorch; install the optional 'mscclpp[ep]' dependencies.",
+        name="mscclpp.ep",
+    ) from exc
 
 from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode
 from .communicator import MoECommunicator

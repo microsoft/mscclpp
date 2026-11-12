@@ -26,7 +26,17 @@ from .utils import (
 
 @dataclass
 class _DispatchRequest:
-    arguments: dict[str, Union[int, DispatchDataType, _cpp.PrepareHandle]]
+    arguments: dict[
+        str,
+        Union[
+            bool,
+            int,
+            float,
+            DispatchDataType,
+            _cpp.NativeQuantConfig,
+            _cpp.PrepareHandle,
+        ],
+    ]
     output: DispatchOutput
     num_tokens: int
     active_capacity: int
@@ -94,8 +104,12 @@ class RequestBuilder:
     ) -> _DispatchRequest:
         config = self._config
         active = verify_active_capacity(runtime_max_tokens_per_rank, config.max_tokens_per_rank)
-        data_type, _ = resolve_dispatch_format(config, quant)
-        num_tokens = self._validate_dispatch_input(input, topk_ids, weights, torch.bfloat16, active)
+        data_type, _, scale, input_mode, combine_data_type = resolve_dispatch_format(config, quant)
+        rank_major = config.output_layout == DispatchLayout.RANK_MAJOR
+        static_fp8 = rank_major and data_type == DispatchDataType.FP8_E4M3_STATIC
+        prequantized_static_fp8 = static_fp8 and input_mode == QuantConfig.InputMode.PREQUANTIZED
+        input_dtype = torch.float8_e4m3fn if prequantized_static_fp8 else torch.bfloat16
+        num_tokens = self._validate_dispatch_input(input, topk_ids, weights, input_dtype, active)
         output_shape = dispatch_shape(config, self._runtime.num_ranks, active)
         tokens = self._dispatch_buffer(
             output_buffer,
@@ -103,7 +117,6 @@ class RequestBuilder:
             payload_dtype(data_type),
             runtime_owned=config.output_layout != DispatchLayout.EXPERT_MAJOR,
         )
-        rank_major = config.output_layout == DispatchLayout.RANK_MAJOR
         count = torch.empty(
             (self._runtime.num_ranks if rank_major else config.num_local_experts,),
             dtype=torch.int32,
@@ -112,8 +125,9 @@ class RequestBuilder:
         src_info = layout_range = recv_ids = recv_weights = scales = combine_input = None
         if rank_major:
             recv_ids, recv_weights = self._routing_views(output_shape)
+            combine_dtype = payload_dtype(combine_data_type)
             combine_input = self._view(
-                self._runtime.combine_input_buffer_ptr(), self._combine_shape(active), torch.bfloat16
+                self._runtime.combine_input_buffer_ptr(), self._combine_shape(active), combine_dtype
             )
         else:
             src_info = torch.empty(output_shape[:-1], dtype=torch.int32, device=config.device)
@@ -121,7 +135,7 @@ class RequestBuilder:
             layout_range = torch.empty(
                 (config.num_local_experts, self._runtime.num_ranks), dtype=torch.int64, device=config.device
             )
-        if data_type == DispatchDataType.FP8_E4M3:
+        if data_type == DispatchDataType.FP8_E4M3 and not rank_major:
             scales = torch.empty(
                 (config.num_local_experts, config.hidden_size // 128, self._runtime.num_ranks * active),
                 dtype=torch.float32,
@@ -133,9 +147,19 @@ class RequestBuilder:
                 output_shape[:-1] + (config.hidden_size // 32,),
                 torch.uint8,
             )
+        output_quant = (
+            None
+            if data_type == DispatchDataType.BF16 and combine_data_type == DispatchDataType.BF16
+            else QuantConfig(
+                format=data_type,
+                block_scales=scales,
+                scale=scale,
+                combine_format=combine_data_type,
+            )
+        )
         output = DispatchOutput(
             tokens=tokens,
-            quant=None if scales is None else QuantConfig(format=data_type, block_scales=scales),
+            quant=output_quant,
             layout=DispatchLayoutInfo(
                 kind=config.output_layout,
                 num_tokens_per_expert=None if rank_major else count,
@@ -145,6 +169,11 @@ class RequestBuilder:
             weights=recv_weights,
             combine_input_buffer=combine_input,
         )
+        native_quant = _cpp.NativeQuantConfig()
+        native_quant.dispatch_data_type = data_type
+        native_quant.dispatch_scale = 1.0 if scale is None else scale
+        native_quant.input_mode = input_mode
+        native_quant.combine_data_type = combine_data_type
         return _DispatchRequest(
             arguments=dict(
                 input_ptr=ptr(input),
@@ -160,9 +189,10 @@ class RequestBuilder:
                 num_tokens=num_tokens,
                 max_tokens_per_rank=active,
                 invalid_token_expert_id=config.invalid_token_expert_id,
-                dispatch_data_type=data_type,
+                quant=native_quant,
                 num_blocks=config.num_blocks[0],
                 stream_ptr=stream.cuda_stream,
+                emit_local_expert_ids=config.emit_local_expert_ids,
             ),
             output=output,
             num_tokens=num_tokens,
@@ -195,7 +225,7 @@ class RequestBuilder:
     ) -> _DispatchRequest:
         config = self._config
         active = verify_active_capacity(runtime_max_tokens_per_rank, config.max_tokens_per_rank)
-        data_type, input_scales = resolve_dispatch_format(config, quant)
+        data_type, input_scales, _, _, _ = resolve_dispatch_format(config, quant)
         num_tokens = self._validate_dispatch_input(input, topk_ids, weights, payload_dtype(data_type), active)
         if data_type == DispatchDataType.FP8_E4M3:
             if input_scales is None:
@@ -332,7 +362,12 @@ class RequestBuilder:
     def _combine_output(
         self, expert_output: torch.Tensor, handle: DispatchHandle, out: Optional[torch.Tensor]
     ) -> torch.Tensor:
-        self._check(expert_output, "expert_output", self._combine_shape(handle._active_capacity), torch.bfloat16)
+        expert_dtype = torch.bfloat16
+        if self._config.mode == MoEMode.LATENCY and self._config.output_layout == DispatchLayout.RANK_MAJOR:
+            quant = handle.output_info.quant
+            if quant is not None and quant.combine_format == DispatchDataType.FP8_E4M3_STATIC:
+                expert_dtype = torch.float8_e4m3fn
+        self._check(expert_output, "expert_output", self._combine_shape(handle._active_capacity), expert_dtype)
         if (
             self._config.output_layout != DispatchLayout.EXPERT_MAJOR
             and ptr(expert_output) != self._runtime.combine_input_buffer_ptr()

@@ -12,10 +12,14 @@
 #include <string>
 #include <vector>
 
+#include "../ep_quantization_reference.hpp"
 #include "../framework.hpp"
 #include "common/quantization.cuh"
 
 namespace {
+
+using mscclpp::test::referenceFp8E4M3;
+using mscclpp::test::referenceScale;
 
 constexpr int Mxfp8BlockSize = 32;
 constexpr int VectorsPerBlock = Mxfp8BlockSize / mscclpp::bf16x8::Size;
@@ -33,42 +37,19 @@ __global__ void quantizeMxfp8Blocks(const mscclpp::bf16x8* input, mscclpp::f8_e4
   if (vectorIdx % VectorsPerBlock == 0) scales[vectorIdx / VectorsPerBlock] = scale;
 }
 
+__global__ void quantizeStaticFp8Vectors(const mscclpp::bf16x8* input, mscclpp::f8_e4m3x8* output, int numVectors,
+                                         float scale) {
+  const int vectorIdx = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+  if (vectorIdx < numVectors) {
+    output[vectorIdx] = mscclpp::ep::quantizeBf16x8ToStaticFp8(input[vectorIdx], scale);
+  }
+}
+
 double bf16ToDouble(uint16_t bits) {
   const uint32_t floatBits = static_cast<uint32_t>(bits) << 16;
   float value;
   std::memcpy(&value, &floatBits, sizeof(value));
   return value;
-}
-
-// Smallest scale byte s in [1, 254] with maxAbs <= 448 * 2^(s - 127); all-zero blocks use 127.
-uint8_t referenceScale(double maxAbs) {
-  if (maxAbs == 0.0) return 127;
-  int scale = 1;
-  while (scale < 254 && maxAbs > std::ldexp(448.0, scale - 127)) ++scale;
-  return static_cast<uint8_t>(scale);
-}
-
-// Nearest finite E4M3 code with ties to the even code; magnitudes above 448 saturate.
-uint8_t referenceFp8E4M3(double value) {
-  static const std::array<double, 0x7F> codeValues = [] {
-    std::array<double, 0x7F> values;
-    for (int code = 0; code < 0x7F; ++code) {
-      const int exponent = code >> 3;
-      const int mantissa = code & 7;
-      values[code] = exponent == 0 ? std::ldexp(mantissa, -9) : std::ldexp(8 + mantissa, exponent - 10);
-    }
-    return values;
-  }();
-  const double magnitude = std::fabs(value);
-  const int upper =
-      static_cast<int>(std::lower_bound(codeValues.begin(), codeValues.end(), magnitude) - codeValues.begin());
-  int code = std::min(upper, 0x7E);
-  if (upper > 0 && upper < 0x7F) {
-    const double below = magnitude - codeValues[upper - 1];
-    const double above = codeValues[upper] - magnitude;
-    if (below < above || (below == above && (upper - 1) % 2 == 0)) code = upper - 1;
-  }
-  return static_cast<uint8_t>((std::signbit(value) ? 0x80 : 0) | code);
 }
 
 // Quantizes 32-element BF16 blocks on the GPU and compares every scale and payload byte with the host reference.
@@ -115,6 +96,46 @@ std::string checkMxfp8Quantization(const std::vector<uint16_t>& input) {
     }
   }
   return mismatches == 0 ? std::string() : std::to_string(mismatches) + " mismatches, first: " + firstMismatch.str();
+}
+
+std::string checkStaticFp8Quantization() {
+  std::vector<uint16_t> input;
+  input.reserve(static_cast<size_t>(Bf16MaxFiniteMagnitude + 1) * 2);
+  for (uint32_t magnitude = 0; magnitude <= Bf16MaxFiniteMagnitude; ++magnitude) {
+    input.push_back(static_cast<uint16_t>(magnitude));
+    input.push_back(static_cast<uint16_t>(magnitude | Bf16SignBit));
+  }
+
+  const int numVectors = static_cast<int>(input.size() / mscclpp::bf16x8::Size);
+  mscclpp::GpuBuffer<uint16_t> deviceInput(input.size());
+  mscclpp::GpuBuffer<uint8_t> deviceOutput(input.size());
+  MSCCLPP_CUDATHROW(
+      cudaMemcpy(deviceInput.data(), input.data(), input.size() * sizeof(uint16_t), cudaMemcpyHostToDevice));
+  constexpr int Threads = 256;
+  std::vector<uint8_t> output(input.size());
+  for (const float scale : {0.125f, 0.75f, 1.0f}) {
+    quantizeStaticFp8Vectors<<<(numVectors + Threads - 1) / Threads, Threads>>>(
+        reinterpret_cast<const mscclpp::bf16x8*>(deviceInput.data()),
+        reinterpret_cast<mscclpp::f8_e4m3x8*>(deviceOutput.data()), numVectors, scale);
+    MSCCLPP_CUDATHROW(cudaGetLastError());
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+    MSCCLPP_CUDATHROW(cudaMemcpy(output.data(), deviceOutput.data(), output.size(), cudaMemcpyDeviceToHost));
+
+    size_t mismatches = 0;
+    std::ostringstream firstMismatch;
+    for (size_t element = 0; element < input.size(); ++element) {
+      const float scaled = static_cast<float>(bf16ToDouble(input[element])) * scale;
+      const uint8_t expected = referenceFp8E4M3(scaled);
+      if (output[element] != expected && mismatches++ == 0) {
+        firstMismatch << "element " << element << " (bf16 0x" << std::hex << input[element] << ", scale " << std::dec
+                      << scale << "): expected 0x" << std::hex << int{expected} << ", got 0x" << int{output[element]};
+      }
+    }
+    if (mismatches != 0) {
+      return std::to_string(mismatches) + " mismatches, first: " + firstMismatch.str();
+    }
+  }
+  return {};
 }
 
 // One block per finite nonzero BF16 magnitude, which is the block maximum. A coprime stride scrambles the order so
@@ -201,5 +222,11 @@ TEST(EpQuantizationTest, Mxfp8UnitScaleRounding) {
 TEST(EpQuantizationTest, Mxfp8ZeroBlocks) {
   requireSm90();
   const std::string error = checkMxfp8Quantization(zeroBlocks());
+  if (!error.empty()) FAIL() << error;
+}
+
+TEST(EpQuantizationTest, StaticFp8EveryFiniteBf16Value) {
+  requireSm90();
+  const std::string error = checkStaticFp8Quantization();
   if (!error.empty()) FAIL() << error;
 }
