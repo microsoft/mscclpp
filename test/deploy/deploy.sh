@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+#
 # deploy.sh — Provisions remote hosts, copies sources, and launches Docker containers
 # for mscclpp CI/CD test environments.
 #
@@ -14,6 +17,8 @@
 # Environment:
 #   MSCCLPP_PRUNE_DANGLING_IMAGES: Set to "true" to remove unused, untagged
 #     images created more than 24 hours ago on the remote hosts before pulling.
+#   MSCCLPP_SETUP_NVME: Set to "true" to provision persistent NVMe storage for
+#     Docker, containerd, and build/staging files on GB200 hosts before pulling.
 
 set -ex
 
@@ -26,7 +31,8 @@ PILOT="$(echo "${6:-false}" | tr '[:upper:]' '[:lower:]')"
 
 KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
 ROOT_DIR="${SYSTEM_DEFAULTWORKINGDIRECTORY}/"
-DST_DIR="/tmp/mscclpp"
+HOST_TMP_DIR="/tmp"
+DST_DIR="${HOST_TMP_DIR}/mscclpp"
 
 if [ "${TEST_NAME}" == "nccltest-single-node" ] || [ "${TEST_NAME}" == "single-node-test" ]; then
   HOSTFILE="${SYSTEM_DEFAULTWORKINGDIRECTORY}/test/deploy/hostfile_ci"
@@ -68,6 +74,17 @@ fi
 parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
   "sudo docker rm -f ${CONTAINER_NAME} 2>/dev/null || true"
 
+if [ "${MSCCLPP_SETUP_NVME,,}" == "true" ]; then
+  parallel-scp -t 0 -h "${HOSTFILE}" -x "-i ${KeyFilePath}" -O "${SSH_OPTION}" \
+    "${ROOT_DIR}test/deploy/setup-nvme.sh" /tmp/mscclpp-setup-nvme.sh
+  parallel-ssh -i -t 0 -h "${HOSTFILE}" -x "-i ${KeyFilePath}" -O "${SSH_OPTION}" \
+    "sudo bash /tmp/mscclpp-setup-nvme.sh && rm -f /tmp/mscclpp-setup-nvme.sh"
+  HOST_TMP_DIR="/mnt/nvme/mscclpp-ci"
+  DST_DIR="${HOST_TMP_DIR}/mscclpp"
+  parallel-ssh -i -t 0 -h "${HOSTFILE}" -x "-i ${KeyFilePath}" -O "${SSH_OPTION}" \
+    "sudo install -d -o \$(id -u) -g \$(id -g) ${HOST_TMP_DIR}"
+fi
+
 if [ "${MSCCLPP_PRUNE_DANGLING_IMAGES:-false}" == "true" ]; then
   parallel-ssh -i -t 0 -h "${HOSTFILE}" -x "-i ${KeyFilePath}" -O "${SSH_OPTION}" '
     set -e
@@ -83,9 +100,9 @@ fi
 
 parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION "sudo rm -rf ${DST_DIR}"
 tar czf /tmp/mscclpp.tar.gz -C ${ROOT_DIR} .
-parallel-scp -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION /tmp/mscclpp.tar.gz /tmp/mscclpp.tar.gz
+parallel-scp -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION /tmp/mscclpp.tar.gz ${HOST_TMP_DIR}/mscclpp.tar.gz
 parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
-  "sudo mkdir -p ${DST_DIR} && sudo tar xzf /tmp/mscclpp.tar.gz -C ${DST_DIR} && sudo rm -f /tmp/mscclpp.tar.gz"
+  "sudo mkdir -p ${DST_DIR} && sudo tar xzf ${HOST_TMP_DIR}/mscclpp.tar.gz -C ${DST_DIR} && sudo rm -f ${HOST_TMP_DIR}/mscclpp.tar.gz"
 rm -f /tmp/mscclpp.tar.gz
 
 if [ "${PLATFORM}" == "rocm" ]; then
@@ -105,12 +122,12 @@ if [ "${PLATFORM}" == "cuda" ]; then
       set -e
       sudo rmmod gdrdrv 2>/dev/null || true
       sudo apt-get update -y && sudo apt-get install -y build-essential devscripts debhelper check libsubunit-dev fakeroot pkg-config dkms
-      cd /tmp && wget -q https://github.com/NVIDIA/gdrcopy/archive/refs/tags/v${GDRCOPY_VERSION}.tar.gz -O gdrcopy.tar.gz
+      cd ${HOST_TMP_DIR} && wget -q https://github.com/NVIDIA/gdrcopy/archive/refs/tags/v${GDRCOPY_VERSION}.tar.gz -O gdrcopy.tar.gz
       tar xzf gdrcopy.tar.gz && cd gdrcopy-${GDRCOPY_VERSION}/packages
       CUDA=/usr/local/cuda ./build-deb-packages.sh
       sudo dpkg -i gdrdrv-dkms_${GDRCOPY_VERSION}*.deb
       sudo modprobe gdrdrv
-      rm -rf /tmp/gdrcopy.tar.gz /tmp/gdrcopy-${GDRCOPY_VERSION}
+      rm -rf ${HOST_TMP_DIR}/gdrcopy.tar.gz ${HOST_TMP_DIR}/gdrcopy-${GDRCOPY_VERSION}
     fi"
 fi
 
