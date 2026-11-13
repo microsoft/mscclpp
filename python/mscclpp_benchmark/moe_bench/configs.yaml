@@ -1,0 +1,107 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+models:
+  small:
+    d_model: 4096
+    num_experts: 8
+    top_k: 2
+    intermediate_size: 14336
+    activation: swiglu
+  medium:
+    d_model: 5120
+    num_experts: 32
+    top_k: 4
+    intermediate_size: 8192
+    activation: swiglu
+  large:
+    d_model: 7168
+    num_experts: 128
+    top_k: 8
+    intermediate_size: 2048
+    activation: swiglu
+
+  scaled_small:
+    d_model: 4096
+    num_experts: 8
+    top_k: 2
+    intermediate_size: 8192
+    activation: swiglu
+  scaled_medium:
+    d_model: 5120
+    num_experts: 32
+    top_k: 2
+    intermediate_size: 14336
+    activation: swiglu
+  scaled_large:
+    d_model: 7168
+    num_experts: 128
+    top_k: 2
+    intermediate_size: 20480
+    activation: swiglu
+
+inputs:
+  decode:
+    tokens_per_rank: 16
+    dtype: bf16
+  prefill:
+    tokens_per_rank: 1024
+    dtype: bf16
+
+environment:
+  mode: latency
+  layout: expert_major
+  communication_backend: mscclpp
+  compute_backend: cutlass_flashinfer
+  cuda_graph: false
+
+compute:
+  activation_dtype: mxfp8
+  weight_dtype: mxfp4
+
+routing:
+  # The MegaMoE benchmark's routing patterns (balanced plus global expert-load profiles).
+  balanced:
+    kind: balanced
+  zipf:
+    kind: zipf
+    alpha: 1.2
+  zipf_skewed:
+    kind: zipf_skewed
+    alpha: 1.2
+  hot_experts:
+    kind: hot_experts
+  lognormal:
+    kind: lognormal
+    sigma: 0.85
+  # Traffic scenarios. "Local" is the sending GPU (scope: rank) or its node
+  # (scope: node; gpus_per_node defaults to the launched topology).
+  hot_last_rank:
+    kind: hot_rank
+    rank: -1
+    probability_mass: 0.8
+  idle_half:
+    kind: idle_ranks
+    stride: 2
+  local_heavy:
+    kind: locality
+    scope: rank
+    local_fraction: 0.9
+  remote_heavy:
+    kind: locality
+    scope: rank
+    local_fraction: 0.0
+  intra_node_heavy:
+    kind: locality
+    scope: node
+    local_fraction: 0.9
+  cross_node_heavy:
+    kind: locality
+    scope: node
+    local_fraction: 0.0
+
+benchmark:
+  warmup: 10
+  iterations: 100
+  seed: 42
+  output_dir: benchmark_results

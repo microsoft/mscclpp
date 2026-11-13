@@ -42,6 +42,12 @@ benchmark = [
     "netifaces",
     "matplotlib",
 ]
+moe-benchmark = [
+    "torch",
+    "PyYAML>=6",
+    "flashinfer-python==0.7.1",
+    "nvidia-cutlass-dsl==4.8.0",
+]
 test = [
     "pytest",
     "mpi4py",
