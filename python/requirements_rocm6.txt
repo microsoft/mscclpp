@@ -1,4 +1,5 @@
 mpi4py
+cupy==13.6.0
 prettytable
 netifaces
 pytest

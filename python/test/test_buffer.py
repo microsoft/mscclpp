@@ -76,7 +76,7 @@ class CudaBufferTests(unittest.TestCase):
             ("GetDeviceCount", lambda: (0, 8)),
             ("GetDevice", lambda: (0, self.device)),
             ("GetErrorString", lambda error: (0, b"native error")),
-            ("PointerGetAttributes", lambda ptr: (0, SimpleNamespace(device=self.pointer_device))),
+            ("PointerGetAttributes", self.pointer_get_attributes),
             ("SetDevice", set_device),
             ("DeviceSynchronize", lambda: (0,)),
             ("MemcpyAsync", memcpy_async),
@@ -98,8 +98,11 @@ class CudaBufferTests(unittest.TestCase):
         setattr(self.runtime, self.prefix + "StreamNonBlocking", 1)
         package = ModuleType("mscclpp")
         package.__path__ = [str(self.python_dir / "mscclpp")]
+        benchmark_package = ModuleType("mscclpp_benchmark")
+        benchmark_package.__path__ = [str(self.python_dir / "mscclpp_benchmark")]
         modules = {
             "mscclpp": package,
+            "mscclpp_benchmark": benchmark_package,
             "mscclpp._mscclpp": SimpleNamespace(
                 CppRawGpuBuffer=self.allocate,
                 CppGpuBufferGranularity=SimpleNamespace(MultiCastMinimum=0),
@@ -126,6 +129,12 @@ class CudaBufferTests(unittest.TestCase):
 
     def api(self, name):
         return getattr(self.runtime, self.prefix + name)
+
+    def pointer_get_attributes(self, ptr):
+        return (0, SimpleNamespace(device=self.pointer_device))
+
+    def assert_pointer_query(self, ptr):
+        self.api("PointerGetAttributes").assert_called_once_with(ptr)
 
     def test_constructor_default_and_numpy_inputs_return_datatype(self):
         buffer = self.GpuBuffer(4)
@@ -442,7 +451,7 @@ class CudaBufferTests(unittest.TestCase):
         buffer.copy_from_numpy(np.ones(4, dtype=np.int32))
         self.assertEqual(self.device, 6)
         self.assertEqual([call.args for call in self.api("SetDevice").call_args_list], [(2,), (6,)])
-        self.api("PointerGetAttributes").assert_called_once_with(host.ctypes.data)
+        self.assert_pointer_query(host.ctypes.data)
         self.api("MemcpyAsync").side_effect = lambda *args: (17,)
         with self.assertRaisesRegex(RuntimeError, r"memcpy_async failed: native error \(17\)"):
             buffer.to_numpy()
@@ -451,12 +460,12 @@ class CudaBufferTests(unittest.TestCase):
     def test_from_ptr_device_query_failure_is_reported_and_retryable(self):
         host = np.arange(4, dtype=np.int32)
         buffer = self.GpuBuffer.from_ptr(host.ctypes.data, host.nbytes, host, dtype=host.dtype)
-        self.api("PointerGetAttributes").side_effect = lambda ptr: (18, None)
+        self.api("PointerGetAttributes").side_effect = lambda *args: (18,)
         with self.assertRaisesRegex(RuntimeError, r"pointer_get_attributes failed: native error \(18\)"):
             buffer.to_numpy()
         self.api("MemcpyAsync").assert_not_called()
         self.api("SetDevice").assert_not_called()
-        self.api("PointerGetAttributes").side_effect = lambda ptr: (0, SimpleNamespace(device=2))
+        self.api("PointerGetAttributes").side_effect = self.pointer_get_attributes
         np.testing.assert_array_equal(buffer.to_numpy(), host)
 
     def test_from_ptr_validates_metadata_without_gpu_calls(self):
@@ -621,9 +630,7 @@ class CudaBufferTests(unittest.TestCase):
         np.testing.assert_array_equal(tests[0].to_numpy(), np.zeros(64, dtype=np.uint16))
 
     def test_benchmark_uses_logical_dtype_for_allocations_and_execution(self):
-        package = ModuleType("mscclpp_benchmark")
-        package.__path__ = [str(self.python_dir / "mscclpp_benchmark")]
-        with patch.dict(sys.modules, {"mscclpp_benchmark": package, "mpi4py": SimpleNamespace(MPI=object)}):
+        with patch.dict(sys.modules, {"mpi4py": SimpleNamespace(MPI=object)}):
             comm = load_module("mscclpp_benchmark.comm", self.python_dir / "mscclpp_benchmark" / "comm.py")
             bench = load_module("_dtype_benchmark", self.python_dir / "mscclpp_benchmark" / "bench_collective.py")
         comm._mscclpp_module = bench._mscclpp_module = SimpleNamespace(GpuBuffer=self.GpuBuffer, DataType=DataType)
@@ -685,6 +692,21 @@ class CudaBufferTests(unittest.TestCase):
 
 class HipBufferTests(CudaBufferTests):
     is_hip = True
+
+    def setUp(self):
+        super().setUp()
+        self.runtime.hipPointerAttribute_t = Mock(side_effect=SimpleNamespace)
+
+    def pointer_get_attributes(self, attributes, ptr):
+        attributes.device = self.pointer_device
+        return (0,)
+
+    def assert_pointer_query(self, ptr):
+        self.runtime.hipPointerAttribute_t.assert_called_once_with()
+        attributes, actual_ptr = self.api("PointerGetAttributes").call_args.args
+        self.assertEqual(attributes.device, self.pointer_device)
+        self.assertEqual(actual_ptr, ptr)
+        self.api("PointerGetAttributes").assert_called_once_with(attributes, ptr)
 
 
 if __name__ == "__main__":
