@@ -44,14 +44,13 @@ class UnixSocketClient {
 
   int requestFd(const std::string& socketPath, uint32_t fdId);
   void reset();
-  ~UnixSocketClient();
 
  private:
-  std::unordered_map<std::string, int> cachedFds_;
+  struct Connection;
+  std::unordered_map<std::string, std::shared_ptr<Connection>> connections_;
   std::mutex mutex_;
 
   UnixSocketClient() = default;
-  int requestFdInternal(int connFd, uint32_t fdId);
 };
 
 }  // namespace mscclpp
