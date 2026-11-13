@@ -25,19 +25,15 @@ ep = [
     "torch>=2.1",
 ]
 cuda12 = [
-    "cupy-cuda12x",
     "cuda-bindings>=12,<13",
 ]
 cuda13 = [
-    "cupy-cuda13x",
     "cuda-bindings>=13,<14",
 ]
 rocm6 = [
-    "cupy",
     "hip-python>=6,<7",
 ]
 rocm7 = [
-    "cupy",
     "hip-python>=7,<8",
 ]
 benchmark = [
@@ -50,6 +46,22 @@ test = [
     "pytest",
     "mpi4py",
     "netifaces",
+]
+test-cuda12 = [
+    "mscclpp[test]",
+    "cupy-cuda12x",
+]
+test-cuda13 = [
+    "mscclpp[test]",
+    "cupy-cuda13x",
+]
+test-rocm6 = [
+    "mscclpp[test]",
+    "cupy==13.6.0",
+]
+test-rocm7 = [
+    "mscclpp[test]",
+    "cupy>=14,<15",
 ]
 
 [tool.setuptools_scm]

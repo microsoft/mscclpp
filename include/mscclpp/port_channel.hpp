@@ -150,17 +150,6 @@ struct BasePortChannel {
   /// User should make sure the BasePortChannel is not released when using the returned handle.
   /// @return The device-side handle.
   DeviceHandle deviceHandle() const;
-
-  /// Returns a device-side handle with `SmemSlots` shared-memory slots per CTA.
-  /// @tparam SmemSlots Number of 64-byte shared-memory slots per CTA (0 disables BlueFlame).
-  /// @return The device-side handle, valid while this BasePortChannel remains alive.
-  template <uint32_t SmemSlots>
-  BasePortChannelDeviceHandleT<Backend, SmemSlots> deviceHandle() const
-    requires(Backend == PortChannelBackend::Device)
-  {
-    const auto h = deviceHandle();
-    return {h.semaphore_, h.device_};
-  }
 };
 
 BasePortChannel(SemaphoreId, std::shared_ptr<Host2DeviceSemaphore>,
@@ -223,17 +212,6 @@ struct PortChannel : public BasePortChannel<Backend> {
   /// User should make sure the PortChannel is not released when using the returned handle.
   /// @return The device-side handle.
   DeviceHandle deviceHandle() const;
-
-  /// Returns a device-side handle with `SmemSlots` shared-memory slots per CTA.
-  /// @tparam SmemSlots Number of 64-byte shared-memory slots per CTA (0 disables BlueFlame).
-  /// @return The device-side handle, valid while this PortChannel remains alive.
-  template <uint32_t SmemSlots>
-  PortChannelDeviceHandleT<Backend, SmemSlots> deviceHandle() const
-    requires(Backend == PortChannelBackend::Device)
-  {
-    const auto h = deviceHandle();
-    return {h.semaphore_, h.device_, h.dstMemory_, h.srcMemory_};
-  }
 };
 
 PortChannel(SemaphoreId, std::shared_ptr<Host2DeviceSemaphore>, std::shared_ptr<Proxy>, MemoryId,
