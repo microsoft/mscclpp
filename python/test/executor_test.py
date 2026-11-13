@@ -13,6 +13,7 @@ from mscclpp import (
     env,
 )
 from mscclpp import CommGroup, GpuBuffer
+from mscclpp_benchmark.arrays import array_module, copy_to
 import mscclpp.gpu as gpu
 from mscclpp.utils import KernelBuilder, pack
 import os
@@ -179,6 +180,7 @@ def build_bufs(
     """Allocate input/result/test buffers. Returns parallel lists (length 2 for sendrecv double-buffering,
     length 1 otherwise) so callers can iterate uniformly."""
     storage_dtype = parse_dtype(dtype.name)
+    xp = array_module()
     type_size = np.dtype(storage_dtype).itemsize
     assert (size % type_size) == 0, "size %d not multiple of type size %d" % (size, type_size)
     nelems = size // type_size
@@ -190,7 +192,7 @@ def build_bufs(
         result_bufs = [GpuBuffer(nelems, dtype=dtype) for _ in range(n_slots)]
         test_bufs = [GpuBuffer(nelems, dtype=dtype) for _ in range(n_slots)]
         for buffer in test_bufs:
-            buffer.copy_from_numpy(np.zeros(buffer.shape, dtype=storage_dtype))
+            copy_to(buffer, xp.zeros(buffer.shape, dtype=storage_dtype))
         return input_bufs, result_bufs, test_bufs, nelems
 
     if "allgather" in collective:
@@ -220,7 +222,7 @@ def build_bufs(
         input_buf = GpuBuffer(nelems_input, dtype=dtype)
 
     test_buf = GpuBuffer(nelems, dtype=dtype)
-    test_buf.copy_from_numpy(np.zeros(test_buf.shape, dtype=storage_dtype))
+    copy_to(test_buf, xp.zeros(test_buf.shape, dtype=storage_dtype))
 
     return [input_buf], [result_buf], [test_buf], nelems
 

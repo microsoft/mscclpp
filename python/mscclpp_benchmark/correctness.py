@@ -11,6 +11,7 @@ import numpy as np
 from mpi4py import MPI
 
 from mscclpp.gpu import device_synchronize
+from mscclpp_benchmark.arrays import array_module, to_array, copy_to
 
 _mscclpp_module = None
 
@@ -44,10 +45,10 @@ def fill_case_for_benchmark(case: Any, rank: int) -> None:
     values = _benchmark_input_values(case, rank)
     encoded = _encode_correctness_input(case, values)
     if case.collective == "allreduce":
-        case.input.copy_from_numpy(encoded)
+        copy_to(case.input, encoded)
         return
-    case.output.copy_from_numpy(np.zeros(case.output.shape, dtype=case.dtype_spec.storage_dtype))
-    case.input.copy_from_numpy(encoded)
+    copy_to(case.output, array_module(encoded).zeros(case.output.shape, dtype=case.dtype_spec.storage_dtype))
+    copy_to(case.input, encoded)
 
 
 def check_correctness(
@@ -72,7 +73,7 @@ def check_correctness(
             continue
 
         expected, stats_expected = _expected_outputs(case, comm.nranks, iteration, comm.rank)
-        output = case.output.to_numpy()
+        output = to_array(case.output)
         iter_stats = _local_diff_stats(case, output, expected, comm.nranks, stats_expected=stats_expected)
         local_ok = _compare_output(case, output, expected, comm.nranks)
         all_ok = all_ok and local_ok
@@ -110,20 +111,20 @@ def _fill_case_for_correctness(case: Any, rank: int, iteration: int) -> None:
     values = _correctness_input_values(case, rank, iteration)
     encoded = _encode_correctness_input(case, values)
     if case.collective == "allreduce":
-        case.input.copy_from_numpy(encoded)
+        copy_to(case.input, encoded)
         return
-    case.output.copy_from_numpy(np.zeros(case.output.shape, dtype=case.dtype_spec.storage_dtype))
-    case.input.copy_from_numpy(encoded)
+    copy_to(case.output, array_module(encoded).zeros(case.output.shape, dtype=case.dtype_spec.storage_dtype))
+    copy_to(case.input, encoded)
 
 
 def _correctness_input_values(case: Any, rank: int, iteration: int):
     shape = case.input.shape
-    rng = np.random.RandomState(_correctness_seed(rank, iteration))
+    rng = array_module().random.RandomState(_correctness_seed(rank, iteration))
     return _random_input_values(case, rng, shape)
 
 
 def _benchmark_input_values(case: Any, rank: int):
-    rng = np.random.RandomState(17_000_003 + rank)
+    rng = array_module().random.RandomState(17_000_003 + rank)
     return _random_input_values(case, rng, case.input.shape)
 
 
@@ -161,19 +162,20 @@ def _encode_correctness_input(case: Any, values):
 
 
 def _local_diff_stats(case: Any, output, expected, nranks: int, *, stats_expected=None) -> CorrectnessStats:
+    xp = array_module(output)
     mismatch = _mismatch_mask(case, output, expected, nranks)
-    mismatches = int(np.count_nonzero(mismatch))
+    mismatches = int(xp.count_nonzero(mismatch))
     total = int(output.size)
     if total == 0:
         return CorrectnessStats(ok=mismatches == 0)
 
     output_values = _stats_values(case, output)
     expected_values = _stats_values(case, expected) if stats_expected is None else stats_expected.astype(np.float64)
-    abs_diff = np.abs(output_values - expected_values)
+    abs_diff = xp.abs(output_values - expected_values)
     return CorrectnessStats(
         ok=mismatches == 0,
-        max_abs_diff=float(np.max(abs_diff).item()),
-        mean_abs_diff=float(np.mean(abs_diff).item()),
+        max_abs_diff=float(xp.max(abs_diff).item()),
+        mean_abs_diff=float(xp.mean(abs_diff).item()),
         mismatches=mismatches,
         total=total,
     )
@@ -219,7 +221,7 @@ def _expected_outputs(case: Any, nranks: int, iteration: int, rank: int = 0):
         reduced = sum(values.astype(np.float32).reshape(-1)[start : start + chunk] for values in encoded_inputs)
         return _encode_reduced_output(case, reduced), None
 
-    expected = np.empty(case.output.shape, dtype=case.dtype_spec.storage_dtype)
+    expected = array_module().empty(case.output.shape, dtype=case.dtype_spec.storage_dtype)
     chunk = case.input.size
     for src_rank, values in enumerate(_encoded_rank_inputs(case, nranks, iteration)):
         expected[src_rank * chunk : (src_rank + 1) * chunk] = values.reshape(-1)
@@ -231,19 +233,20 @@ def _encoded_rank_inputs(case: Any, nranks: int, iteration: int) -> list[Any]:
 
 
 def _expected_fp8_accum_values(case: Any, encoded_inputs: list[Any]):
+    xp = array_module(encoded_inputs[0])
     fp8_format = case.dtype_spec.fp8_format
     if fp8_format is None:
         raise ValueError("FP8 format is required")
 
     accum_dtype = config_accum_dtype(case)
     if accum_dtype == _mscclpp().DataType.float16:
-        acc = np.zeros_like(_decode_fp8_array(fp8_format, encoded_inputs[0]), dtype=np.float16)
+        acc = xp.zeros_like(_decode_fp8_array(fp8_format, encoded_inputs[0]), dtype=np.float16)
         for values in encoded_inputs:
             acc = (acc + _decode_fp8_array(fp8_format, values).astype(np.float16)).astype(np.float16)
         return acc.astype(np.float32)
 
     if accum_dtype == _mscclpp().DataType.float32:
-        acc = np.zeros_like(_decode_fp8_array(fp8_format, encoded_inputs[0]), dtype=np.float32)
+        acc = xp.zeros_like(_decode_fp8_array(fp8_format, encoded_inputs[0]), dtype=np.float32)
         for values in encoded_inputs:
             acc += _decode_fp8_array(fp8_format, values).astype(np.float32)
         return acc
@@ -263,7 +266,7 @@ def _encode_reduced_output(case: Any, values):
 
 
 def _compare_output(case: Any, output, expected, nranks: int) -> bool:
-    return bool(np.all(~_mismatch_mask(case, output, expected, nranks)).item())
+    return bool(array_module(output).all(~_mismatch_mask(case, output, expected, nranks)).item())
 
 
 def _mismatch_mask(case: Any, output, expected, nranks: int):
@@ -271,7 +274,9 @@ def _mismatch_mask(case: Any, output, expected, nranks: int):
     if tolerance is None:
         return output != expected
     rtol, atol = tolerance
-    return ~np.isclose(_stats_values(case, output), _stats_values(case, expected), rtol=rtol, atol=atol)
+    return ~array_module(output).isclose(
+        _stats_values(case, output), _stats_values(case, expected), rtol=rtol, atol=atol
+    )
 
 
 def _comparison_tolerance(case: Any, nranks: int) -> tuple[float, float] | None:
@@ -298,17 +303,18 @@ def _comparison_tolerance(case: Any, nranks: int) -> tuple[float, float] | None:
 
 
 _FP8_TABLES: dict[str, list[tuple[int, float]]] = {}
-_FP8_LOOKUP_CACHE: dict[str, tuple[Any, Any]] = {}
+_FP8_LOOKUP_CACHE: dict[tuple[str, Any, int | None], tuple[Any, Any]] = {}
 _FP8_SPACING_CACHE: dict[tuple[str, float], float] = {}
 
 
 def _encode_bfloat16_values(values):
+    xp = array_module(values)
     values = values.astype(np.float32)
     bits = values.view(np.uint32)
     rounding_bias = np.uint32(0x7FFF) + ((bits >> np.uint32(16)) & np.uint32(1))
     encoded = ((bits + rounding_bias) >> np.uint32(16)).astype(np.uint16)
     nan_bits = ((bits >> np.uint32(16)) | np.uint32(0x40)).astype(np.uint16)
-    return np.where(np.isnan(values), nan_bits, encoded)
+    return xp.where(xp.isnan(values), nan_bits, encoded)
 
 
 def _decode_bfloat16_array(values):
@@ -316,16 +322,17 @@ def _decode_bfloat16_array(values):
 
 
 def _encode_fp8_values(fp8_format: str, values):
+    xp = array_module(values)
     values = values.astype(np.float32)
     if fp8_format == "e4m3b15":
         return _encode_e4m3b15_values(values)
 
     # Round each value to the nearest representable FP8 value (ties to even).
-    table_values, table_bytes = _fp8_lookup_arrays(fp8_format)
+    table_values, table_bytes = _fp8_lookup_arrays(fp8_format, xp)
     flat_values = values.ravel()
 
     # For each value find its two surrounding table entries: lower <= value <= upper.
-    upper = np.clip(np.searchsorted(table_values, flat_values), 1, table_values.size - 1)
+    upper = xp.clip(xp.searchsorted(table_values, flat_values), 1, table_values.size - 1)
     lower = upper - 1
 
     # Pick the closer neighbor; on an exact tie pick the one with an even byte.
@@ -334,13 +341,14 @@ def _encode_fp8_values(fp8_format: str, values):
     upper_is_even = (table_bytes[upper] & np.uint8(1)) == 0
     pick_upper = (dist_to_upper < dist_to_lower) | ((dist_to_upper == dist_to_lower) & upper_is_even)
 
-    return np.where(pick_upper, table_bytes[upper], table_bytes[lower]).reshape(values.shape)
+    return xp.where(pick_upper, table_bytes[upper], table_bytes[lower]).reshape(values.shape)
 
 
-def _fp8_lookup_arrays(fp8_format: str):
+def _fp8_lookup_arrays(fp8_format: str, xp=np):
     # Cache a sorted (value -> byte) table per format for fast nearest-value lookup.
-    if fp8_format in _FP8_LOOKUP_CACHE:
-        return _FP8_LOOKUP_CACHE[fp8_format]
+    key = (fp8_format, xp, None if xp is np else xp.cuda.runtime.getDevice())
+    if key in _FP8_LOOKUP_CACHE:
+        return _FP8_LOOKUP_CACHE[key]
 
     # Different bytes can decode to the same value (e.g. +0 and -0); keep one byte per value.
     byte_for_value: dict[float, int] = {}
@@ -349,10 +357,10 @@ def _fp8_lookup_arrays(fp8_format: str):
             byte_for_value[value] = byte
 
     table = sorted(byte_for_value.items())
-    table_values = np.asarray([value for value, _ in table], dtype=np.float32)
-    table_bytes = np.asarray([byte for _, byte in table], dtype=np.uint8)
-    _FP8_LOOKUP_CACHE[fp8_format] = (table_values, table_bytes)
-    return _FP8_LOOKUP_CACHE[fp8_format]
+    table_values = xp.asarray([value for value, _ in table], dtype=np.float32)
+    table_bytes = xp.asarray([byte for _, byte in table], dtype=np.uint8)
+    _FP8_LOOKUP_CACHE[key] = (table_values, table_bytes)
+    return _FP8_LOOKUP_CACHE[key]
 
 
 def _max_fp8_spacing(fp8_format: str, max_abs_value: float) -> float:
@@ -380,11 +388,12 @@ def _fp8_max_abs_value(fp8_format: str) -> float:
 
 
 def _encode_e4m3b15_values(values):
+    xp = array_module(values)
     # Mirrors the device e4m3b15 encode (gpu_data_types.hpp): clamp the fp16 intermediate
     # to 0x3F80 (+/-1.875) so the max encodable byte is 0x7F/0xFF.
     fp16_bits = values.astype(np.float16).view(np.uint16)
     abs_fp16 = fp16_bits & np.uint16(0x7FFF)
-    abs_fp16 = np.minimum(abs_fp16, np.uint16(0x3F80)).astype(np.uint32)
+    abs_fp16 = xp.minimum(abs_fp16, np.uint16(0x3F80)).astype(np.uint32)
     sign16 = (fp16_bits & np.uint16(0x8000)).astype(np.uint32)
     adjusted = abs_fp16 * np.uint32(2) + np.uint32(0x0080)
     return (((sign16 | adjusted) >> np.uint32(8)) & np.uint32(0xFF)).astype(np.uint8)
@@ -423,28 +432,29 @@ def _decode_fp8_positive(fp8_format: str, byte: int) -> float:
 
 
 def _decode_fp8_array(fp8_format: str, values):
+    xp = array_module(values)
     bits = values.astype(np.int32)
     sign = (bits >> 7) & 1
     exp = (bits >> 3) & 0xF
     mant = bits & 0x7
 
     if fp8_format == "e4m3fn":
-        subnormal = np.ldexp(mant.astype(np.float32) / np.float32(8.0), np.int32(-6))
-        normal = np.ldexp(np.float32(1.0) + mant.astype(np.float32) / np.float32(8.0), exp.astype(np.int32) - 7)
-        decoded = np.where(exp == 0, subnormal, normal)
-        decoded = np.where((exp == 0xF) & (mant == 0x7), np.nan, decoded)
+        subnormal = xp.ldexp(mant.astype(np.float32) / np.float32(8.0), np.int32(-6))
+        normal = xp.ldexp(np.float32(1.0) + mant.astype(np.float32) / np.float32(8.0), exp.astype(np.int32) - 7)
+        decoded = xp.where(exp == 0, subnormal, normal)
+        decoded = xp.where((exp == 0xF) & (mant == 0x7), np.nan, decoded)
     elif fp8_format == "e4m3fnuz":
-        subnormal = np.ldexp(mant.astype(np.float32) / np.float32(8.0), np.int32(-7))
-        normal = np.ldexp(np.float32(1.0) + mant.astype(np.float32) / np.float32(8.0), exp.astype(np.int32) - 8)
-        decoded = np.where(exp == 0, subnormal, normal)
+        subnormal = xp.ldexp(mant.astype(np.float32) / np.float32(8.0), np.int32(-7))
+        normal = xp.ldexp(np.float32(1.0) + mant.astype(np.float32) / np.float32(8.0), exp.astype(np.int32) - 8)
+        decoded = xp.where(exp == 0, subnormal, normal)
     elif fp8_format == "e4m3b15":
-        subnormal = np.ldexp(mant.astype(np.float32) / np.float32(8.0), np.int32(-14))
-        normal = np.ldexp(np.float32(1.0) + mant.astype(np.float32) / np.float32(8.0), exp.astype(np.int32) - 15)
-        decoded = np.where(exp == 0, subnormal, normal)
+        subnormal = xp.ldexp(mant.astype(np.float32) / np.float32(8.0), np.int32(-14))
+        normal = xp.ldexp(np.float32(1.0) + mant.astype(np.float32) / np.float32(8.0), exp.astype(np.int32) - 15)
+        decoded = xp.where(exp == 0, subnormal, normal)
     else:
         raise ValueError(f"Unknown FP8 format: {fp8_format}")
 
-    result = np.where(sign == 1, -decoded, decoded)
+    result = xp.where(sign == 1, -decoded, decoded)
     if fp8_format == "e4m3fnuz":
-        result = np.where(bits == 0x80, np.float32(float("nan")), result)
+        result = xp.where(bits == 0x80, np.float32(float("nan")), result)
     return result

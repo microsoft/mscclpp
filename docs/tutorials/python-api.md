@@ -10,6 +10,8 @@ not initialize a GPU or require a visible device.
 Shared CUDA/HIP runtime helpers are available in `mscclpp.gpu`, including device
 queries, synchronization, streams, events, and graph capture. They use the backend
 selected by the native build and initialize the Python runtime on first use.
+`gpu.get_device_properties(device_id)` returns `(props,)` on both backends and
+checks runtime errors; the HIP helper allocates the required output structure internally.
 The benchmarks use these helpers directly, as does `mscclpp.utils.get_device_arch()`
 when querying the current device.
 `GpuBuffer` also uses them for device selection, pointer queries, transfers, and
@@ -137,6 +139,7 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
 NVLS alignment); bind an unsliced buffer's pointer and allocation size to NVLS.
 
 `.dtype` returns `mscclpp.DataType`; the constructor defaults to `DataType.float32`.
+Enum members expose a read-only `.name` string, such as `DataType.float32.name == "float32"`.
 Matching NumPy types (`float32`, `float16`, `int32`, `uint32`, `uint8`) are accepted;
 unmapped types are rejected. Use a `uint8` view for opaque payloads.
 BF16/FP8 require explicit enum dtypes and pre-encoded `uint16`/`uint8` NumPy storage,
