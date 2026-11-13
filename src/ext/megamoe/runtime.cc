@@ -834,7 +834,7 @@ size_t MegaMoeContext::validateForward(const void* x, void* output, int tokens) 
 
 void MegaMoeContext::forward(const void* x, const int32_t* ids, const float* scores, void* output, int tokens,
                              cudaStream_t stream, bool signalStart) {
-  forwardImpl(x, nullptr, ids, scores, output, nullptr, tokens, stream, signalStart);
+  forwardImpl(x, nullptr, ids, scores, output, nullptr, tokens, stream, signalStart, false);
 }
 
 void MegaMoeContext::forwardFusedShared(const void* x, const void* sharedX, const int32_t* ids, const float* scores,
@@ -855,11 +855,12 @@ void MegaMoeContext::forwardFusedShared(const void* x, const void* sharedX, cons
     throw std::invalid_argument("MegaMoE fused shared input must be 16-byte aligned");
   if (overlaps(output, routedBytes, sharedOutput, sharedBytes))
     throw std::invalid_argument("MegaMoE routed and shared outputs must not overlap");
-  forwardImpl(x, sharedX, ids, scores, output, sharedOutput, tokens, stream, signalStart);
+  forwardImpl(x, sharedX, ids, scores, output, sharedOutput, tokens, stream, signalStart, true);
 }
 
 void MegaMoeContext::forwardImpl(const void* x, const void* sharedX, const int32_t* ids, const float* scores,
-                                 void* output, void* sharedOutput, int tokens, cudaStream_t stream, bool signalStart) {
+                                 void* output, void* sharedOutput, int tokens, cudaStream_t stream, bool signalStart,
+                                 bool fused) {
   const size_t inputBytes = validateForward(x, output, tokens);
   const size_t routingBytes = size_t(tokens) * config().topK * 4;
   if (tokens && (!ids || !scores)) throw std::invalid_argument("MegaMoE routing arrays must be non-null");
@@ -903,12 +904,12 @@ void MegaMoeContext::forwardImpl(const void* x, const void* sharedX, const int32
   const void* launchInput = fusedStage ? x : nullptr;
   const int32_t* launchIds = fusedStage ? ids : nullptr;
   const float* launchScores = fusedStage ? scores : nullptr;
-  if (sharedOutput && impl_->jitPlan) {
+  if (fused && impl_->jitPlan) {
     char error[ErrorCapacity]{};
     checkJit(impl_->module->fusedShared->launch(impl_->jitPlan->handle, launchInput, sharedX, launchIds, launchScores,
                                                 tokens, output, sharedOutput, stream, signal, error, sizeof(error)),
              error, "fused launch");
-  } else if (sharedOutput) {
+  } else if (fused) {
     launchNativeW4A8FusedShared(impl_->plan, launchInput, sharedX, launchIds, launchScores, tokens, output,
                                 sharedOutput, stream, signal);
   } else if (impl_->jitPlan) {
