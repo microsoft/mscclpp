@@ -116,6 +116,7 @@ jobs:
       gpuArch: '100a'
       cmakeArgs: '-DMSCCLPP_USE_IB=OFF'
       deployArgs: 'multi-node-test false cuda'
+      setupNvme: true
 
   - template: templates/ut-gb200.yml
     parameters:
