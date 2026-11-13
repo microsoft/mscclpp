@@ -20,6 +20,7 @@
 #define MSCCLPP_MEGAMOE_JIT_FIXED_TOKEN_COUNT_ENTRYPOINT "mscclpp_megamoe_jit_fixed_token_count_v1"
 #define MSCCLPP_MEGAMOE_JIT_OPTIMIZATION_FLAGS_ENTRYPOINT "mscclpp_megamoe_jit_optimization_flags_v1"
 #define MSCCLPP_MEGAMOE_JIT_LAUNCH_DIRECT_ENTRYPOINT "mscclpp_megamoe_jit_launch_direct_v1"
+#define MSCCLPP_MEGAMOE_JIT_FUSED_SHARED_ENTRYPOINT "mscclpp_megamoe_jit_get_fused_shared_api_v1"
 #define MSCCLPP_MEGAMOE_JIT_EXPERT_MAJOR_TASKS 1u
 #define MSCCLPP_MEGAMOE_JIT_CACHE_WEIGHTS 2u
 #define MSCCLPP_MEGAMOE_JIT_ADAPTIVE_CACHE_WEIGHTS 4u
@@ -111,6 +112,44 @@ typedef int (*MegaMoeJitLaunchDirectV1)(void* plan, const void* input, const int
                                         int32_t numTokens, void* output, void* stream, uint32_t* kernelEntrySignal,
                                         char* error, size_t capacity);
 
+// Fused routed + local shared-expert (fp8_nv) extension of the V1 ABI. A module exporting
+// MSCCLPP_MEGAMOE_JIT_FUSED_SHARED_ENTRYPOINT supports fused contexts; its plans are destroyed and its routed-only
+// launches are issued through the V1 function table and MegaMoeJitLaunchDirectV1.
+typedef struct MegaMoeJitSharedConfigV1 {
+  int32_t hidden;  // zero reuses the routed hidden width
+  int32_t intermediate;
+  float gateUpClamp;
+  int32_t fc1DelayNs;  // negative selects the module default (MSCCLPP_MEGAMOE_FUSED_FC1_DELAY_NS overrides both)
+} MegaMoeJitSharedConfigV1;
+
+// Packed shared weights plus the host copies of their per-matrix fp8_nv scales.
+typedef struct MegaMoeJitSharedWeightsV1 {
+  MegaMoeJitWeightsV1 packed;
+  float fc1TensorScale;
+  float fc2TensorScale;
+} MegaMoeJitSharedWeightsV1;
+
+typedef struct MegaMoeJitFusedSharedApiV1 {
+  uint32_t structBytes;
+  uint32_t sharedConfigBytes;
+  uint32_t sharedWeightsBytes;
+  uint32_t reserved;
+  int (*preflight)(const MegaMoeJitConfigV1* config, const MegaMoeJitSharedConfigV1* sharedConfig,
+                   MegaMoeJitLayoutV1* layout, char* error, size_t capacity);
+  // Packs the canonical fp8_nv shared weights (scales are not read; the caller copies them to the host).
+  int (*packSharedWeights)(const MegaMoeJitConfigV1* config, const MegaMoeJitSharedConfigV1* sharedConfig,
+                           const MegaMoeJitWeightsV1* source, const MegaMoeJitWeightsV1* destination, void* stream,
+                           char* error, size_t capacity);
+  int (*createPlan)(const MegaMoeJitConfigV1* config, const MegaMoeJitSharedConfigV1* sharedConfig, void* symmetric,
+                    const uint64_t* peerBases, void* workspace, const MegaMoeJitWeightsV1* weights,
+                    const MegaMoeJitSharedWeightsV1* sharedWeights, void** plan, char* error, size_t capacity);
+  int (*launch)(void* plan, const void* input, const void* sharedInput, const int32_t* topkIds,
+                const float* topkWeights, int32_t numTokens, void* output, void* sharedOutput, void* stream,
+                uint32_t* kernelEntrySignal, char* error, size_t capacity);
+} MegaMoeJitFusedSharedApiV1;
+
+typedef const MegaMoeJitFusedSharedApiV1* (*MegaMoeJitGetFusedSharedApiV1)(void);
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -120,6 +159,8 @@ __attribute__((visibility("default"))) uint32_t mscclpp_megamoe_jit_optimization
 __attribute__((visibility("default"))) int mscclpp_megamoe_jit_launch_direct_v1(
     void* plan, const void* input, const int32_t* topkIds, const float* topkWeights, int32_t numTokens, void* output,
     void* stream, uint32_t* kernelEntrySignal, char* error, size_t capacity);
+__attribute__((visibility("default"))) const MegaMoeJitFusedSharedApiV1* mscclpp_megamoe_jit_get_fused_shared_api_v1(
+    void);
 #ifdef __cplusplus
 }
 #endif

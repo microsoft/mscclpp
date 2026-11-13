@@ -4,7 +4,7 @@
 """Native routed and optional overlapped-shared MegaMoE benchmark; launch with torchrun."""
 
 import argparse
-from dataclasses import replace
+from dataclasses import asdict, replace
 import json
 import math
 import os
@@ -416,6 +416,12 @@ def main():
         help="run one fp8_nv shared expert inside the routed static-FP8 W4A8 kernel",
     )
     parser.add_argument("--shared-hidden", type=int, default=8704)
+    parser.add_argument(
+        "--shared-fc1-delay-ns",
+        type=int,
+        default=None,
+        help="fused shared FC1 start delay; MSCCLPP_MEGAMOE_FUSED_FC1_DELAY_NS overrides it when set",
+    )
     parser.add_argument("--shared-intermediate", type=int, default=2048)
     parser.add_argument(
         "--shared-sm-count",
@@ -494,6 +500,15 @@ def main():
         default=None,
         metavar="JSON",
         help="JIT the exact W4A8 policy from JSON (omit JSON to use the packaged profile)",
+    )
+    parser.add_argument(
+        "--policy-profile",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="JSON",
+        help="apply the token-range MegaMoE policy (kernel, sm_margin, fused FC1 delay) for --tokens from JSON "
+        "(omit JSON to use the packaged megamoe_policies.json); it overrides --sm-margin",
     )
     parser.add_argument(
         "--routing-pattern",
@@ -639,6 +654,7 @@ def main():
     from mscclpp import Communicator, TcpBootstrap
     from .api import MegaMoE, MegaMoEConfig, SharedExpertConfig, is_available
     from .jit import W4A8KernelConfig, compile_kernel, load_cached_kernel
+    from .policy import resolve_megamoe_policy
     from .w4a8 import resolve_w4a8_kernel_config
 
     if not is_available():
@@ -677,6 +693,26 @@ def main():
     kernel_config = W4A8KernelConfig()
     if not config.is_w8a16 and args.w4_profile is not None:
         kernel_config = resolve_w4a8_kernel_config(config, profile_path=args.w4_profile or None)
+    policy = None
+    if args.policy_profile is not None:
+        if args.w4_profile is not None or args.kernel_key is not None:
+            parser.error("--policy-profile cannot be combined with --w4-profile or --kernel-key")
+        policy = resolve_megamoe_policy(
+            config,
+            (
+                SharedExpertConfig(args.shared_intermediate, args.shared_gate_up_clamp, hidden=args.shared_hidden)
+                if args.fused_shared_expert
+                else None
+            ),
+            tokens=args.tokens,
+            profile_path=args.policy_profile or None,
+        )
+        kernel_config = policy.kernel
+        if policy.sm_margin is not None:
+            config = replace(config, sm_margin=policy.sm_margin)
+            args.sm_margin = policy.sm_margin
+        if args.shared_fc1_delay_ns is None and policy.fc1_delay_ns is not None:
+            args.shared_fc1_delay_ns = policy.fc1_delay_ns
     policy_overrides = {
         name: getattr(args, name)
         for name in (
@@ -705,11 +741,7 @@ def main():
         kernel_config = replace(kernel_config, **policy_overrides)
     if args.kernel_key is not None and (args.w4_profile is not None or policy_overrides):
         parser.error("--kernel-key cannot be combined with --w4-profile or kernel policy overrides")
-    if args.fused_shared_expert:
-        if args.kernel_key is not None or args.w4_profile is not None or policy_overrides:
-            parser.error("--fused-shared-expert currently requires the builtin kernel without policy overrides")
-        kernel = load_cached_kernel("builtin")
-    elif config.is_w8a16:
+    if config.is_w8a16:
         if args.kernel_key is not None:
             parser.error("--kernel-key is only supported for W4A8")
         kernel = None
@@ -767,6 +799,7 @@ def main():
             args.shared_intermediate,
             args.shared_gate_up_clamp,
             hidden=args.shared_hidden,
+            fc1_delay_ns=args.shared_fc1_delay_ns,
         )
         start = time.perf_counter()
         for _ in range(args.shared_weight_banks):
@@ -1278,6 +1311,16 @@ def main():
                 else ["shared_expert", "squash", "unsquash", "router", "residual"]
             ),
             "configuration": {**vars(args), "world_size": world},
+            "policy": None if policy is None else {"tokens": list(policy.tokens), "kernel": asdict(policy.kernel)},
+            "fused_fc1_delay_ns": (
+                (
+                    int(os.environ["MSCCLPP_MEGAMOE_FUSED_FC1_DELAY_NS"]) & 0xFFFFFF
+                    if os.environ.get("MSCCLPP_MEGAMOE_FUSED_FC1_DELAY_NS")
+                    else (2500 if args.shared_fc1_delay_ns is None else args.shared_fc1_delay_ns)
+                )
+                if fused_contexts
+                else None
+            ),
             "timing": {
                 "method": "CUDA events; slowest rank per sample",
                 "graph_timing": args.graph_timing if routed_graph else None,

@@ -79,26 +79,33 @@ PackedWeights nativeWeights(const MegaMoeJitWeightsV1* weights) {
   return PackedWeights{weights->fc1, weights->fc1Scale, weights->fc2, weights->fc2Scale};
 }
 
+SharedExpertConfig nativeSharedConfig(const MegaMoeJitSharedConfigV1* c) {
+  if (!c) throw std::invalid_argument("Invalid MegaMoE JIT shared-expert configuration");
+  return SharedExpertConfig{c->hidden, c->intermediate, c->gateUpClamp, c->fc1DelayNs};
+}
+
+MegaMoeJitLayoutV1 jitLayout(const NativeConfig& c, size_t workspaceBytes, const KernelResources& resources) {
+  auto layout = jit::getSymmetricLayout(c);
+  return MegaMoeJitLayoutV1{layout.bytes,
+                            layout.input,
+                            layout.topkIds,
+                            layout.topkWeights,
+                            layout.partialOutput,
+                            layout.epoch,
+                            layout.peerSignals,
+                            layout.expectedPeerSignals,
+                            layout.tokenCount,
+                            workspaceBytes,
+                            resources.sharedBytes,
+                            resources.ctas,
+                            0};
+}
+
 int jitPreflight(const MegaMoeJitConfigV1* config, MegaMoeJitLayoutV1* output, char* error, size_t capacity) noexcept {
   return jitCall(error, capacity, [&] {
     if (!output) throw std::invalid_argument("Null MegaMoE JIT layout descriptor");
     auto c = nativeConfig(config);
-    auto layout = jit::getSymmetricLayout(c);
-    const size_t workspaceBytes = jit::getPrivateWorkspaceBytes(c);
-    auto resources = jit::preflightKernel(c);
-    *output = MegaMoeJitLayoutV1{layout.bytes,
-                                 layout.input,
-                                 layout.topkIds,
-                                 layout.topkWeights,
-                                 layout.partialOutput,
-                                 layout.epoch,
-                                 layout.peerSignals,
-                                 layout.expectedPeerSignals,
-                                 layout.tokenCount,
-                                 workspaceBytes,
-                                 resources.sharedBytes,
-                                 resources.ctas,
-                                 0};
+    *output = jitLayout(c, jit::getPrivateWorkspaceBytes(c), jit::preflightKernel(c));
   });
 }
 
@@ -136,6 +143,63 @@ int jitLaunch(void* plan, int32_t tokens, void* output, void* stream, uint32_t* 
               size_t capacity) noexcept {
   return jitLaunchDirect(plan, nullptr, nullptr, nullptr, tokens, output, stream, kernelEntrySignal, error, capacity);
 }
+
+int jitFusedPreflight(const MegaMoeJitConfigV1* config, const MegaMoeJitSharedConfigV1* sharedConfig,
+                      MegaMoeJitLayoutV1* output, char* error, size_t capacity) noexcept {
+  return jitCall(error, capacity, [&] {
+    if (!output) throw std::invalid_argument("Null MegaMoE JIT layout descriptor");
+    auto c = nativeConfig(config);
+    auto shared = nativeSharedConfig(sharedConfig);
+    *output = jitLayout(c, jit::getFusedPrivateWorkspaceBytes(c, shared), jit::preflightFusedKernel(c, shared));
+  });
+}
+
+int jitFusedPackShared(const MegaMoeJitConfigV1* config, const MegaMoeJitSharedConfigV1* sharedConfig,
+                       const MegaMoeJitWeightsV1* source, const MegaMoeJitWeightsV1* destination, void* stream,
+                       char* error, size_t capacity) noexcept {
+  return jitCall(error, capacity, [&] {
+    jit::packSharedExpertWeights(nativeConfig(config), nativeSharedConfig(sharedConfig), nativeWeights(source),
+                                 nativeWeights(destination), reinterpret_cast<cudaStream_t>(stream));
+  });
+}
+
+int jitFusedCreate(const MegaMoeJitConfigV1* config, const MegaMoeJitSharedConfigV1* sharedConfig, void* symmetric,
+                   const uint64_t* peers, void* workspace, const MegaMoeJitWeightsV1* weights,
+                   const MegaMoeJitSharedWeightsV1* sharedWeights, void** plan, char* error, size_t capacity) noexcept {
+  if (plan) *plan = nullptr;
+  return jitCall(error, capacity, [&] {
+    if (!plan || !sharedWeights) throw std::invalid_argument("Null MegaMoE JIT fused plan output or shared weights");
+    auto shared = nativeWeights(&sharedWeights->packed);
+    shared.fc1TensorScale = sharedWeights->fc1TensorScale;
+    shared.fc2TensorScale = sharedWeights->fc2TensorScale;
+    auto result = std::make_unique<JitPlan>(
+        jit::createFusedKernelPlan(nativeConfig(config), nativeSharedConfig(sharedConfig), symmetric, peers, workspace,
+                                   nativeWeights(weights), shared));
+    *plan = result.release();
+  });
+}
+
+int jitFusedLaunch(void* plan, const void* input, const void* sharedInput, const int32_t* ids, const float* scores,
+                   int32_t tokens, void* output, void* sharedOutput, void* stream, uint32_t* kernelEntrySignal,
+                   char* error, size_t capacity) noexcept {
+  return jitCall(error, capacity, [&] {
+    if (!plan) throw std::invalid_argument("Invalid MegaMoE JIT fused launch");
+    jit::launchNativeW4A8FusedShared(*static_cast<JitPlan*>(plan), input, sharedInput, ids, scores, tokens, output,
+                                     sharedOutput, reinterpret_cast<cudaStream_t>(stream), kernelEntrySignal);
+  });
+}
+
+const MegaMoeJitFusedSharedApiV1 JitFusedSharedApi = [] {
+  MegaMoeJitFusedSharedApiV1 api{};
+  api.structBytes = sizeof(MegaMoeJitFusedSharedApiV1);
+  api.sharedConfigBytes = sizeof(MegaMoeJitSharedConfigV1);
+  api.sharedWeightsBytes = sizeof(MegaMoeJitSharedWeightsV1);
+  api.preflight = jitFusedPreflight;
+  api.packSharedWeights = jitFusedPackShared;
+  api.createPlan = jitFusedCreate;
+  api.launch = jitFusedLaunch;
+  return api;
+}();
 
 const MegaMoeJitApiV1 JitApi = [] {
   MegaMoeJitApiV1 api{};
@@ -192,4 +256,9 @@ extern "C" __attribute__((visibility("default"))) int mscclpp_megamoe_jit_launch
     void* stream, uint32_t* kernelEntrySignal, char* error, size_t capacity) {
   return jitLaunchDirect(plan, input, topkIds, topkWeights, numTokens, output, stream, kernelEntrySignal, error,
                          capacity);
+}
+
+extern "C" __attribute__((visibility("default"))) const MegaMoeJitFusedSharedApiV1*
+mscclpp_megamoe_jit_get_fused_shared_api_v1() {
+  return &JitFusedSharedApi;
 }

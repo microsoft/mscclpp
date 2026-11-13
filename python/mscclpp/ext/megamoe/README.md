@@ -182,6 +182,43 @@ Select the profiles with `--w4-profile --sm-margin 0` in the benchmark. They
 do not change the builtin policy. Historical resident-grid tuning metadata is
 separate from the selectable JIT policies.
 
+### Token-range policies (kernel + runtime knobs)
+
+JIT modules also contain the fused shared-expert kernel, so `kernel=` works with
+`shared_config=`. `megamoe_policies.json` (`"version": 2`) extends the profiles
+above: each GPU section has entries whose `match` holds the workload (world size,
+routed shape, dtypes, clamp sign, fused `shared` `{hidden, intermediate}` or
+null) and an inclusive `tokens` range, with a complete `kernel`
+(`W4A8KernelConfig`), `runtime` `{sm_margin, fc1_delay_ns}`, and an optional
+`measurement`. The narrowest range covering the token count wins.
+
+```python
+from mscclpp.ext.megamoe import BucketedMegaMoE, resolve_megamoe_policy
+
+policy = resolve_megamoe_policy(config, shared_config, tokens=16)
+config, shared_config = policy.apply(config, shared_config)  # sm_margin, fc1_delay_ns
+moe = MegaMoE(config, communicator, *weights, kernel=policy.kernel, shared_config=shared_config, ...)
+moe = MegaMoE(config, communicator, *weights, kernel="auto", ...)  # kernel + fc1 delay only
+buckets = BucketedMegaMoE(config, communicator, *weights, shared_config=..., ...)  # one context per range
+```
+
+`kernel="auto"` keeps the caller's `sm_margin` and falls back to the builtin
+kernel with a warning when no policy matches. `BucketedMegaMoE` creates one fully
+tuned context per token range up to `max_tokens` (separate workspaces and packed
+weights) and picks one per launch; all ranks must select the same bucket, so pass
+equal token counts or the same `bucket_tokens`. `SharedExpertConfig.fc1_delay_ns`
+sets the fused shared FC1 start delay (default 2500 ns);
+`MSCCLPP_MEGAMOE_FUSED_FC1_DELAY_NS` overrides it. Without
+`MSCCLPP_MEGAMOE_CUTLASS_ROOT`, `compile_kernel` reuses a module prepared for the
+same runtime (`find_cached_kernel`), so ranks only need a populated cache.
+
+The packaged GB300 EP32 policies cover H4096/I4352, 512 experts, top-7,
+MXFP4/static FP8, routed-only and with a fused fp8_nv H8704/I2048 shared expert,
+for 1-8/9-16/17-32/33-64 tokens. Each is the candidate with the best mean
+latency across balanced, hot-expert, lognormal, Zipf, and skewed-Zipf routing.
+Regenerate them with `python -m mscclpp.ext.megamoe.tune sweep|build`, and
+benchmark them with `--policy-profile`.
+
 ## Benchmark
 
 Launch the routed benchmark with `torchrun`:

@@ -39,10 +39,15 @@ class MegaMoeContext {
   MegaMoeContext(std::shared_ptr<Communicator> communicator, const NativeConfig& config, const PackedWeights& weights,
                  cudaStream_t stream = nullptr, int tag = 17920, const std::string& kernelPath = "",
                  const std::string& kernelId = "", std::shared_ptr<MegaMoeContext> sharedWorkspace = nullptr);
+  /// Collectively create a fused routed + shared-expert context; the parameters match the routed constructor.
+  /// @param kernelPath Absolute path to an optional native JIT module built with fused shared-expert support; empty
+  /// selects the builtin kernel.
+  /// @param kernelId Expected 64-character specialization digest; empty for the builtin kernel.
   MegaMoeContext(std::shared_ptr<Communicator> communicator, const NativeConfig& config, const PackedWeights& weights,
                  const SharedExpertConfig& sharedConfig, const PackedWeights& sharedWeights,
                  cudaStream_t stream = nullptr, int tag = 17920,
-                 std::shared_ptr<MegaMoeContext> sharedWorkspace = nullptr);
+                 std::shared_ptr<MegaMoeContext> sharedWorkspace = nullptr, const std::string& kernelPath = "",
+                 const std::string& kernelId = "");
   ~MegaMoeContext();
   MegaMoeContext(const MegaMoeContext&) = delete;
   MegaMoeContext& operator=(const MegaMoeContext&) = delete;
