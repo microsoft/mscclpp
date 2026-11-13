@@ -307,7 +307,7 @@ namespace py = pybind11;
 
 // Your CUDA kernel
 __global__ void allgather(
-    mscclpp::DeviceHandle<mscclpp::PortChannel>* channels,
+    mscclpp::DeviceHandle<mscclpp::PortChannel<>>* channels,
     int rank,
     size_t nbytesPerGPU
 ) {

@@ -10,6 +10,7 @@
 #include <mscclpp/packet_device.hpp>
 #include <mscclpp/port_channel.hpp>
 #include <mscclpp/utils.hpp>
+#include <variant>
 
 #include "../framework.hpp"
 #include "ib.hpp"
@@ -140,6 +141,9 @@ template <class T>
 using DeviceHandle = mscclpp::DeviceHandle<T>;
 
 using IbMode = mscclpp::EndpointConfig::Ib::Mode;
+using Concurrency = mscclpp::PortChannelDeviceHandle::Concurrency;
+using TestPortChannel = std::variant<mscclpp::PortChannel<mscclpp::PortChannelBackend::Host>,
+                                     mscclpp::PortChannel<mscclpp::PortChannelBackend::Device>>;
 
 // Fan-in: every rank other than 0 accumulates into rank 0's counter, so the destination has many
 // concurrent writers. An unserialized read-modify-write loses updates here, which a one-to-one
@@ -165,19 +169,24 @@ class PortChannelOneToOneTest : public CommunicatorTestBase {
     bool useEthernet;
     bool waitWithPoll;
     IbMode ibMode;
+    // Concurrency scope of callers accessing device-mode queue pairs.
+    Concurrency concurrency = Concurrency::Exclusive;
   };
 
   void SetUp() override;
   void TearDown() override;
 
-  void setupMeshConnections(std::vector<mscclpp::PortChannel>& portChannels, bool useIPC, bool useIb, bool useEthernet,
+  void setupMeshConnections(std::vector<TestPortChannel>& portChannels, bool useIPC, bool useIb, bool useEthernet,
                             void* sendBuff, size_t sendBuffBytes, void* recvBuff = nullptr, size_t recvBuffBytes = 0,
                             IbMode ibMode = IbMode::Default);
   void testPingPong(PingPongTestParams params);
   void testPingPongPerf(PingPongTestParams params);
-  void testPacketPingPong(bool useIbOnly, IbMode ibMode = IbMode::Default);
-  void testPacketPingPongPerf(bool useIbOnly, IbMode ibMode = IbMode::Default);
-  void testAccumulate(bool useIPC, bool useIb, bool useEthernet, IbMode ibMode = IbMode::Default);
+  void testPacketPingPong(bool useIbOnly, IbMode ibMode = IbMode::Default,
+                          Concurrency concurrency = Concurrency::Exclusive);
+  void testPacketPingPongPerf(bool useIbOnly, IbMode ibMode = IbMode::Default,
+                              Concurrency concurrency = Concurrency::Exclusive);
+  void testAccumulate(bool useIPC, bool useIb, bool useEthernet, IbMode ibMode = IbMode::Default,
+                      Concurrency concurrency = Concurrency::Exclusive);
   void testAccumulateRejected(mscclpp::Transport transport, IbMode ibMode, int tag, const char* backendMessage,
                               bool checkHugeOffset);
   void testBandwidth(PingPongTestParams params);
@@ -185,10 +194,12 @@ class PortChannelOneToOneTest : public CommunicatorTestBase {
                             std::vector<std::shared_ptr<int>>& sendBuffs,
                             std::vector<mscclpp::RegisteredMemory>& localMems,
                             std::vector<mscclpp::RegisteredMemory>& remoteMems,
-                            std::vector<mscclpp::PortChannel>& portChannels);
-  void testMultiQpBandwidth(IbMode ibMode, int numQps);
-  void testMultiQpFlushStress(IbMode ibMode, int numQps);
-  void testSameChanConcurrentFlush(IbMode ibMode);
+                            std::vector<TestPortChannel>& portChannels);
+  void testMultiQpBandwidth(IbMode ibMode, int numQps, Concurrency concurrency = Concurrency::Exclusive,
+                            int threadsPerQp = 1);
+  void testMultiQpFlushStress(IbMode ibMode, int numQps, Concurrency concurrency = Concurrency::Exclusive,
+                              int threadsPerQp = 1);
+  void testSameChanConcurrentFlush(IbMode ibMode, Concurrency concurrency = Concurrency::Device);
 
   std::shared_ptr<mscclpp::ProxyService> proxyService;
 };

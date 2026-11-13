@@ -8,6 +8,7 @@
 #include "api.h"
 #include "connection.hpp"
 #include "endpoint.hpp"
+#include "gpunetio.hpp"
 #include "logger.hpp"
 #include "registered_memory.hpp"
 
@@ -98,7 +99,11 @@ MSCCLPP_API_CPP Connection Context::connect(const Endpoint& localEndpoint, const
   if (localTransport == Transport::CudaIpc) {
     conn = std::make_shared<CudaIpcConnection>(shared_from_this(), localEndpoint, remoteEndpoint);
   } else if (AllIBTransports.has(localTransport)) {
-    conn = std::make_shared<IBConnection>(shared_from_this(), localEndpoint, remoteEndpoint);
+    if (localEndpoint.config().ib.mode == EndpointConfig::Ib::Mode::Device) {
+      conn = std::make_shared<GpuNetIoConnection>(shared_from_this(), localEndpoint, remoteEndpoint);
+    } else {
+      conn = std::make_shared<IBConnection>(shared_from_this(), localEndpoint, remoteEndpoint);
+    }
   } else if (localTransport == Transport::Ethernet) {
     conn = std::make_shared<EthernetConnection>(shared_from_this(), localEndpoint, remoteEndpoint);
   } else {

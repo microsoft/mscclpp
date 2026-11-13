@@ -289,6 +289,10 @@ FetchContent_Declare(json
 )
 FetchContent_MakeAvailable(json)
 
+if(MSCCLPP_USE_IB AND MSCCLPP_USE_CUDA AND NOT MSCCLPP_USE_ROCM)
+    include(GpuNetIo)
+endif()
+
 if("${INSTALL_PREFIX}" STREQUAL "")
     set(INSTALL_PREFIX "./")
 endif()

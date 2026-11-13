@@ -235,4 +235,33 @@ MSCCLPP_API_CPP MemoryDevice2DeviceSemaphore::DeviceHandle MemoryDevice2DeviceSe
   return device;
 };
 
+MSCCLPP_API_CPP PortDevice2DeviceSemaphore::PortDevice2DeviceSemaphore(const Semaphore& semaphore)
+    : semaphore_(semaphore) {
+  auto& conn = BaseConnection::getImpl(connection());
+  if (!conn->isDeviceBackend()) {
+    THROW(CONN, Error, ErrorCode::InvalidUsage,
+          "PortDevice2DeviceSemaphore requires a PortChannel device-mode connection");
+  }
+  remoteInboundToken_ = conn->getDeviceMemoryInfo(semaphore_.remoteMemory());
+  if (remoteInboundToken_.addr == 0 || remoteInboundToken_.addr % sizeof(uint64_t) != 0) {
+    THROW(CONN, Error, ErrorCode::InvalidUsage, "remote semaphore token is not addressable in PortChannel device mode");
+  }
+  CudaDeviceGuard deviceGuard(connection().localDevice().id);
+  expectedInboundToken_ = detail::gpuCallocUnique<uint64_t>();
+}
+
+MSCCLPP_API_CPP PortDevice2DeviceSemaphore::PortDevice2DeviceSemaphore(Communicator& communicator,
+                                                                       const Connection& connection)
+    : PortDevice2DeviceSemaphore(buildSemaphoreFromConnection(communicator, connection)) {}
+
+MSCCLPP_API_CPP Connection& PortDevice2DeviceSemaphore::connection() { return semaphore_.connection(); }
+
+MSCCLPP_API_CPP PortDevice2DeviceSemaphore::DeviceHandle PortDevice2DeviceSemaphore::deviceHandle() const {
+  PortDevice2DeviceSemaphore::DeviceHandle device;
+  device.inboundToken = reinterpret_cast<uint64_t*>(semaphore_.localMemory().data());
+  device.expectedInboundToken = expectedInboundToken_.get();
+  device.remoteInboundToken = remoteInboundToken_;
+  return device;
+}
+
 }  // namespace mscclpp

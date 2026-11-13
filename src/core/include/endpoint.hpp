@@ -15,6 +15,8 @@
 
 namespace mscclpp {
 
+class GpuNetIoQp;
+
 struct Endpoint::Impl {
   Impl(const EndpointConfig& config, Context::Impl& contextImpl);
   Impl(const std::vector<char>& serialization);
@@ -28,6 +30,8 @@ struct Endpoint::Impl {
   bool ibNoAtomic_;
   std::shared_ptr<IbQp> ibQp_;
   IbQpInfo ibQpInfo_;
+  // Only used for EndpointConfig::Ib::Mode::Device, in place of ibQp_.
+  std::shared_ptr<GpuNetIoQp> gpuNetIoQp_;
 
   // The following are only used for Ethernet and are undefined for other transports.
   std::unique_ptr<Socket> socket_;
