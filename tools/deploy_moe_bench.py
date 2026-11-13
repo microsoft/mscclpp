@@ -211,7 +211,7 @@ def install_bundle(directory):
         [
             str(python),
             "-c",
-            "import torch,mscclpp,mscclpp.ep,cupy,yaml;"
+            "import torch,mscclpp,mscclpp.ep,yaml;"
             "assert torch.cuda.is_available(), 'CUDA-enabled PyTorch and a working GPU driver are required';"
             "print('Verified MSCCL++',mscclpp.__version__,'Torch',torch.__version__,"
             "'visible GPUs',torch.cuda.device_count())",
