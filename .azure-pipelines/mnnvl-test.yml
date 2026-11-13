@@ -152,7 +152,7 @@ jobs:
     matrix:
       cuda13:
         # Same image as MultiNodesTest, which is already on the GB200 nodes; PyTorch is
-        # installed by install-ep-backends.sh. A separate torch image does not fit on the nodes' root disk.
+        # installed by install-ep-backends.sh instead of pulling a second, larger torch image.
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0
   pool:
     name: msccl-ci-gb200
@@ -204,6 +204,9 @@ jobs:
       buildTests: 'false'
       cmakeArgs: '-DMSCCLPP_USE_IB=OFF'
       deployArgs: 'multi-node-test false cuda'
+      # Docker storage and the deploy directory go on the data NVMe; the root disk cannot
+      # hold the ~7 GB the EP backends install into the container.
+      setupNvme: true
 
   - template: templates/run-remote-task.yml
     parameters:
@@ -219,7 +222,7 @@ jobs:
       displayName: Run unified EP benchmark
       runRemoteArgs: '--host $(headNode) --user azhpcuser'
       remoteScript: |
-        # Collected from /tmp/mscclpp/ep-benchmark-results on the node by the next step.
+        # Collected from /mnt/nvme/mscclpp-ci/mscclpp/ep-benchmark-results on the node by the next step.
         export EP_BENCH_LOG_DIR=/root/mscclpp/ep-benchmark-results
         if [ "${{ parameters.epBenchmarkNodes }}" -gt 1 ]; then
           export EP_BENCH_HOSTFILE=/root/mscclpp/test/deploy/hostfile_mpi
@@ -242,7 +245,7 @@ jobs:
         DEST="$(Build.ArtifactStagingDirectory)/ep-benchmark-results"
         rm -rf "${DEST}"
         if ! scp -r -i "${SSHKEYFILE_SECUREFILEPATH}" -o StrictHostKeyChecking=no \
-            "azhpcuser@$(headNode):/tmp/mscclpp/ep-benchmark-results" "$(Build.ArtifactStagingDirectory)/"; then
+            "azhpcuser@$(headNode):/mnt/nvme/mscclpp-ci/mscclpp/ep-benchmark-results" "$(Build.ArtifactStagingDirectory)/"; then
           echo "##vso[task.logissue type=warning]No EP benchmark results found on $(headNode)"
           exit 0
         fi
@@ -259,15 +262,3 @@ jobs:
       targetPath: $(Build.ArtifactStagingDirectory)/ep-benchmark-results
       artifact: ep-benchmark-results-$(System.JobAttempt)
       publishLocation: pipeline
-
-  # install-ep-backends.sh installs into the hosts' RAM-backed /dev/shm, which outlives the container.
-  - task: Bash@3
-    displayName: Remove EP benchmark packages from /dev/shm
-    condition: and(always(), ne(variables['headNode'], ''))
-    inputs:
-      targetType: 'inline'
-      script: |
-        test/deploy/run-remote.sh --no-docker --hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --user azhpcuser <<'REMOTE_CMD'
-        sudo rm -rf /dev/shm/mscclpp-ep
-        REMOTE_CMD
-      workingDirectory: '$(System.DefaultWorkingDirectory)'

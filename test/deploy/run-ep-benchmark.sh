@@ -40,13 +40,9 @@ CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
 
 DEEPEP_PYTHONPATH=""
 DEEPEP_CUDA_HOME=""
-EP_VENV=""
 if [ -f "${EP_BACKEND_ENV}" ]; then
     # shellcheck disable=SC1090
     source "${EP_BACKEND_ENV}"
-fi
-if [ -n "${EP_VENV}" ]; then
-    export PATH="${EP_VENV}/bin:${PATH}"
 fi
 
 MPI_ARGS=(--allow-run-as-root --bind-to none -np "${EP_BENCH_NP}")

@@ -3,11 +3,6 @@
 # MSCCL++ is installed, in the base-dev-cuda13.x image. Installing PyTorch here rather than
 # using a separate torch image avoids pulling a second multi-GB image onto the GB200 nodes.
 #
-# The GB200 nodes' root disk has no room for these packages (~7 GB), so everything is
-# installed under EP_ENV_DIR, on the host's RAM-backed /dev/shm (shared with the container by
-# --ipc=host): a venv layered on the image's Python environment, DeepEP's NCCL and nvcc, and
-# pip's temporary files. Remove EP_ENV_DIR when done; it persists on the host until reboot.
-#
 # NCCL-EP requires the NCCL version it is validated with, while DeepEP requires a newer one.
 # NCCL-EP's NCCL stays in the Python environment. DeepEP is built against the latest NCCL,
 # installed into DEEPEP_NCCL_DIR, which run-ep-benchmark.sh adds to PYTHONPATH for DeepEP only.
@@ -17,33 +12,31 @@
 # uses as CUDA_HOME for DeepEP only.
 #
 # Environment overrides:
-#   EP_ENV_DIR            directory for everything installed here (default: /dev/shm/mscclpp-ep)
 #   TORCH_SPEC            pip requirement for PyTorch (default: torch==2.11.0)
 #   TORCH_INDEX_URL       PyTorch wheel index (default: https://download.pytorch.org/whl/cu130)
 #   NCCL_EP_SPEC          pip requirement for NCCL-EP  (default: nccl-extensions[cu13])
 #   CUDA_CORE_SPEC        pip requirement for cuda-core (default: cuda-core[cu13])
 #   DEEPEP_NCCL_SPEC      pip requirement for DeepEP's NCCL (default: nvidia-nccl-cu13, i.e. latest)
-#   DEEPEP_NCCL_DIR       install directory for DeepEP's NCCL (default: EP_ENV_DIR/deepep-nccl)
+#   DEEPEP_NCCL_DIR       install directory for DeepEP's NCCL (default: /opt/deepep-nccl)
 #   DEEPEP_CUDA_VERSION   CUDA version of DeepEP's JIT compiler (default: 13.3.*)
-#   DEEPEP_CUDA_DIR       install directory for DeepEP's JIT compiler (default: EP_ENV_DIR/deepep-cuda)
+#   DEEPEP_CUDA_DIR       install directory for DeepEP's JIT compiler (default: /opt/deepep-cuda)
 #   DEEPEP_REPO           DeepEP git URL               (default: deepseek-ai/DeepEP on GitHub)
 #   DEEPEP_REF            DeepEP branch, tag or commit (default: the repository's default branch)
 #   TORCH_CUDA_ARCH_LIST  GPU architecture for DeepEP  (default: detected with nvidia-smi)
-#   EP_BACKEND_ENV        file recording the venv and DeepEP's NCCL and CUDA for run-ep-benchmark.sh
+#   EP_BACKEND_ENV        file recording DeepEP's NCCL and CUDA locations for run-ep-benchmark.sh
 #                         (default: /tmp/ep-backend-env)
 #   EP_VERSIONS_FILE      JSON file recording installed versions (default: /tmp/ep-backend-versions.json)
 
 set -euo pipefail
 
-EP_ENV_DIR="${EP_ENV_DIR:-/dev/shm/mscclpp-ep}"
 TORCH_SPEC="${TORCH_SPEC:-torch==2.11.0}"
 TORCH_INDEX_URL="${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu130}"
 NCCL_EP_SPEC="${NCCL_EP_SPEC:-nccl-extensions[cu13]}"
 CUDA_CORE_SPEC="${CUDA_CORE_SPEC:-cuda-core[cu13]}"
 DEEPEP_NCCL_SPEC="${DEEPEP_NCCL_SPEC:-nvidia-nccl-cu13}"
-DEEPEP_NCCL_DIR="${DEEPEP_NCCL_DIR:-${EP_ENV_DIR}/deepep-nccl}"
+DEEPEP_NCCL_DIR="${DEEPEP_NCCL_DIR:-/opt/deepep-nccl}"
 DEEPEP_CUDA_VERSION="${DEEPEP_CUDA_VERSION:-13.3.*}"
-DEEPEP_CUDA_DIR="${DEEPEP_CUDA_DIR:-${EP_ENV_DIR}/deepep-cuda}"
+DEEPEP_CUDA_DIR="${DEEPEP_CUDA_DIR:-/opt/deepep-cuda}"
 DEEPEP_REPO="${DEEPEP_REPO:-https://github.com/deepseek-ai/DeepEP.git}"
 DEEPEP_REF="${DEEPEP_REF:-}"
 EP_BACKEND_ENV="${EP_BACKEND_ENV:-/tmp/ep-backend-env}"
@@ -53,20 +46,6 @@ if [ -z "${TORCH_CUDA_ARCH_LIST:-}" ]; then
 fi
 export TORCH_CUDA_ARCH_LIST
 export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
-
-echo "=== Creating the EP venv in ${EP_ENV_DIR}"
-rm -rf "${EP_ENV_DIR}"
-mkdir -p "${EP_ENV_DIR}/tmp"
-export TMPDIR="${EP_ENV_DIR}/tmp"
-EP_VENV="${EP_ENV_DIR}/venv"
-BASE_SITE_PACKAGES="$(python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
-python -m venv "${EP_VENV}"
-# Make the image's packages (MSCCL++, cuda-bindings, ...) importable after the venv's own,
-# so packages installed here take precedence.
-echo "import site; site.addsitedir('${BASE_SITE_PACKAGES}')" \
-    > "$("${EP_VENV}/bin/python" -c 'import sysconfig; print(sysconfig.get_path("purelib"))')/base-env.pth"
-export PATH="${EP_VENV}/bin:${PATH}"
-python -c "import mscclpp"
 
 echo "=== Installing PyTorch (${TORCH_SPEC}) and DeepEP build dependencies"
 pip install --no-cache-dir "${TORCH_SPEC}" ninja \
@@ -117,8 +96,7 @@ echo "DeepEP commit: ${DEEPEP_COMMIT}"
     pip install --no-cache-dir --no-deps --force-reinstall dist/*.whl
 )
 
-printf 'EP_VENV=%s\nDEEPEP_PYTHONPATH=%s\nDEEPEP_CUDA_HOME=%s\n' \
-    "${EP_VENV}" "${DEEPEP_NCCL_DIR}" "${DEEPEP_CUDA_HOME}" > "${EP_BACKEND_ENV}"
+printf 'DEEPEP_PYTHONPATH=%s\nDEEPEP_CUDA_HOME=%s\n' "${DEEPEP_NCCL_DIR}" "${DEEPEP_CUDA_HOME}" > "${EP_BACKEND_ENV}"
 
 echo "=== Verifying EP backends"
 # Run outside the repository so Python imports the installed packages.
