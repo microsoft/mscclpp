@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""Opt-in bit-exact dispatch/combine test with identity experts (no FlashInfer).
+"""GPU test: bit-exact dispatch/combine with identity experts (no FlashInfer).
 
 Each token row encodes its global ID, and routing weights are 1/top_k, so every
 dispatched row, BF16 partial, and combined output is exactly representable.
@@ -9,21 +9,12 @@ Any misrouted, missing, duplicated, or stale row changes the result.
 """
 
 import itertools
-import os
-from pathlib import Path
-import subprocess
 import sys
 
-import pytest
 import torch
 
-if __package__:
-    from ..config import SUPPORTED_LAYOUTS
-    from .test_moe_bench import assert_idle_gpus, tiny_config
-else:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from config import SUPPORTED_LAYOUTS
-    from test_moe_bench import assert_idle_gpus, tiny_config
+from common import tiny_config
+from config import SUPPORTED_LAYOUTS
 
 
 class IdentityExperts:
@@ -44,27 +35,6 @@ def encoded_rows(token_ids, hidden, device):
     """Row ``token`` holds ``8 * id + column % 8``; exact in BF16 for IDs < 32."""
     columns = torch.arange(hidden, device=device) % 8
     return (8 * token_ids[:, None] + columns[None, :]).to(torch.bfloat16)
-
-
-@pytest.mark.parametrize("backend", ["mscclpp", "nccl"])
-def test_exact_communication(backend):
-    if os.environ.get("MOE_BENCH_GPU_TESTS") != "1":
-        pytest.skip("Set MOE_BENCH_GPU_TESTS=1 on two idle GPUs")
-    assert_idle_gpus()
-    subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "torch.distributed.run",
-            "--standalone",
-            "--nnodes=1",
-            "--nproc-per-node=2",
-            str(Path(__file__).resolve()),
-            backend,
-        ],
-        check=True,
-        timeout=900,
-    )
 
 
 @torch.inference_mode()

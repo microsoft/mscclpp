@@ -303,14 +303,8 @@ alone do not prove communication works.
 
 ## Tests
 
-With `pytest` installed:
-
-```bash
-.venv/bin/python -m pytest python/mscclpp_benchmark/moe_bench/tests -q
-```
-
-GPU tests are opt-in. On two idle Blackwell GPUs, run the MSCCL++ MXFP8/MXFP4
-reference checks with:
+The tests run on two idle Blackwell GPUs. Check MXFP8/MXFP4 expert compute and
+every pipeline against an independent reference with:
 
 ```bash
 GLOO_SOCKET_IFNAME=lo .venv/bin/python -m torch.distributed.run \

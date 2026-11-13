@@ -1,321 +1,37 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""Optional MX integration tests, with independent scale/nibble and math references."""
+"""GPU test: MXFP8/MXFP4 expert compute and full pipelines against an independent reference.
+
+Run on two idle Blackwell GPUs:
+    python -m torch.distributed.run --standalone --nproc-per-node=2 test_compute_flashinfer.py mscclpp|nccl
+"""
 
 import itertools
-import json
-import os
-from pathlib import Path
-import subprocess
 import sys
-from types import SimpleNamespace
-from unittest.mock import Mock, mock_open, patch
 
-import pytest
 import torch
 import torch.nn.functional as F
-import yaml
 
-if __package__:
-    from ..compute_backends import create_mlp
-    from ..compute_backends.flashinfer import (
-        fc1_activation,
-        fc1_weight,
-        make_schedule,
-        preflight,
-        quantize_activations,
-        quantize_weights,
-    )
-    from ..config import SUPPORTED_LAYOUTS, load_config, validate_config
-    from ..memory import estimate_tensor_bytes
-    from ..reference import (
-        compare_outputs,
-        decode,
-        decoded_expert_weights,
-        expert_output,
-        quantize_mxfp8,
-        relative_error,
-        unswizzle,
-    )
-    from ..workload import make_expert_weights
-    from .test_moe_bench import assert_idle_gpus, tiny_config
-else:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from compute_backends import create_mlp
-    from compute_backends.flashinfer import (
-        fc1_activation,
-        fc1_weight,
-        make_schedule,
-        preflight,
-        quantize_activations,
-        quantize_weights,
-    )
-    from config import SUPPORTED_LAYOUTS, load_config, validate_config
-    from memory import estimate_tensor_bytes
-    from reference import (
-        compare_outputs,
-        decode,
-        decoded_expert_weights,
-        expert_output,
-        quantize_mxfp8,
-        relative_error,
-        unswizzle,
-    )
-    from test_moe_bench import assert_idle_gpus, tiny_config
-    from workload import make_expert_weights
+from common import tiny_config
+from compute_backends import create_mlp
+from compute_backends.flashinfer import fc1_activation, quantize_activations, quantize_weights
+from config import SUPPORTED_LAYOUTS
+from memory import estimate_tensor_bytes
+from reference import (
+    compare_outputs,
+    decode,
+    decoded_expert_weights,
+    expert_output,
+    quantize_mxfp8,
+    relative_error,
+    unswizzle,
+)
+from workload import make_expert_weights
 
 
 def mx_config():
     return tiny_config()
-
-
-@pytest.mark.parametrize(
-    "backend,activation,weight",
-    list(
-        itertools.product(("torch", "cutlass_flashinfer"), ("bf16", "mxfp8", "fp8"), ("bf16", "mxfp8", "mxfp4", "fp4"))
-    ),
-)
-def test_config_pairs(backend, activation, weight):
-    config = mx_config()
-    config["environment"]["compute_backend"] = backend
-    config["compute"] = {"activation_dtype": activation, "weight_dtype": weight}
-    valid = (backend, activation, weight) == ("cutlass_flashinfer", "mxfp8", "mxfp4")
-    if valid:
-        validate_config(config)
-    else:
-        with pytest.raises(ValueError):
-            validate_config(config)
-
-
-def test_weight_only_rejected():
-    config = mx_config()
-    config["compute"] = {"activation_dtype": "bf16", "weight_dtype": "mxfp8"}
-    with pytest.raises(ValueError, match="compute.activation_dtype"):
-        validate_config(config)
-    with pytest.raises(ValueError, match="requires MXFP8 activations and MXFP4 weights"):
-        preflight(config, "cpu")
-
-
-def test_optional_compute_defaults_and_overrides():
-    config = tiny_config()
-    del config["compute"]
-    validate_config(config)
-    assert tiny_config()["compute"] == {"activation_dtype": "mxfp8", "weight_dtype": "mxfp4"}
-    assert tiny_config()["environment"]["compute_backend"] == "cutlass_flashinfer"
-    document = yaml.safe_load((Path(__file__).resolve().parents[1] / "configs.yaml").read_text())
-    with patch("builtins.open", mock_open(read_data=yaml.safe_dump(document))):
-        resolved = load_config(
-            "unused",
-            num_gpus=4,
-            model="small",
-            input_name="decode",
-            routing="balanced",
-            compute_overrides={"activation_dtype": "mxfp8", "weight_dtype": "mxfp4"},
-        )
-    assert resolved["compute"] == {"activation_dtype": "mxfp8", "weight_dtype": "mxfp4"}
-    assert resolved["input"]["dtype"] == "bf16"
-    for compute in ({"dtype": "mxfp8"}, [], None):
-        config["compute"] = compute
-        with pytest.raises(ValueError):
-            validate_config(config)
-    for malformed in (None, [], "config"):
-        with pytest.raises(ValueError, match="config must be a mapping"):
-            validate_config(malformed)
-
-
-@pytest.mark.parametrize("dimension", ["d_model", "intermediate_size"])
-def test_alignment_rejected(dimension):
-    config = mx_config()
-    config["model"][dimension] = 4097 if dimension == "d_model" else 129
-    with pytest.raises(ValueError):
-        validate_config(config)
-
-
-def test_cli_compute_flags():
-    from ..run import parse_args
-
-    base = ["--model", "small", "--input", "decode", "--routing", "balanced"]
-    args = parse_args(base)
-    assert args.compute_backend is args.activation_dtype is args.weight_dtype is None
-    args = parse_args(
-        base + ["--compute-backend", "cutlass_flashinfer", "--activation-dtype", "mxfp8", "--weight-dtype", "mxfp4"]
-    )
-    assert (args.compute_backend, args.activation_dtype, args.weight_dtype) == ("cutlass_flashinfer", "mxfp8", "mxfp4")
-    for flag, value in (
-        ("--compute-backend", "flashinfer"),
-        ("--compute-backend", "torch"),
-        ("--activation-dtype", "bf16"),
-        ("--weight-dtype", "bf16"),
-        ("--activation-dtype", "fp8"),
-        ("--weight-dtype", "fp4"),
-        ("--weight-dtype", "mxfp8"),
-    ):
-        with pytest.raises(SystemExit):
-            parse_args(base + [flag, value])
-
-
-@pytest.mark.parametrize("backend", ["mscclpp", "nccl"])
-def test_launcher_compute_overrides(tmp_path, monkeypatch, backend):
-    from .. import run as launcher
-    from ..compute_backends import flashinfer as compute_flashinfer
-
-    config = mx_config()
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "run.py",
-            "--model",
-            "small",
-            "--input",
-            "decode",
-            "--routing",
-            "balanced",
-            "--backend",
-            backend,
-            "--compute-backend",
-            "cutlass_flashinfer",
-            "--activation-dtype",
-            config["compute"]["activation_dtype"],
-            "--weight-dtype",
-            config["compute"]["weight_dtype"],
-            "--output-dir",
-            str(tmp_path),
-        ],
-    )
-    monkeypatch.setattr(torch.cuda, "device_count", lambda: 4)
-    checked = Mock()
-    monkeypatch.setattr(compute_flashinfer, "preflight", checked)
-
-    def fake_run(command, **kwargs):
-        if command[0] == "git":
-            return SimpleNamespace(stdout="revision\n" if command[-1] == "HEAD" else "")
-        path = Path(command[-1])
-        resolved = json.loads((path / "run.json").read_text())["config"]
-        assert resolved["environment"]["compute_backend"] == "cutlass_flashinfer"
-        assert resolved["environment"]["communication_backend"] == backend
-        assert resolved["compute"] == config["compute"]
-        assert resolved["input"]["dtype"] == "bf16"
-        (path / "summary.csv").write_text("")
-        (path / "iterations.csv").write_text("")
-        return SimpleNamespace(returncode=0)
-
-    monkeypatch.setattr(launcher.subprocess, "run", fake_run)
-    launcher.main()
-    assert checked.call_count == 4
-
-
-@pytest.mark.parametrize("stage", ["compile", "capture"])
-def test_initialization_failure_coordination_and_cleanup(monkeypatch, stage):
-    from .. import worker
-
-    config = tiny_config()
-    monkeypatch.setattr(worker.dist, "get_world_size", lambda: 2)
-    monkeypatch.setattr(worker, "preflight_backend", Mock())
-    monkeypatch.setattr(worker.dist, "all_reduce", lambda value, **kwargs: None)
-
-    def gather(values, value):
-        values[:] = [value, value]
-
-    monkeypatch.setattr(worker.dist, "all_gather_object", gather)
-    monkeypatch.setattr(torch.cuda, "mem_get_info", lambda device: (2**40, 2**40))
-    backend = SimpleNamespace(close=Mock())
-    factory = Mock(return_value=backend)
-    monkeypatch.setattr(worker, "create_backend", factory)
-    if stage == "compile":
-        monkeypatch.setattr(worker, "create_mlp", Mock(side_effect=RuntimeError("compiler failure")))
-    else:
-        monkeypatch.setattr(worker, "create_mlp", Mock(return_value=Mock()))
-        monkeypatch.setattr(torch.cuda, "synchronize", Mock())
-        monkeypatch.setattr(worker.Pipeline, "_initialize_compute", Mock(side_effect=RuntimeError("capture failure")))
-    with pytest.raises(RuntimeError, match="(Runtime/compute|Compute) .*failed"):
-        worker.Pipeline(config, 0, "cpu")
-    assert factory.call_count == (stage == "capture")
-    assert backend.close.call_count == (stage == "capture")
-
-
-def test_optional_compute_imports_are_lazy():
-    source = """
-import builtins
-import torch
-original = builtins.__import__
-def guarded(name, *args, **kwargs):
-    if name.split('.')[0] in {'flashinfer', 'cutlass', 'cuda', 'mscclpp', 'nccl'}:
-        raise AssertionError('Unexpected optional import: ' + name)
-    return original(name, *args, **kwargs)
-builtins.__import__ = guarded
-from moe_bench.compute_backends import create_mlp
-from moe_bench import reference, worker
-"""
-    subprocess.run([sys.executable, "-c", source], cwd=Path(__file__).resolve().parents[2], check=True, timeout=30)
-
-
-def test_preflight_rejects_versions_and_devices(monkeypatch):
-    from ..compute_backends import flashinfer as module
-
-    monkeypatch.setattr(module, "version", lambda name: "wrong")
-    with pytest.raises(RuntimeError, match="requires tested"):
-        preflight(mx_config(), 0)
-    versions = {
-        "flashinfer-python": "0.7.1",
-        "nvidia-cutlass-dsl": "4.8.0",
-    }
-    monkeypatch.setattr(module, "version", versions.__getitem__)
-    monkeypatch.setattr(torch.version, "cuda", "13.0")
-    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda device: (10, 3))
-    assert preflight(mx_config(), 0) == versions
-    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda device: (9, 0))
-    with pytest.raises(RuntimeError, match="SM100/SM103"):
-        preflight(mx_config(), 0)
-    from importlib.metadata import PackageNotFoundError
-
-    monkeypatch.setattr(module, "version", Mock(side_effect=PackageNotFoundError("flashinfer-python")))
-    with pytest.raises(RuntimeError, match="requires optional flashinfer-python"):
-        preflight(mx_config(), 0)
-
-
-def test_fc1_activation_is_explicit_plain_swiglu():
-    with pytest.raises(ValueError, match="Unsupported expert activation"):
-        fc1_activation("gelu")
-    fused_moe = pytest.importorskip("flashinfer.fused_moe")
-    options = fc1_activation("swiglu")
-    assert options["activation_type"] == fused_moe.ActivationType.Swiglu.value
-    assert (options["swiglu_alpha"], options["swiglu_beta"]) == (1.0, 0.0)
-    assert options["swiglu_limit"] == torch.finfo(torch.float32).max
-
-
-def test_schedule_and_weight_orientation():
-    counts = [7, 0, 129]
-    slots, experts, limits, tiles = make_schedule(counts, "cpu")
-    valid = slots[slots >= 0]
-    assert valid.tolist() == list(range(sum(counts)))
-    assert 1 not in experts.tolist()
-    assert tiles.item() == len(experts) == 3
-    assert len(slots) == 384
-    assert limits[-1] == 128 + 129
-    gate = torch.arange(256 * 128).reshape(256, 128)
-    up = -gate
-    packed = fc1_weight(gate, up)
-    for column in range(128):
-        up_row = (column // 64) * 128 + column % 64
-        gate_row = up_row + 64
-        assert torch.equal(packed[up_row], up[:, column])
-        assert torch.equal(packed[gate_row], gate[:, column])
-
-
-def test_memory_estimate():
-    config = mx_config()
-    config["model"]["num_experts"] = 128
-    config["model"]["intermediate_size"] = 8192
-    counts = [3] * 64
-    estimate = estimate_tensor_bytes(config, counts)
-    elements = 3 * 64 * 4096 * 8192
-    packed_weights = elements // 2 + elements // 32
-    assert estimate > packed_weights + 6 * 4096 * 8192
-    assert estimate < elements * 2
-    config["environment"]["cuda_graph"] = "mlp"
-    assert estimate_tensor_bytes(config, counts) > estimate
 
 
 @torch.inference_mode()
@@ -405,27 +121,6 @@ def multitile_reference(rank, device):
     print(f"rank {rank} MXFP8/MXFP4 multitile/graph metrics: {maxima}", flush=True)
 
 
-@pytest.mark.parametrize("backend", ["mscclpp", "nccl"])
-def test_distributed_mx_reference(backend):
-    if os.environ.get("MOE_BENCH_MX_GPU_TESTS") != "1":
-        pytest.skip("Set MOE_BENCH_MX_GPU_TESTS=1 on idle SM100/SM103 GPUs")
-    assert_idle_gpus()
-    subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "torch.distributed.run",
-            "--standalone",
-            "--nnodes=1",
-            "--nproc-per-node=2",
-            str(Path(__file__).resolve()),
-            backend,
-        ],
-        check=True,
-        timeout=900,
-    )
-
-
 @torch.inference_mode()
 def distributed_reference(backend):
     import torch.distributed as dist
@@ -483,7 +178,7 @@ def distributed_reference(backend):
                     latencies = pipeline.read_latencies(None)
                     phases = [latencies[key] for key in ("dispatch_us", "mlp_us", "combine_us")]
                     assert all(value > 0 for value in phases)
-                    assert sum(phases) == pytest.approx(latencies["total_us"], abs=0.01)
+                    assert abs(sum(phases) - latencies["total_us"]) <= 0.01
                 for expert, count in enumerate(pipeline.counts):
                     if count:
                         expected = expert_output(pipeline.recv[expert, :count], decoded[expert])
