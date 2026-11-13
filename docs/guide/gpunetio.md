@@ -104,27 +104,30 @@ Only `Concurrency::Exclusive` operations submit through BlueFlame. The NIC execu
 only if all earlier ones were already submitted, which concurrent callers cannot ensure without serializing each
 other, so `Block` and `Device` operations always ring the regular doorbell.
 
-### Internal shared-memory slots
+### Exclusive-mode per-block thread capacity
 
-`PortChannelDeviceHandleT<Backend, SmemSlots>` and `BasePortChannelDeviceHandleT<Backend, SmemSlots>` configure the
-internal shared-memory capacity at compile time. The default is 32 slots (2 KiB per CTA); use `channel.deviceHandle<8>()`
-for eight slots, or a capacity of zero to disable BlueFlame without allocating scratch.
+Device-backend posting methods (`put`, `signal`, `putWithSignal`, `putWithSignalAndFlush`, `accumulate`, and
+`putWithAccumulate`) accept an optional second template argument `MaxExclusiveThreadsPerBlock` that configures how many
+threads per block can concurrently post in `Concurrency::Exclusive` mode with BlueFlame (each slot uses 64 bytes of
+shared memory). The default is 32 threads (2 KiB per block); pass a custom count such as
+`channel.put<Concurrency::Exclusive, 8>(...)`, or `0` to disable BlueFlame without allocating scratch.
 
 The default slot index is the linear thread index, including all three block dimensions. Posting methods accept an
 optional `slotIdx` (`-1` selects the default); out-of-range indices fall back to regular doorbells. For example:
 
 ```cpp
 using Concurrency = mscclpp::PortChannelDeviceHandle::Concurrency;
-channel.put<Concurrency::Exclusive>(dstOffset, srcOffset, bytes, slotIdx);
-channel.signal<Concurrency::Exclusive>(slotIdx);
+channel.put<Concurrency::Exclusive, 8>(dstOffset, srcOffset, bytes, slotIdx);
+channel.signal<Concurrency::Exclusive, 8>(slotIdx);
 ```
 
 For `put` and `putWithSignal`, specify both source and destination offsets when passing an explicit index, avoiding
 ambiguity with the existing two-argument overloads. For `putWithSignalAndFlush`, the index follows `maxSpinCount`.
 
-Slots are 64 bytes, 16-byte aligned, and shared across all handles with the same capacity in a CTA. Concurrent posting
-threads must use distinct indices, even when they own different QPs. BlueFlame waits for async source consumption
-before returning, so one thread can reuse a slot sequentially across QPs without an extra barrier or flush.
+Slots are 64 bytes, 16-byte aligned, and shared across all calls with the same `MaxExclusiveThreadsPerBlock` in a
+block. Concurrent posting threads must use distinct indices, even when they own different QPs. BlueFlame waits for
+async source consumption before returning, so one thread can reuse a slot sequentially across QPs without an extra
+barrier or flush.
 Prefer one capacity per kernel: different capacities instantiate separate scratch arrays. Scratch is statically
 allocated for compiled BlueFlame paths, so runtime doorbell fallback does not reduce its footprint. Large capacities
 must respect the kernel's shared-memory limits; `Block` and `Device` operations do not use this scratch.

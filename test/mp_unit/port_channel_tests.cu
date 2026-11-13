@@ -1715,11 +1715,14 @@ TEST(PortChannelOneToOneTest, HostAccumulateIbDeviceModeRejected) {
 
 // Buffer layout of the putWithAccumulate test: two payload ints, then one flag word per (run, rank).
 static constexpr int kPutWithAccumulateFlagInts = 2;
-static constexpr int kPutWithAccumulateElems = kPutWithAccumulateFlagInts + 4 * sizeof(uint64_t) / sizeof(int);
+static constexpr int kPutWithAccumulateRuns = 3;
+static constexpr int kPutWithAccumulateElems =
+    kPutWithAccumulateFlagInts + 2 * kPutWithAccumulateRuns * sizeof(uint64_t) / sizeof(int);
 
 // Each rank adds to its own flag word in the peer with putWithAccumulate and a standalone accumulate. The peer checks
 // that every addition is counted and that the payload is no older than the flag.
-template <bool BlueFlame>
+template <bool BlueFlame,
+          uint32_t MaxExclusiveThreadsPerBlock = mscclpp::DeviceBackendHandle::kDefaultMaxExclusiveThreadsPerBlock>
 __global__ void kernelGpuNetIoPutWithAccumulate(int* buff, int rank, int run, int nIters, int* ret) {
   if (threadIdx.x != 0) return;
   constexpr auto kExclusive = Concurrency::Exclusive;
@@ -1731,8 +1734,9 @@ __global__ void kernelGpuNetIoPutWithAccumulate(int* buff, int rank, int run, in
   volatile int* payload = buff;
   for (int i = 1; i <= nIters; ++i) {
     payload[rank] = (rank + 1) * 1000000 + run * 10000 + i;
-    chan.putWithAccumulate<kExclusive>(rank * sizeof(int), rank * sizeof(int), sizeof(int), flagOffset, 2);
-    chan.accumulate<kExclusive>(flagOffset, 1);
+    chan.putWithAccumulate<kExclusive, MaxExclusiveThreadsPerBlock>(rank * sizeof(int), rank * sizeof(int), sizeof(int),
+                                                                    flagOffset, 2);
+    chan.accumulate<kExclusive, MaxExclusiveThreadsPerBlock>(flagOffset, 1);
     while (mscclpp::atomicLoad<uint64_t, mscclpp::scopeSystem>(flags + 2 * run + peer, mscclpp::memoryOrderAcquire) <
            3ULL * i) {
     }
@@ -1763,11 +1767,22 @@ TEST(PortChannelOneToOneTest, PutWithAccumulateIbDeviceMode) {
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
   communicator->bootstrap()->barrier();
 
-  kernelGpuNetIoPutWithAccumulate<true><<<1, 32>>>(buffs[0].get(), rank, 0, 256, ret.get());
+  cudaFuncAttributes attrSlots8{};
+  cudaFuncAttributes attrSlots0{};
+  MSCCLPP_CUDATHROW(cudaFuncGetAttributes(&attrSlots8, kernelGpuNetIoPutWithAccumulate<true, 8>));
+  MSCCLPP_CUDATHROW(cudaFuncGetAttributes(&attrSlots0, kernelGpuNetIoPutWithAccumulate<true, 0>));
+  EXPECT_EQ(attrSlots8.sharedSizeBytes, 8 * sizeof(mscclpp::detail::GpuNetIoWqeSlot));
+  EXPECT_EQ(attrSlots0.sharedSizeBytes, 0u);
+
+  kernelGpuNetIoPutWithAccumulate<true, 8><<<1, 32>>>(buffs[0].get(), rank, 0, 256, ret.get());
   MSCCLPP_CUDATHROW(cudaGetLastError());
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
   communicator->bootstrap()->barrier();
   kernelGpuNetIoPutWithAccumulate<false><<<1, 32>>>(buffs[0].get(), rank, 1, 256, ret.get());
+  MSCCLPP_CUDATHROW(cudaGetLastError());
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+  communicator->bootstrap()->barrier();
+  kernelGpuNetIoPutWithAccumulate<true, 0><<<1, 32>>>(buffs[0].get(), rank, 2, 256, ret.get());
   MSCCLPP_CUDATHROW(cudaGetLastError());
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
   EXPECT_EQ(*ret, 0);

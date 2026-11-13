@@ -40,9 +40,7 @@ MSCCLPP_DEVICE_INLINE void waitFlush(uint64_t* flushDonePos, uint64_t fifoPos, [
 /// Device-side handle template for BasePortChannel.
 /// A non-templated alias `BasePortChannelDeviceHandle` is provided for the default `PortChannelBackend::Host` backend
 /// so existing code can use `BasePortChannelDeviceHandle` without `<>`.
-/// @tparam SmemSlots Number of internal 64-byte shared-memory slots per CTA (0 disables BlueFlame, default 32).
-template <PortChannelBackend Backend = PortChannelBackend::Host,
-          uint32_t SmemSlots = DeviceBackendHandle::kDefaultSmemSlots>
+template <PortChannelBackend Backend = PortChannelBackend::Host>
 struct BasePortChannelDeviceHandleT;
 
 /// Host-backend specialization of BasePortChannelDeviceHandleT.
@@ -195,10 +193,8 @@ struct BasePortChannelDeviceHandleT<PortChannelBackend::Host> {
 };
 
 /// Device-backend specialization of BasePortChannelDeviceHandleT.
-template <uint32_t SmemSlots>
-struct BasePortChannelDeviceHandleT<PortChannelBackend::Device, SmemSlots> {
-  static_assert(SmemSlots <= 1024, "At most 1024 shared-memory slots per CTA are supported");
-
+template <>
+struct BasePortChannelDeviceHandleT<PortChannelBackend::Device> {
   /// Scope of concurrent callers posting and flushing through a PortChannel.
   using Concurrency = BasePortChannelDeviceHandleT<PortChannelBackend::Host>::Concurrency;
 
@@ -214,95 +210,131 @@ struct BasePortChannelDeviceHandleT<PortChannelBackend::Device, SmemSlots> {
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Put data to the destination memory region via the device backend.
+  /// @tparam Mode Caller concurrency scope.
+  /// @tparam MaxExclusiveThreadsPerBlock Maximum number of threads per block concurrently posting in
+  /// Concurrency::Exclusive mode (0 disables fast-path staging).
   /// @param dst The destination memory region.
   /// @param dstOffset The offset into the destination memory region.
   /// @param src The source memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
-  /// @param slotIdx Shared-memory slot index, or -1 for the linear thread index. Out-of-range indices use doorbells.
-  template <Concurrency Mode = Concurrency::Device>
+  /// @param slotIdx Per-block exclusive-thread slot index, or -1 for the linear thread index. Out-of-range indices use
+  /// doorbells.
+  template <Concurrency Mode = Concurrency::Device,
+            uint32_t MaxExclusiveThreadsPerBlock = DeviceBackendHandle::kDefaultMaxExclusiveThreadsPerBlock>
   MSCCLPP_DEVICE_INLINE void put(const DeviceMemoryHandle& dst, uint64_t dstOffset, const DeviceMemoryHandle& src,
                                  uint64_t srcOffset, uint64_t size, int slotIdx = -1) {
-    device_.put<Mode, SmemSlots>(dst, dstOffset, src, srcOffset, size, slotIdx);
+    device_.put<Mode, MaxExclusiveThreadsPerBlock>(dst, dstOffset, src, srcOffset, size, slotIdx);
   }
 
   /// Put data to the destination memory region via the device backend.
+  /// @tparam Mode Caller concurrency scope.
+  /// @tparam MaxExclusiveThreadsPerBlock Maximum number of threads per block concurrently posting in
+  /// Concurrency::Exclusive mode (0 disables fast-path staging).
   /// @param dst The destination memory region.
   /// @param src The source memory region.
   /// @param offset The common offset into the destination and source memory regions.
   /// @param size The size of the transfer.
-  /// @param slotIdx Shared-memory slot index, or -1 for the linear thread index. Out-of-range indices use doorbells.
-  template <Concurrency Mode = Concurrency::Device>
+  /// @param slotIdx Per-block exclusive-thread slot index, or -1 for the linear thread index. Out-of-range indices use
+  /// doorbells.
+  template <Concurrency Mode = Concurrency::Device,
+            uint32_t MaxExclusiveThreadsPerBlock = DeviceBackendHandle::kDefaultMaxExclusiveThreadsPerBlock>
   MSCCLPP_DEVICE_INLINE void put(const DeviceMemoryHandle& dst, const DeviceMemoryHandle& src, uint64_t offset,
                                  uint64_t size, int slotIdx = -1) {
-    put<Mode>(dst, offset, src, offset, size, slotIdx);
+    put<Mode, MaxExclusiveThreadsPerBlock>(dst, offset, src, offset, size, slotIdx);
   }
 
   /// Signal the remote peer via the device backend.
-  /// @param slotIdx Shared-memory slot index, or -1 for the linear thread index. Out-of-range indices use doorbells.
-  template <Concurrency Mode = Concurrency::Device>
+  /// @tparam Mode Caller concurrency scope.
+  /// @tparam MaxExclusiveThreadsPerBlock Maximum number of threads per block concurrently posting in
+  /// Concurrency::Exclusive mode (0 disables fast-path staging).
+  /// @param slotIdx Per-block exclusive-thread slot index, or -1 for the linear thread index. Out-of-range indices use
+  /// doorbells.
+  template <Concurrency Mode = Concurrency::Device,
+            uint32_t MaxExclusiveThreadsPerBlock = DeviceBackendHandle::kDefaultMaxExclusiveThreadsPerBlock>
   MSCCLPP_DEVICE_INLINE void signal(int slotIdx = -1) {
-    device_.accumulate<Mode, SmemSlots>(semaphore_.remoteInboundToken, 0, 1, slotIdx);
+    device_.accumulate<Mode, MaxExclusiveThreadsPerBlock>(semaphore_.remoteInboundToken, 0, 1, slotIdx);
   }
 
   /// Put data to the destination memory region and signal the remote peer via the device backend.
+  /// @tparam Mode Caller concurrency scope.
+  /// @tparam MaxExclusiveThreadsPerBlock Maximum number of threads per block concurrently posting in
+  /// Concurrency::Exclusive mode (0 disables fast-path staging).
   /// @param dst The destination memory region.
   /// @param dstOffset The offset into the destination memory region.
   /// @param src The source memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
-  /// @param slotIdx Shared-memory slot index, or -1 for the linear thread index. Out-of-range indices use doorbells.
-  template <Concurrency Mode = Concurrency::Device>
+  /// @param slotIdx Per-block exclusive-thread slot index, or -1 for the linear thread index. Out-of-range indices use
+  /// doorbells.
+  template <Concurrency Mode = Concurrency::Device,
+            uint32_t MaxExclusiveThreadsPerBlock = DeviceBackendHandle::kDefaultMaxExclusiveThreadsPerBlock>
   MSCCLPP_DEVICE_INLINE void putWithSignal(const DeviceMemoryHandle& dst, uint64_t dstOffset,
                                            const DeviceMemoryHandle& src, uint64_t srcOffset, uint64_t size,
                                            int slotIdx = -1) {
-    device_.putWithAccumulate<Mode, SmemSlots>(dst, dstOffset, src, srcOffset, size, semaphore_.remoteInboundToken, 0,
-                                               1, slotIdx);
+    device_.putWithAccumulate<Mode, MaxExclusiveThreadsPerBlock>(dst, dstOffset, src, srcOffset, size,
+                                                                 semaphore_.remoteInboundToken, 0, 1, slotIdx);
   }
 
   /// Put data to the destination memory region and signal the remote peer via the device backend.
+  /// @tparam Mode Caller concurrency scope.
+  /// @tparam MaxExclusiveThreadsPerBlock Maximum number of threads per block concurrently posting in
+  /// Concurrency::Exclusive mode (0 disables fast-path staging).
   /// @param dst The destination memory region.
   /// @param src The source memory region.
   /// @param offset The common offset into the destination and source memory regions.
   /// @param size The size of the transfer.
-  /// @param slotIdx Shared-memory slot index, or -1 for the linear thread index. Out-of-range indices use doorbells.
-  template <Concurrency Mode = Concurrency::Device>
+  /// @param slotIdx Per-block exclusive-thread slot index, or -1 for the linear thread index. Out-of-range indices use
+  /// doorbells.
+  template <Concurrency Mode = Concurrency::Device,
+            uint32_t MaxExclusiveThreadsPerBlock = DeviceBackendHandle::kDefaultMaxExclusiveThreadsPerBlock>
   MSCCLPP_DEVICE_INLINE void putWithSignal(const DeviceMemoryHandle& dst, const DeviceMemoryHandle& src,
                                            uint64_t offset, uint64_t size, int slotIdx = -1) {
-    putWithSignal<Mode>(dst, offset, src, offset, size, slotIdx);
+    putWithSignal<Mode, MaxExclusiveThreadsPerBlock>(dst, offset, src, offset, size, slotIdx);
   }
 
   /// Put data to the destination memory region, signal the remote peer, and flush via the device backend.
+  /// @tparam Mode Caller concurrency scope.
+  /// @tparam MaxExclusiveThreadsPerBlock Maximum number of threads per block concurrently posting in
+  /// Concurrency::Exclusive mode (0 disables fast-path staging).
   /// @param dst The destination memory region.
   /// @param dstOffset The offset into the destination memory region.
   /// @param src The source memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
-  /// @param slotIdx Shared-memory slot index, or -1 for the linear thread index. Out-of-range indices use doorbells.
-  template <Concurrency Mode = Concurrency::Device>
+  /// @param slotIdx Per-block exclusive-thread slot index, or -1 for the linear thread index. Out-of-range indices use
+  /// doorbells.
+  template <Concurrency Mode = Concurrency::Device,
+            uint32_t MaxExclusiveThreadsPerBlock = DeviceBackendHandle::kDefaultMaxExclusiveThreadsPerBlock>
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(const DeviceMemoryHandle& dst, uint64_t dstOffset,
                                                    const DeviceMemoryHandle& src, uint64_t srcOffset, uint64_t size,
                                                    int64_t maxSpinCount = 1000000, int slotIdx = -1) {
-    putWithSignal<Mode>(dst, dstOffset, src, srcOffset, size, slotIdx);
+    putWithSignal<Mode, MaxExclusiveThreadsPerBlock>(dst, dstOffset, src, srcOffset, size, slotIdx);
     flush<Mode>(maxSpinCount);
   }
 
   /// Put data to the destination memory region, signal the remote peer, and flush via the device backend.
+  /// @tparam Mode Caller concurrency scope.
+  /// @tparam MaxExclusiveThreadsPerBlock Maximum number of threads per block concurrently posting in
+  /// Concurrency::Exclusive mode (0 disables fast-path staging).
   /// @param dst The destination memory region.
   /// @param src The source memory region.
   /// @param offset The common offset into the destination and source memory regions.
   /// @param size The size of the transfer.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
-  /// @param slotIdx Shared-memory slot index, or -1 for the linear thread index. Out-of-range indices use doorbells.
-  template <Concurrency Mode = Concurrency::Device>
+  /// @param slotIdx Per-block exclusive-thread slot index, or -1 for the linear thread index. Out-of-range indices use
+  /// doorbells.
+  template <Concurrency Mode = Concurrency::Device,
+            uint32_t MaxExclusiveThreadsPerBlock = DeviceBackendHandle::kDefaultMaxExclusiveThreadsPerBlock>
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(const DeviceMemoryHandle& dst, const DeviceMemoryHandle& src,
                                                    uint64_t offset, uint64_t size, int64_t maxSpinCount = 1000000,
                                                    int slotIdx = -1) {
-    putWithSignalAndFlush<Mode>(dst, offset, src, offset, size, maxSpinCount, slotIdx);
+    putWithSignalAndFlush<Mode, MaxExclusiveThreadsPerBlock>(dst, offset, src, offset, size, maxSpinCount, slotIdx);
   }
 
   /// Flush pending operations on the channel via the device backend.
+  /// @tparam Mode Caller concurrency scope.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   template <Concurrency Mode = Concurrency::Device>
   MSCCLPP_DEVICE_INLINE void flush(int64_t maxSpinCount = 1000000) {
@@ -311,18 +343,26 @@ struct BasePortChannelDeviceHandleT<PortChannelBackend::Device, SmemSlots> {
 
   /// Atomically add a 64-bit value to remote memory via the device backend. Observing the new value publishes the
   /// earlier puts on this channel.
+  /// @tparam Mode Caller concurrency scope.
+  /// @tparam MaxExclusiveThreadsPerBlock Maximum number of threads per block concurrently posting in
+  /// Concurrency::Exclusive mode (0 disables fast-path staging).
   /// @param dst The destination memory region.
   /// @param dstOffset The offset into the destination memory region.
   /// @param value The 64-bit signed value to add.
-  /// @param slotIdx Shared-memory slot index, or -1 for the linear thread index. Out-of-range indices use doorbells.
-  template <Concurrency Mode = Concurrency::Device>
+  /// @param slotIdx Per-block exclusive-thread slot index, or -1 for the linear thread index. Out-of-range indices use
+  /// doorbells.
+  template <Concurrency Mode = Concurrency::Device,
+            uint32_t MaxExclusiveThreadsPerBlock = DeviceBackendHandle::kDefaultMaxExclusiveThreadsPerBlock>
   MSCCLPP_DEVICE_INLINE void accumulate(const DeviceMemoryHandle& dst, uint64_t dstOffset, int64_t value,
                                         int slotIdx = -1) {
-    device_.accumulate<Mode, SmemSlots>(dst, dstOffset, value, slotIdx);
+    device_.accumulate<Mode, MaxExclusiveThreadsPerBlock>(dst, dstOffset, value, slotIdx);
   }
 
   /// Put data to the destination memory region, then atomically add a 64-bit value to remote memory. Observing the
   /// new value publishes the put.
+  /// @tparam Mode Caller concurrency scope.
+  /// @tparam MaxExclusiveThreadsPerBlock Maximum number of threads per block concurrently posting in
+  /// Concurrency::Exclusive mode (0 disables fast-path staging).
   /// @param dst The destination memory region.
   /// @param dstOffset The offset into the destination memory region.
   /// @param src The source memory region.
@@ -331,13 +371,16 @@ struct BasePortChannelDeviceHandleT<PortChannelBackend::Device, SmemSlots> {
   /// @param acc The memory region of the accumulated word.
   /// @param accOffset The offset of the accumulated word in `acc`.
   /// @param value The 64-bit signed value to add.
-  /// @param slotIdx Shared-memory slot index, or -1 for the linear thread index. Out-of-range indices use doorbells.
-  template <Concurrency Mode = Concurrency::Device>
+  /// @param slotIdx Per-block exclusive-thread slot index, or -1 for the linear thread index. Out-of-range indices use
+  /// doorbells.
+  template <Concurrency Mode = Concurrency::Device,
+            uint32_t MaxExclusiveThreadsPerBlock = DeviceBackendHandle::kDefaultMaxExclusiveThreadsPerBlock>
   MSCCLPP_DEVICE_INLINE void putWithAccumulate(const DeviceMemoryHandle& dst, uint64_t dstOffset,
                                                const DeviceMemoryHandle& src, uint64_t srcOffset, uint64_t size,
                                                const DeviceMemoryHandle& acc, uint64_t accOffset, int64_t value,
                                                int slotIdx = -1) {
-    device_.putWithAccumulate<Mode, SmemSlots>(dst, dstOffset, src, srcOffset, size, acc, accOffset, value, slotIdx);
+    device_.putWithAccumulate<Mode, MaxExclusiveThreadsPerBlock>(dst, dstOffset, src, srcOffset, size, acc, accOffset,
+                                                                 value, slotIdx);
   }
 
   /// Check if the port channel has been signaled.
@@ -357,9 +400,7 @@ using BasePortChannelDeviceHandle = BasePortChannelDeviceHandleT<PortChannelBack
 /// Device-side handle template for PortChannel.
 /// A non-templated alias `PortChannelDeviceHandle` is provided for the default `PortChannelBackend::Host` backend
 /// so existing code can use `PortChannelDeviceHandle` without `<>`.
-/// @tparam SmemSlots Number of internal 64-byte shared-memory slots per CTA (0 disables BlueFlame, default 32).
-template <PortChannelBackend Backend = PortChannelBackend::Host,
-          uint32_t SmemSlots = DeviceBackendHandle::kDefaultSmemSlots>
+template <PortChannelBackend Backend = PortChannelBackend::Host>
 struct PortChannelDeviceHandleT;
 
 /// Host-backend specialization of PortChannelDeviceHandleT.
@@ -446,11 +487,11 @@ struct PortChannelDeviceHandleT<PortChannelBackend::Host>
 };
 
 /// Device-backend specialization of PortChannelDeviceHandleT.
-template <uint32_t SmemSlots>
-struct PortChannelDeviceHandleT<PortChannelBackend::Device, SmemSlots>
-    : public BasePortChannelDeviceHandleT<PortChannelBackend::Device, SmemSlots> {
+template <>
+struct PortChannelDeviceHandleT<PortChannelBackend::Device>
+    : public BasePortChannelDeviceHandleT<PortChannelBackend::Device> {
   /// Scope of concurrent callers accessing this channel's queue pair.
-  using Concurrency = typename BasePortChannelDeviceHandleT<PortChannelBackend::Device, SmemSlots>::Concurrency;
+  using Concurrency = BasePortChannelDeviceHandleT<PortChannelBackend::Device>::Concurrency;
 
   DeviceMemoryHandle dstMemory_;
   DeviceMemoryHandle srcMemory_;
@@ -460,92 +501,129 @@ struct PortChannelDeviceHandleT<PortChannelBackend::Device, SmemSlots>
   MSCCLPP_HOST_DEVICE_INLINE PortChannelDeviceHandleT(PortDevice2DeviceSemaphoreDeviceHandle semaphore,
                                                       DeviceBackendHandle device, DeviceMemoryHandle dstMemory,
                                                       DeviceMemoryHandle srcMemory)
-      : BasePortChannelDeviceHandleT<PortChannelBackend::Device, SmemSlots>(semaphore, device),
+      : BasePortChannelDeviceHandleT<PortChannelBackend::Device>(semaphore, device),
         dstMemory_(dstMemory),
         srcMemory_(srcMemory) {}
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Put data to the destination memory region via the device backend.
+  /// @tparam Mode Caller concurrency scope.
+  /// @tparam MaxExclusiveThreadsPerBlock Maximum number of threads per block concurrently posting in
+  /// Concurrency::Exclusive mode (0 disables fast-path staging).
   /// @param dstOffset The offset into the destination memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
-  /// @param slotIdx Shared-memory slot index, or -1 for the linear thread index. Out-of-range indices use doorbells.
-  template <Concurrency Mode = Concurrency::Device>
+  /// @param slotIdx Per-block exclusive-thread slot index, or -1 for the linear thread index. Out-of-range indices use
+  /// doorbells.
+  template <Concurrency Mode = Concurrency::Device,
+            uint32_t MaxExclusiveThreadsPerBlock = DeviceBackendHandle::kDefaultMaxExclusiveThreadsPerBlock>
   MSCCLPP_DEVICE_INLINE void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, int slotIdx = -1) {
-    BasePortChannelDeviceHandleT<PortChannelBackend::Device, SmemSlots>::template put<Mode>(
+    BasePortChannelDeviceHandleT<PortChannelBackend::Device>::put<Mode, MaxExclusiveThreadsPerBlock>(
         dstMemory_, dstOffset, srcMemory_, srcOffset, size, slotIdx);
   }
 
   /// Put data to the destination memory region via the device backend.
+  /// @tparam Mode Caller concurrency scope.
+  /// @tparam MaxExclusiveThreadsPerBlock Maximum number of threads per block concurrently posting in
+  /// Concurrency::Exclusive mode (0 disables fast-path staging).
   /// @param offset The common offset into the destination and source memory regions.
   /// @param size The size of the transfer.
-  template <Concurrency Mode = Concurrency::Device>
+  template <Concurrency Mode = Concurrency::Device,
+            uint32_t MaxExclusiveThreadsPerBlock = DeviceBackendHandle::kDefaultMaxExclusiveThreadsPerBlock>
   MSCCLPP_DEVICE_INLINE void put(uint64_t offset, uint64_t size) {
-    put<Mode>(offset, offset, size);
+    put<Mode, MaxExclusiveThreadsPerBlock>(offset, offset, size);
   }
 
   /// Put data to the destination memory region and signal the remote peer via the device backend.
+  /// @tparam Mode Caller concurrency scope.
+  /// @tparam MaxExclusiveThreadsPerBlock Maximum number of threads per block concurrently posting in
+  /// Concurrency::Exclusive mode (0 disables fast-path staging).
   /// @param dstOffset The offset into the destination memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
-  /// @param slotIdx Shared-memory slot index, or -1 for the linear thread index. Out-of-range indices use doorbells.
-  template <Concurrency Mode = Concurrency::Device>
+  /// @param slotIdx Per-block exclusive-thread slot index, or -1 for the linear thread index. Out-of-range indices use
+  /// doorbells.
+  template <Concurrency Mode = Concurrency::Device,
+            uint32_t MaxExclusiveThreadsPerBlock = DeviceBackendHandle::kDefaultMaxExclusiveThreadsPerBlock>
   MSCCLPP_DEVICE_INLINE void putWithSignal(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, int slotIdx = -1) {
-    BasePortChannelDeviceHandleT<PortChannelBackend::Device, SmemSlots>::template putWithSignal<Mode>(
+    BasePortChannelDeviceHandleT<PortChannelBackend::Device>::putWithSignal<Mode, MaxExclusiveThreadsPerBlock>(
         dstMemory_, dstOffset, srcMemory_, srcOffset, size, slotIdx);
   }
 
   /// Put data to the destination memory region and signal the remote peer via the device backend.
+  /// @tparam Mode Caller concurrency scope.
+  /// @tparam MaxExclusiveThreadsPerBlock Maximum number of threads per block concurrently posting in
+  /// Concurrency::Exclusive mode (0 disables fast-path staging).
   /// @param offset The common offset into the destination and source memory regions.
   /// @param size The size of the transfer.
-  template <Concurrency Mode = Concurrency::Device>
+  template <Concurrency Mode = Concurrency::Device,
+            uint32_t MaxExclusiveThreadsPerBlock = DeviceBackendHandle::kDefaultMaxExclusiveThreadsPerBlock>
   MSCCLPP_DEVICE_INLINE void putWithSignal(uint64_t offset, uint64_t size) {
-    putWithSignal<Mode>(offset, offset, size);
+    putWithSignal<Mode, MaxExclusiveThreadsPerBlock>(offset, offset, size);
   }
 
   /// Put data to the destination memory region, signal the remote peer, and flush via the device backend.
+  /// @tparam Mode Caller concurrency scope.
+  /// @tparam MaxExclusiveThreadsPerBlock Maximum number of threads per block concurrently posting in
+  /// Concurrency::Exclusive mode (0 disables fast-path staging).
   /// @param dstOffset The offset into the destination memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
-  /// @param slotIdx Shared-memory slot index, or -1 for the linear thread index. Out-of-range indices use doorbells.
-  template <Concurrency Mode = Concurrency::Device>
+  /// @param slotIdx Per-block exclusive-thread slot index, or -1 for the linear thread index. Out-of-range indices use
+  /// doorbells.
+  template <Concurrency Mode = Concurrency::Device,
+            uint32_t MaxExclusiveThreadsPerBlock = DeviceBackendHandle::kDefaultMaxExclusiveThreadsPerBlock>
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
                                                    int64_t maxSpinCount = 1000000, int slotIdx = -1) {
-    BasePortChannelDeviceHandleT<PortChannelBackend::Device, SmemSlots>::template putWithSignalAndFlush<Mode>(
+    BasePortChannelDeviceHandleT<PortChannelBackend::Device>::putWithSignalAndFlush<Mode, MaxExclusiveThreadsPerBlock>(
         dstMemory_, dstOffset, srcMemory_, srcOffset, size, maxSpinCount, slotIdx);
   }
 
   /// Put data to the destination memory region, signal the remote peer, and flush via the device backend.
+  /// @tparam Mode Caller concurrency scope.
+  /// @tparam MaxExclusiveThreadsPerBlock Maximum number of threads per block concurrently posting in
+  /// Concurrency::Exclusive mode (0 disables fast-path staging).
   /// @param offset The common offset into the destination and source memory regions.
   /// @param size The size of the transfer.
-  template <Concurrency Mode = Concurrency::Device>
+  template <Concurrency Mode = Concurrency::Device,
+            uint32_t MaxExclusiveThreadsPerBlock = DeviceBackendHandle::kDefaultMaxExclusiveThreadsPerBlock>
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(uint64_t offset, uint64_t size) {
-    putWithSignalAndFlush<Mode>(offset, offset, size);
+    putWithSignalAndFlush<Mode, MaxExclusiveThreadsPerBlock>(offset, offset, size);
   }
 
   /// Atomically add a 64-bit value to the destination memory via the device backend.
+  /// @tparam Mode Caller concurrency scope.
+  /// @tparam MaxExclusiveThreadsPerBlock Maximum number of threads per block concurrently posting in
+  /// Concurrency::Exclusive mode (0 disables fast-path staging).
   /// @param dstOffset The offset into the destination memory region.
   /// @param value The 64-bit signed value to add.
-  /// @param slotIdx Shared-memory slot index, or -1 for the linear thread index. Out-of-range indices use doorbells.
-  template <Concurrency Mode = Concurrency::Device>
+  /// @param slotIdx Per-block exclusive-thread slot index, or -1 for the linear thread index. Out-of-range indices use
+  /// doorbells.
+  template <Concurrency Mode = Concurrency::Device,
+            uint32_t MaxExclusiveThreadsPerBlock = DeviceBackendHandle::kDefaultMaxExclusiveThreadsPerBlock>
   MSCCLPP_DEVICE_INLINE void accumulate(uint64_t dstOffset, int64_t value, int slotIdx = -1) {
-    BasePortChannelDeviceHandleT<PortChannelBackend::Device, SmemSlots>::template accumulate<Mode>(
+    BasePortChannelDeviceHandleT<PortChannelBackend::Device>::accumulate<Mode, MaxExclusiveThreadsPerBlock>(
         dstMemory_, dstOffset, value, slotIdx);
   }
 
   /// Put data to the destination memory region, then atomically add a 64-bit value to the destination memory.
   /// Observing the new value publishes the put.
+  /// @tparam Mode Caller concurrency scope.
+  /// @tparam MaxExclusiveThreadsPerBlock Maximum number of threads per block concurrently posting in
+  /// Concurrency::Exclusive mode (0 disables fast-path staging).
   /// @param dstOffset The offset into the destination memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
   /// @param accOffset The offset of the accumulated word in the destination memory region.
   /// @param value The 64-bit signed value to add.
-  /// @param slotIdx Shared-memory slot index, or -1 for the linear thread index. Out-of-range indices use doorbells.
-  template <Concurrency Mode = Concurrency::Device>
+  /// @param slotIdx Per-block exclusive-thread slot index, or -1 for the linear thread index. Out-of-range indices use
+  /// doorbells.
+  template <Concurrency Mode = Concurrency::Device,
+            uint32_t MaxExclusiveThreadsPerBlock = DeviceBackendHandle::kDefaultMaxExclusiveThreadsPerBlock>
   MSCCLPP_DEVICE_INLINE void putWithAccumulate(uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
                                                uint64_t accOffset, int64_t value, int slotIdx = -1) {
-    BasePortChannelDeviceHandleT<PortChannelBackend::Device, SmemSlots>::template putWithAccumulate<Mode>(
+    BasePortChannelDeviceHandleT<PortChannelBackend::Device>::putWithAccumulate<Mode, MaxExclusiveThreadsPerBlock>(
         dstMemory_, dstOffset, srcMemory_, srcOffset, size, dstMemory_, accOffset, value, slotIdx);
   }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
