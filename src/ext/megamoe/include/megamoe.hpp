@@ -159,7 +159,7 @@ class MegaMoeContext {
                  int tag, const std::string& kernelPath, const std::string& kernelId,
                  std::shared_ptr<MegaMoeContext> sharedWorkspace);
   void forwardImpl(const void* input, const void* sharedInput, const int32_t* topkIds, const float* topkWeights,
-                   void* output, void* sharedOutput, int numTokens, cudaStream_t stream, bool signalStart);
+                   void* output, void* sharedOutput, int numTokens, cudaStream_t stream, bool signalStart, bool fused);
   size_t validateForward(const void* input, void* output, int numTokens) const;
   struct Impl;
   std::unique_ptr<Impl> impl_;

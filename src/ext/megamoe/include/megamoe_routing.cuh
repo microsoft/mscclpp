@@ -766,10 +766,11 @@ __device__ int prepareRoutesImpl(const P& p, ScratchStorage& scratchStorage, Sha
     }
   }
   if ((FixedTokenCount || c.worldSize == 1) && nTokens == 0) {
-    // Every rank is empty, so nothing is exchanged.
-    if (blockIdx.x == 0 && thread < warpSize) {
+    // Every rank is empty, so nothing is exchanged. Each CTA still builds its shared token-block cache, which the
+    // MXFP4 dispatch and task walks read instead of the workspace metadata.
+    if (thread < warpSize) {
       int nTokenBlocks = buildTokenBlockMetadata(p, shared);
-      if (thread == 0) w.control->tokenBlocks = nTokenBlocks;
+      if (blockIdx.x == 0 && thread == 0) w.control->tokenBlocks = nTokenBlocks;
     }
     syncRoutingGrid<DispatchOnly, P>(&w.control->residentGridSyncState, gridDim.x);
     return 0;
