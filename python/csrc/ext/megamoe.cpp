@@ -83,7 +83,8 @@ void register_megamoe(nb::module_& m) {
       .def(nb::init<>())
       .def_rw("hidden", &SharedExpertConfig::hidden)
       .def_rw("intermediate", &SharedExpertConfig::intermediate)
-      .def_rw("gate_up_clamp", &SharedExpertConfig::gateUpClamp);
+      .def_rw("gate_up_clamp", &SharedExpertConfig::gateUpClamp)
+      .def_rw("fc1_delay_ns", &SharedExpertConfig::fc1DelayNs);
   nb::class_<MegaMoeContext>(m, "CppMegaMoeContext")
       .def_static(
           "create",
@@ -104,7 +105,8 @@ void register_megamoe(nb::module_& m) {
           [](std::shared_ptr<mscclpp::Communicator> comm, const NativeConfig& config, uintptr_t fc1, uintptr_t fc1Scale,
              uintptr_t fc2, uintptr_t fc2Scale, const SharedExpertConfig& sharedConfig, uintptr_t sharedFc1,
              uintptr_t sharedFc1Scale, uintptr_t sharedFc2, uintptr_t sharedFc2Scale, uintptr_t stream, int tag,
-             std::shared_ptr<MegaMoeContext> sharedWorkspace) {
+             std::shared_ptr<MegaMoeContext> sharedWorkspace, const std::string& kernelPath,
+             const std::string& kernelId) {
             PackedWeights weights{reinterpret_cast<uint8_t*>(fc1), reinterpret_cast<uint8_t*>(fc1Scale),
                                   reinterpret_cast<uint8_t*>(fc2), reinterpret_cast<uint8_t*>(fc2Scale)};
             PackedWeights sharedWeights{
@@ -112,12 +114,13 @@ void register_megamoe(nb::module_& m) {
                 reinterpret_cast<uint8_t*>(sharedFc2), reinterpret_cast<uint8_t*>(sharedFc2Scale)};
             return std::make_shared<MegaMoeContext>(std::move(comm), config, weights, sharedConfig, sharedWeights,
                                                     reinterpret_cast<cudaStream_t>(stream), tag,
-                                                    std::move(sharedWorkspace));
+                                                    std::move(sharedWorkspace), kernelPath, kernelId);
           },
           nb::arg("communicator"), nb::arg("config"), nb::arg("fc1"), nb::arg("fc1_scale"), nb::arg("fc2"),
           nb::arg("fc2_scale"), nb::arg("shared_config"), nb::arg("shared_fc1"), nb::arg("shared_fc1_scale"),
           nb::arg("shared_fc2"), nb::arg("shared_fc2_scale"), nb::arg("stream") = 0, nb::arg("tag") = 17920,
-          nb::arg("shared_workspace") = nullptr, nb::call_guard<nb::gil_scoped_release>())
+          nb::arg("shared_workspace") = nullptr, nb::arg("kernel_path") = "", nb::arg("kernel_id") = "",
+          nb::call_guard<nb::gil_scoped_release>())
       .def("input_ptr", [](const MegaMoeContext& self) { return reinterpret_cast<uintptr_t>(self.input()); })
       .def("input_dlpack", &inputDlpack, nb::arg("num_tokens"))
       .def_prop_ro("device", &MegaMoeContext::device)

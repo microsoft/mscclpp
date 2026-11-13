@@ -50,6 +50,9 @@ struct SharedExpertConfig {
   int intermediate = 0;
   // Negative disables clamping; otherwise gate <= clamp and -clamp <= up <= clamp.
   float gateUpClamp = -1.0f;
+  // Delay before the shared FC1 loads start, in ns; negative selects the default. Runtime-only: it does not change
+  // the workspace layout. MSCCLPP_MEGAMOE_FUSED_FC1_DELAY_NS overrides it.
+  int fc1DelayNs = -1;
 };
 
 struct SymmetricLayout {
@@ -95,6 +98,11 @@ namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE {
 // row-major E8M0 [E_local, M, K/32].
 void packNativeWeights(const NativeConfig& config, const PackedWeights& source, const PackedWeights& destination,
                        cudaStream_t stream);
+
+// Packs the canonical fp8_nv weights of the fused shared expert of `config` (same layout as packNativeWeights for a
+// single local W8A8 expert).
+void packSharedExpertWeights(const NativeConfig& config, const SharedExpertConfig& sharedConfig,
+                             const PackedWeights& source, const PackedWeights& destination, cudaStream_t stream);
 
 SymmetricLayout getSymmetricLayout(const NativeConfig& config);
 size_t getPrivateWorkspaceBytes(const NativeConfig& config);

@@ -93,6 +93,10 @@ MegaMoeJitWeightsV1 jitWeights(const PackedWeights& weights) {
   return MegaMoeJitWeightsV1{weights.fc1, weights.fc1Scale, weights.fc2, weights.fc2Scale};
 }
 
+MegaMoeJitSharedConfigV1 jitSharedConfig(const SharedExpertConfig& c) {
+  return MegaMoeJitSharedConfigV1{c.hidden, c.intermediate, c.gateUpClamp, c.fc1DelayNs};
+}
+
 bool validW4Metadata(const MegaMoeJitApiV1& api) {
   const bool tileN = api.tileN == 128;
   const bool tileK = api.tileK == 128 || api.tileK == 256 || api.tileK == 512;
@@ -122,6 +126,8 @@ struct JitModule {
   void* handle = nullptr;
   const MegaMoeJitApiV1* api = nullptr;
   MegaMoeJitLaunchDirectV1 launchDirect = nullptr;
+  // Present only in modules built with fused shared-expert support.
+  const MegaMoeJitFusedSharedApiV1* fusedShared = nullptr;
   bool fixedTokenCount = false;
   uint32_t optimizationFlags = 0;
 
@@ -181,6 +187,18 @@ struct JitModule {
       throw std::invalid_argument("MegaMoE W4A8 JIT module is missing the direct launch entrypoint; recompile it");
     if (!api->preflight || !api->packWeights || !api->createPlan || !api->destroyPlan || !api->launch)
       throw std::invalid_argument("MegaMoE JIT module has an incomplete function table");
+    (void)dlerror();
+    auto fusedEntry =
+        reinterpret_cast<MegaMoeJitGetFusedSharedApiV1>(dlsym(handle, MSCCLPP_MEGAMOE_JIT_FUSED_SHARED_ENTRYPOINT));
+    if (!dlerror() && fusedEntry) {
+      const auto* fused = fusedEntry();
+      if (!fused || fused->structBytes != sizeof(MegaMoeJitFusedSharedApiV1) ||
+          fused->sharedConfigBytes != sizeof(MegaMoeJitSharedConfigV1) ||
+          fused->sharedWeightsBytes != sizeof(MegaMoeJitSharedWeightsV1) || !fused->preflight ||
+          !fused->packSharedWeights || !fused->createPlan || !fused->launch)
+        throw std::invalid_argument("MegaMoE JIT module has an invalid fused shared-expert function table");
+      fusedShared = fused;
+    }
     this->api = api;
   }
 };
@@ -427,8 +445,9 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
 
 MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeConfig& c, const PackedWeights& weights,
                                const SharedExpertConfig& sharedConfig, const PackedWeights& sharedWeights,
-                               cudaStream_t stream, int tag, std::shared_ptr<MegaMoeContext> sharedWorkspace)
-    : MegaMoeContext(std::move(comm), c, weights, &sharedConfig, &sharedWeights, stream, tag, "", "",
+                               cudaStream_t stream, int tag, std::shared_ptr<MegaMoeContext> sharedWorkspace,
+                               const std::string& kernelPath, const std::string& kernelId)
+    : MegaMoeContext(std::move(comm), c, weights, &sharedConfig, &sharedWeights, stream, tag, kernelPath, kernelId,
                      std::move(sharedWorkspace)) {}
 
 MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeConfig& c, const PackedWeights& weights,
@@ -468,7 +487,6 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
       p.workspaceBytes = sharedConfig ? getFusedPrivateWorkspaceBytes(c, *sharedConfig) : getPrivateWorkspaceBytes(c);
       p.resources = sharedConfig ? preflightFusedKernel(c, *sharedConfig) : preflightKernel(c);
     } else {
-      if (sharedConfig) throw std::invalid_argument("MegaMoE fused shared mode does not support external JIT modules");
       if (c.weightDtype != WeightDtype::Mxfp4)
         throw std::invalid_argument("MegaMoE W4A8 JIT module requires weightDtype=Mxfp4");
       // Even rejected modules must stay mapped until Impl synchronizes: CUDA
@@ -476,10 +494,18 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
       p.module = std::make_shared<JitModule>();
       p.module->load(kernelPath, kernelId);
       p.kernelId = kernelId;
+      if (sharedConfig && !p.module->fusedShared)
+        throw std::invalid_argument("MegaMoE JIT module lacks fused shared-expert support; recompile it");
       const auto config = jitConfig(c);
       MegaMoeJitLayoutV1 layout{};
       char error[ErrorCapacity]{};
-      checkJit(p.module->api->preflight(&config, &layout, error, sizeof(error)), error, "preflight");
+      if (sharedConfig) {
+        const auto shared = jitSharedConfig(*sharedConfig);
+        checkJit(p.module->fusedShared->preflight(&config, &shared, &layout, error, sizeof(error)), error,
+                 "fused preflight");
+      } else {
+        checkJit(p.module->api->preflight(&config, &layout, error, sizeof(error)), error, "preflight");
+      }
       p.layout = SymmetricLayout{size_t(layout.symmetricBytes),
                                  size_t(layout.input),
                                  size_t(layout.topkIds),
@@ -594,7 +620,18 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
       local.activationDtype = ActivationDtype::Fp8Static;
       local.activationScale = c.activationScale;
       packedShared = allocateWeights(local, p.sharedWeightBuffers);
-      packNativeWeights(local, *sharedWeights, packedShared, stream);
+      if (p.module) {
+        const auto config = jitConfig(c);
+        const auto shared = jitSharedConfig(*sharedConfig);
+        const auto source = jitWeights(*sharedWeights);
+        const auto destination = jitWeights(packedShared);
+        char error[ErrorCapacity]{};
+        checkJit(p.module->fusedShared->packSharedWeights(&config, &shared, &source, &destination, stream, error,
+                                                          sizeof(error)),
+                 error, "shared weight packing");
+      } else {
+        packSharedExpertWeights(c, *sharedConfig, *sharedWeights, packedShared, stream);
+      }
       MSCCLPP_CUDATHROW(cudaMemcpyAsync(&packedShared.fc1TensorScale, sharedWeights->fc1Scale, sizeof(float),
                                         cudaMemcpyDeviceToHost, stream));
       MSCCLPP_CUDATHROW(cudaMemcpyAsync(&packedShared.fc2TensorScale, sharedWeights->fc2Scale, sizeof(float),
@@ -652,9 +689,19 @@ MegaMoeContext::MegaMoeContext(std::shared_ptr<Communicator> comm, const NativeC
       const auto config = jitConfig(c);
       const auto weights = jitWeights(packed);
       char error[ErrorCapacity]{};
-      checkJit(p.module->api->createPlan(&config, r.symmetric->data(), r.peerBases.get(), r.workspace.get(), &weights,
-                                         &p.jitPlan->handle, error, sizeof(error)),
-               error, "plan creation");
+      if (sharedConfig) {
+        const auto shared = jitSharedConfig(*sharedConfig);
+        const MegaMoeJitSharedWeightsV1 sharedPacked{jitWeights(packedShared), packedShared.fc1TensorScale,
+                                                     packedShared.fc2TensorScale};
+        checkJit(p.module->fusedShared->createPlan(&config, &shared, r.symmetric->data(), r.peerBases.get(),
+                                                   r.workspace.get(), &weights, &sharedPacked, &p.jitPlan->handle,
+                                                   error, sizeof(error)),
+                 error, "fused plan creation");
+      } else {
+        checkJit(p.module->api->createPlan(&config, r.symmetric->data(), r.peerBases.get(), r.workspace.get(), &weights,
+                                           &p.jitPlan->handle, error, sizeof(error)),
+                 error, "plan creation");
+      }
       if (!p.jitPlan->handle) throw std::runtime_error("MegaMoE JIT module returned a null plan");
     } else {
       p.plan = sharedConfig ? createFusedKernelPlan(c, *sharedConfig, r.symmetric->data(), r.peerBases.get(),
@@ -793,7 +840,7 @@ void MegaMoeContext::forward(const void* x, const int32_t* ids, const float* sco
 void MegaMoeContext::forwardFusedShared(const void* x, const void* sharedX, const int32_t* ids, const float* scores,
                                         void* output, void* sharedOutput, int tokens, cudaStream_t stream,
                                         bool signalStart) {
-  if (!impl_->sharedConfig || !impl_->plan)
+  if (!impl_->sharedConfig || (!impl_->plan && !impl_->jitPlan))
     throw std::invalid_argument("MegaMoE fused shared forward requires a context constructed with shared weights");
   const size_t routedBytes = validateForward(x, output, tokens);
   const int sharedHidden = impl_->sharedConfig->hidden ? impl_->sharedConfig->hidden : config().hidden;
@@ -857,7 +904,12 @@ void MegaMoeContext::forwardImpl(const void* x, const void* sharedX, const int32
   const void* launchInput = fusedStage ? x : nullptr;
   const int32_t* launchIds = fusedStage ? ids : nullptr;
   const float* launchScores = fusedStage ? scores : nullptr;
-  if (fused) {
+  if (fused && impl_->jitPlan) {
+    char error[ErrorCapacity]{};
+    checkJit(impl_->module->fusedShared->launch(impl_->jitPlan->handle, launchInput, sharedX, launchIds, launchScores,
+                                                tokens, output, sharedOutput, stream, signal, error, sizeof(error)),
+             error, "fused launch");
+  } else if (fused) {
     launchNativeW4A8FusedShared(impl_->plan, launchInput, sharedX, launchIds, launchScores, tokens, output,
                                 sharedOutput, stream, signal);
   } else if (impl_->jitPlan) {

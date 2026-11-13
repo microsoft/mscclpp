@@ -143,6 +143,10 @@ class SharedExpertConfig:
     intermediate: int
     gate_up_clamp: float = -1.0
     hidden: int | None = None
+    fc1_delay_ns: int | None = None
+    """Shared FC1 start delay in nanoseconds (< 2**24); ``None`` uses the native default.
+
+    ``MSCCLPP_MEGAMOE_FUSED_FC1_DELAY_NS`` overrides this value when set."""
 
     def __post_init__(self):
         if (
@@ -163,6 +167,29 @@ class SharedExpertConfig:
             or self.hidden > (2**31 - 1) // 2
         ):
             raise ValueError("shared hidden must be a positive multiple of 128 within signed 32-bit indexing")
+        if self.fc1_delay_ns is not None and (
+            isinstance(self.fc1_delay_ns, bool)
+            or not isinstance(self.fc1_delay_ns, int)
+            or not 0 <= self.fc1_delay_ns < 2**24
+        ):
+            raise ValueError("shared fc1_delay_ns must be None or an integer in [0, 2**24)")
+
+
+def _auto_kernel(config, shared_config):
+    from dataclasses import replace
+    import warnings
+
+    from .jit import load_cached_kernel
+    from .policy import MegaMoEPolicyMismatchError, resolve_megamoe_policy
+
+    try:
+        policy = resolve_megamoe_policy(config, shared_config)
+    except (MegaMoEPolicyMismatchError, FileNotFoundError) as error:
+        warnings.warn(f"MegaMoE kernel='auto' found no policy ({error}); using the builtin kernel", stacklevel=3)
+        return load_cached_kernel("builtin"), shared_config, None
+    if shared_config is not None and shared_config.fc1_delay_ns is None and policy.fc1_delay_ns is not None:
+        shared_config = replace(shared_config, fc1_delay_ns=policy.fc1_delay_ns)
+    return policy.kernel, shared_config, policy
 
 
 def _tensor(tensor, name, shape, dtype, device):
@@ -205,6 +232,12 @@ class MegaMoE:
     Preparing modules before collective construction is recommended; neither
     forward nor graph replay compiles or tunes. The default uses the builtin
     kernel without a compiler dependency. Local shared experts remain unchanged.
+    ``kernel="auto"`` resolves a ``MegaMoEPolicy`` for ``config.max_tokens`` (and
+    the fused shared expert, if any) from the packaged policy profile, JIT-compiles
+    its kernel, and applies its ``fc1_delay_ns`` when ``shared_config.fc1_delay_ns``
+    is None. ``sm_margin`` stays the caller's; use ``policy.apply`` or
+    ``BucketedMegaMoE`` to adopt it. Without a matching policy it warns and uses the
+    builtin kernel. The resolved policy is exposed as ``policy``.
 
     ``shared_workspace=other`` reuses another context's symmetric/private GPU
     workspace, peer mappings, counters, input views, and execution-start signal,
@@ -259,6 +292,11 @@ class MegaMoE:
 
         if not torch.cuda.is_available() or torch.version.hip:
             raise RuntimeError("Native MegaMoE requires NVIDIA CUDA and an SM100-family GPU; ROCm is unsupported")
+        self.policy = None
+        if isinstance(kernel, str):
+            if kernel != "auto":
+                raise ValueError("kernel must be 'auto', W4A8KernelConfig, CompiledKernel, or None")
+            kernel, shared_config, self.policy = _auto_kernel(config, shared_config)
         self.config = config
         self.shared_config = shared_config
         self.device = torch.device("cuda", torch.cuda.current_device())
@@ -293,8 +331,6 @@ class MegaMoE:
                 raise ValueError(
                     "fused shared mode requires routed weight_dtype='mxfp4' and activation_dtype='fp8_static'"
                 )
-            if isinstance(kernel, W4A8KernelConfig) or kernel.key != "builtin":
-                raise ValueError("fused shared mode currently requires the builtin kernel")
             sh = shared_config.hidden or h
             si = shared_config.intermediate
             _tensor(shared_fc1, "shared_fc1", (1, 2 * si, sh), torch.float8_e4m3fn, self.device)
@@ -355,6 +391,7 @@ class MegaMoE:
             native_shared_config.hidden = shared_config.hidden or config.hidden
             native_shared_config.intermediate = shared_config.intermediate
             native_shared_config.gate_up_clamp = shared_config.gate_up_clamp
+            native_shared_config.fc1_delay_ns = -1 if shared_config.fc1_delay_ns is None else shared_config.fc1_delay_ns
             self._native = _mscclpp.CppMegaMoeContext.create_fused_shared(
                 communicator,
                 native_config,
@@ -370,6 +407,8 @@ class MegaMoE:
                 stream.cuda_stream,
                 tag,
                 None if shared_workspace is None else shared_workspace._native,
+                kernel.path,
+                "" if kernel.key == "builtin" else kernel.key,
             )
 
     @property
@@ -652,5 +691,114 @@ class MegaMoE:
                 signal_start,
             )
         return output, shared_output
+
+    __call__ = forward
+
+
+class BucketedMegaMoE:
+    """One tuned ``MegaMoE`` context per token bucket, selected per launch by token count.
+
+    Buckets default to the upper bounds of the policy token ranges for this workload,
+    capped at ``config.max_tokens`` (which is always the last bucket). Each bucket uses
+    ``config`` with ``max_tokens`` set to its bound, the policy's ``sm_margin``, kernel,
+    and ``fc1_delay_ns``; a bucket without a policy uses the builtin kernel and ``config``.
+
+    Contexts have independent workspaces and packed weights, so device memory grows with
+    the number of buckets. The bucket of a launch must be identical on all ranks: pass equal
+    token counts (as ``fixed_token_count`` kernels require) or the same ``bucket_tokens``,
+    for example the global maximum. Constructor arguments otherwise match ``MegaMoE``.
+    """
+
+    def __init__(
+        self,
+        config: MegaMoEConfig,
+        communicator,
+        fc1,
+        fc1_scale,
+        fc2,
+        fc2_scale,
+        *,
+        buckets=None,
+        profile_path=None,
+        stream=None,
+        tag=17920,
+        shared_config: SharedExpertConfig | None = None,
+        shared_fc1=None,
+        shared_fc1_scale=None,
+        shared_fc2=None,
+        shared_fc2_scale=None,
+    ):
+        from dataclasses import replace
+        import warnings
+
+        from .jit import load_cached_kernel
+        from .policy import MegaMoEPolicyMismatchError, bucket_limits, resolve_megamoe_policies
+
+        if not isinstance(config, MegaMoEConfig):
+            raise TypeError("config must be a MegaMoEConfig")
+        try:
+            policies = resolve_megamoe_policies(config, shared_config, profile_path=profile_path)
+        except (MegaMoEPolicyMismatchError, FileNotFoundError) as error:
+            warnings.warn(f"BucketedMegaMoE found no policies ({error}); using the builtin kernel", stacklevel=2)
+            policies = []
+        if buckets is None:
+            buckets = bucket_limits(policies, config.max_tokens)
+        buckets = sorted(set(buckets))
+        if not buckets or any(isinstance(b, bool) or not isinstance(b, int) or b < 1 for b in buckets):
+            raise ValueError("buckets must be positive integers")
+        if buckets[-1] != config.max_tokens:
+            raise ValueError("the largest bucket must equal config.max_tokens")
+        self.buckets = tuple(buckets)
+        self.contexts = []
+        self.policies = []
+        for limit in self.buckets:
+            covering = [p for p in policies if p.tokens[0] <= limit <= p.tokens[1]]
+            policy = min(covering, key=lambda p: p.tokens[1] - p.tokens[0]) if covering else None
+            bucket_config = replace(config, max_tokens=limit)
+            bucket_shared = shared_config
+            kernel = load_cached_kernel("builtin")
+            if policy is not None:
+                bucket_config, bucket_shared = policy.apply(bucket_config, shared_config)
+                kernel = policy.kernel
+            self.policies.append(policy)
+            self.contexts.append(
+                MegaMoE(
+                    bucket_config,
+                    communicator,
+                    fc1,
+                    fc1_scale,
+                    fc2,
+                    fc2_scale,
+                    stream=stream,
+                    tag=tag,
+                    kernel=kernel,
+                    shared_config=bucket_shared,
+                    shared_fc1=shared_fc1,
+                    shared_fc1_scale=shared_fc1_scale,
+                    shared_fc2=shared_fc2,
+                    shared_fc2_scale=shared_fc2_scale,
+                )
+            )
+        self.config = config
+        self.shared_config = shared_config
+
+    def context(self, tokens):
+        """Context of the smallest bucket holding ``tokens``."""
+        if isinstance(tokens, bool) or not isinstance(tokens, int) or tokens < 0:
+            raise ValueError("tokens must be a nonnegative integer")
+        for limit, context in zip(self.buckets, self.contexts):
+            if tokens <= limit:
+                return context
+        raise ValueError("token count exceeds max_tokens")
+
+    def forward(self, inputs, topk_ids, topk_weights, *, bucket_tokens=None, **kwargs):
+        """``MegaMoE.forward`` on the bucket for ``bucket_tokens`` (default ``inputs.shape[0]``)."""
+        tokens = inputs.shape[0] if bucket_tokens is None else bucket_tokens
+        return self.context(tokens).forward(inputs, topk_ids, topk_weights, **kwargs)
+
+    def forward_fused_shared(self, inputs, topk_ids, topk_weights, *, bucket_tokens=None, **kwargs):
+        """``MegaMoE.forward_fused_shared`` on the bucket for ``bucket_tokens`` (default ``inputs.shape[0]``)."""
+        tokens = inputs.shape[0] if bucket_tokens is None else bucket_tokens
+        return self.context(tokens).forward_fused_shared(inputs, topk_ids, topk_weights, **kwargs)
 
     __call__ = forward

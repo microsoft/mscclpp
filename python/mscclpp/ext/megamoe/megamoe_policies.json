@@ -1,0 +1,463 @@
+{
+  "version": 2,
+  "kind": "mscclpp-native-megamoe-policies",
+  "GB300": {
+    "entries": [
+      {
+        "match": {
+          "activation_dtype": "fp8_static",
+          "gate_up_clamp": "negative",
+          "hidden": 4096,
+          "intermediate": 4352,
+          "local_experts": 16,
+          "shared": null,
+          "top_k": 7,
+          "weight_dtype": "mxfp4",
+          "world_size": 32,
+          "tokens": [
+            1,
+            8
+          ]
+        },
+        "kernel": {
+          "tile_n": 128,
+          "tile_k": 128,
+          "load_stages": 10,
+          "num_warps": 16,
+          "transfer_registers": 128,
+          "load_warps": 2,
+          "split_pipelines": false,
+          "epilogue_tokens": 16,
+          "epilogue_warps": 8,
+          "epilogue_registers": 160,
+          "dispatch_chunk": 4096,
+          "dispatch_warps": 2,
+          "dispatch_stages": 1,
+          "fixed_token_count": true,
+          "expert_major_tasks": false,
+          "cache_weights": false,
+          "cluster_size": 2,
+          "adaptive_cache_weights": true,
+          "fuse_static_quantize": true
+        },
+        "runtime": {
+          "sm_margin": 0
+        },
+        "measurement": {
+          "metric": "median latency (us), slowest rank",
+          "tokens": 8,
+          "mean_us": 81.907,
+          "per_pattern_us": {
+            "balanced": 90.778,
+            "hot_experts": 73.386,
+            "lognormal": 90.606,
+            "zipf": 77.28,
+            "zipf_skewed": 77.486
+          },
+          "candidates": 15
+        }
+      },
+      {
+        "match": {
+          "activation_dtype": "fp8_static",
+          "gate_up_clamp": "negative",
+          "hidden": 4096,
+          "intermediate": 4352,
+          "local_experts": 16,
+          "shared": null,
+          "top_k": 7,
+          "weight_dtype": "mxfp4",
+          "world_size": 32,
+          "tokens": [
+            9,
+            16
+          ]
+        },
+        "kernel": {
+          "tile_n": 128,
+          "tile_k": 128,
+          "load_stages": 8,
+          "num_warps": 16,
+          "transfer_registers": 128,
+          "load_warps": 2,
+          "split_pipelines": false,
+          "epilogue_tokens": 32,
+          "epilogue_warps": 4,
+          "epilogue_registers": 224,
+          "dispatch_chunk": 4096,
+          "dispatch_warps": 2,
+          "dispatch_stages": 1,
+          "fixed_token_count": true,
+          "expert_major_tasks": false,
+          "cache_weights": false,
+          "cluster_size": 2,
+          "adaptive_cache_weights": true,
+          "fuse_static_quantize": true
+        },
+        "runtime": {
+          "sm_margin": 2
+        },
+        "measurement": {
+          "metric": "median latency (us), slowest rank",
+          "tokens": 16,
+          "mean_us": 85.47,
+          "per_pattern_us": {
+            "balanced": 94.382,
+            "hot_experts": 75.235,
+            "lognormal": 94.987,
+            "zipf": 81.066,
+            "zipf_skewed": 81.682
+          },
+          "candidates": 15
+        }
+      },
+      {
+        "match": {
+          "activation_dtype": "fp8_static",
+          "gate_up_clamp": "negative",
+          "hidden": 4096,
+          "intermediate": 4352,
+          "local_experts": 16,
+          "shared": null,
+          "top_k": 7,
+          "weight_dtype": "mxfp4",
+          "world_size": 32,
+          "tokens": [
+            17,
+            32
+          ]
+        },
+        "kernel": {
+          "tile_n": 128,
+          "tile_k": 128,
+          "load_stages": 8,
+          "num_warps": 16,
+          "transfer_registers": 128,
+          "load_warps": 2,
+          "split_pipelines": false,
+          "epilogue_tokens": 32,
+          "epilogue_warps": 4,
+          "epilogue_registers": 224,
+          "dispatch_chunk": 4096,
+          "dispatch_warps": 2,
+          "dispatch_stages": 1,
+          "fixed_token_count": true,
+          "expert_major_tasks": false,
+          "cache_weights": false,
+          "cluster_size": 2,
+          "adaptive_cache_weights": true,
+          "fuse_static_quantize": true
+        },
+        "runtime": {
+          "sm_margin": 4
+        },
+        "measurement": {
+          "metric": "median latency (us), slowest rank",
+          "tokens": 32,
+          "mean_us": 89.814,
+          "per_pattern_us": {
+            "balanced": 95.603,
+            "hot_experts": 81.064,
+            "lognormal": 95.915,
+            "zipf": 81.782,
+            "zipf_skewed": 94.704
+          },
+          "candidates": 15
+        }
+      },
+      {
+        "match": {
+          "activation_dtype": "fp8_static",
+          "gate_up_clamp": "negative",
+          "hidden": 4096,
+          "intermediate": 4352,
+          "local_experts": 16,
+          "shared": null,
+          "top_k": 7,
+          "weight_dtype": "mxfp4",
+          "world_size": 32,
+          "tokens": [
+            33,
+            64
+          ]
+        },
+        "kernel": {
+          "tile_n": 128,
+          "tile_k": 128,
+          "load_stages": 8,
+          "num_warps": 16,
+          "transfer_registers": 128,
+          "load_warps": 2,
+          "split_pipelines": false,
+          "epilogue_tokens": 32,
+          "epilogue_warps": 4,
+          "epilogue_registers": 224,
+          "dispatch_chunk": 4096,
+          "dispatch_warps": 2,
+          "dispatch_stages": 1,
+          "fixed_token_count": true,
+          "expert_major_tasks": false,
+          "cache_weights": false,
+          "cluster_size": 2,
+          "adaptive_cache_weights": true,
+          "fuse_static_quantize": true
+        },
+        "runtime": {
+          "sm_margin": 0
+        },
+        "measurement": {
+          "metric": "median latency (us), slowest rank",
+          "tokens": 64,
+          "mean_us": 98.641,
+          "per_pattern_us": {
+            "balanced": 97.738,
+            "hot_experts": 86.706,
+            "lognormal": 99.67,
+            "zipf": 87.923,
+            "zipf_skewed": 121.17
+          },
+          "candidates": 15
+        }
+      },
+      {
+        "match": {
+          "activation_dtype": "fp8_static",
+          "gate_up_clamp": "negative",
+          "hidden": 4096,
+          "intermediate": 4352,
+          "local_experts": 16,
+          "shared": {
+            "hidden": 8704,
+            "intermediate": 2048
+          },
+          "top_k": 7,
+          "weight_dtype": "mxfp4",
+          "world_size": 32,
+          "tokens": [
+            1,
+            8
+          ]
+        },
+        "kernel": {
+          "tile_n": 128,
+          "tile_k": 128,
+          "load_stages": 10,
+          "num_warps": 16,
+          "transfer_registers": 128,
+          "load_warps": 2,
+          "split_pipelines": false,
+          "epilogue_tokens": 16,
+          "epilogue_warps": 8,
+          "epilogue_registers": 160,
+          "dispatch_chunk": 4096,
+          "dispatch_warps": 2,
+          "dispatch_stages": 1,
+          "fixed_token_count": true,
+          "expert_major_tasks": false,
+          "cache_weights": false,
+          "cluster_size": 2,
+          "adaptive_cache_weights": true,
+          "fuse_static_quantize": true
+        },
+        "runtime": {
+          "fc1_delay_ns": 0,
+          "sm_margin": 0
+        },
+        "measurement": {
+          "metric": "median latency (us), slowest rank",
+          "tokens": 8,
+          "mean_us": 87.334,
+          "per_pattern_us": {
+            "balanced": 95.706,
+            "hot_experts": 78.915,
+            "lognormal": 95.197,
+            "zipf": 82.533,
+            "zipf_skewed": 84.32
+          },
+          "candidates": 30
+        }
+      },
+      {
+        "match": {
+          "activation_dtype": "fp8_static",
+          "gate_up_clamp": "negative",
+          "hidden": 4096,
+          "intermediate": 4352,
+          "local_experts": 16,
+          "shared": {
+            "hidden": 8704,
+            "intermediate": 2048
+          },
+          "top_k": 7,
+          "weight_dtype": "mxfp4",
+          "world_size": 32,
+          "tokens": [
+            9,
+            16
+          ]
+        },
+        "kernel": {
+          "tile_n": 128,
+          "tile_k": 128,
+          "load_stages": 8,
+          "num_warps": 16,
+          "transfer_registers": 128,
+          "load_warps": 2,
+          "split_pipelines": false,
+          "epilogue_tokens": 32,
+          "epilogue_warps": 4,
+          "epilogue_registers": 224,
+          "dispatch_chunk": 4096,
+          "dispatch_warps": 2,
+          "dispatch_stages": 1,
+          "fixed_token_count": true,
+          "expert_major_tasks": false,
+          "cache_weights": false,
+          "cluster_size": 2,
+          "adaptive_cache_weights": true,
+          "fuse_static_quantize": true
+        },
+        "runtime": {
+          "fc1_delay_ns": 2500,
+          "sm_margin": 2
+        },
+        "measurement": {
+          "metric": "median latency (us), slowest rank",
+          "tokens": 16,
+          "mean_us": 90.585,
+          "per_pattern_us": {
+            "balanced": 98.269,
+            "hot_experts": 82.702,
+            "lognormal": 98.984,
+            "zipf": 86.266,
+            "zipf_skewed": 86.702
+          },
+          "candidates": 30
+        }
+      },
+      {
+        "match": {
+          "activation_dtype": "fp8_static",
+          "gate_up_clamp": "negative",
+          "hidden": 4096,
+          "intermediate": 4352,
+          "local_experts": 16,
+          "shared": {
+            "hidden": 8704,
+            "intermediate": 2048
+          },
+          "top_k": 7,
+          "weight_dtype": "mxfp4",
+          "world_size": 32,
+          "tokens": [
+            17,
+            32
+          ]
+        },
+        "kernel": {
+          "tile_n": 128,
+          "tile_k": 128,
+          "load_stages": 8,
+          "num_warps": 16,
+          "transfer_registers": 128,
+          "load_warps": 2,
+          "split_pipelines": false,
+          "epilogue_tokens": 32,
+          "epilogue_warps": 4,
+          "epilogue_registers": 224,
+          "dispatch_chunk": 4096,
+          "dispatch_warps": 2,
+          "dispatch_stages": 1,
+          "fixed_token_count": true,
+          "expert_major_tasks": false,
+          "cache_weights": false,
+          "cluster_size": 2,
+          "adaptive_cache_weights": true,
+          "fuse_static_quantize": true
+        },
+        "runtime": {
+          "fc1_delay_ns": 2500,
+          "sm_margin": 2
+        },
+        "measurement": {
+          "metric": "median latency (us), slowest rank",
+          "tokens": 32,
+          "mean_us": 95.137,
+          "per_pattern_us": {
+            "balanced": 99.605,
+            "hot_experts": 86.826,
+            "lognormal": 100.298,
+            "zipf": 87.515,
+            "zipf_skewed": 101.443
+          },
+          "candidates": 24
+        }
+      },
+      {
+        "match": {
+          "activation_dtype": "fp8_static",
+          "gate_up_clamp": "negative",
+          "hidden": 4096,
+          "intermediate": 4352,
+          "local_experts": 16,
+          "shared": {
+            "hidden": 8704,
+            "intermediate": 2048
+          },
+          "top_k": 7,
+          "weight_dtype": "mxfp4",
+          "world_size": 32,
+          "tokens": [
+            33,
+            64
+          ]
+        },
+        "kernel": {
+          "tile_n": 128,
+          "tile_k": 128,
+          "load_stages": 8,
+          "num_warps": 16,
+          "transfer_registers": 128,
+          "load_warps": 2,
+          "split_pipelines": false,
+          "epilogue_tokens": 32,
+          "epilogue_warps": 4,
+          "epilogue_registers": 224,
+          "dispatch_chunk": 4096,
+          "dispatch_warps": 2,
+          "dispatch_stages": 1,
+          "fixed_token_count": true,
+          "expert_major_tasks": false,
+          "cache_weights": false,
+          "cluster_size": 2,
+          "adaptive_cache_weights": true,
+          "fuse_static_quantize": true
+        },
+        "runtime": {
+          "fc1_delay_ns": 2500,
+          "sm_margin": 2
+        },
+        "measurement": {
+          "metric": "median latency (us), slowest rank",
+          "tokens": 64,
+          "mean_us": 105.381,
+          "per_pattern_us": {
+            "balanced": 102.371,
+            "hot_experts": 93.51,
+            "lognormal": 107.347,
+            "zipf": 94.278,
+            "zipf_skewed": 129.4
+          },
+          "candidates": 24
+        }
+      }
+    ],
+    "provenance": {
+      "created_at": "2026-11-11",
+      "hardware": "8 nodes x 4 GB300 (EP32, NVLink domain)",
+      "source": "P6 tuned sweep: 5 kernels x sm_margin {0,2,4} x FC1 delay {0,2500} x 5 routing patterns",
+      "scope": "H4096/I4352, 512 experts, top-7, MXFP4/static FP8; fused fp8_nv shared H8704/I2048"
+    }
+  },
+  "_license": "Copyright (c) Microsoft Corporation. Licensed under the MIT License."
+}

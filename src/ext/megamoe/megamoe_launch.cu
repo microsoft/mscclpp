@@ -540,7 +540,7 @@ void packNativeWeights(const NativeConfig& c, const PackedWeights& source, const
     MSCCLPP_CUDATHROW(cudaGetLastError());
     return;
   }
-#if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE
+  // Also built into JIT modules: their fused shared expert packs its fp8_nv weights here.
   if (detail::isW8A8Local(c)) {
     // FP8 bytes in the W4A8 row order with block-scaled (SFA) scale layouts; fp8_nv gets unit block scales.
     using Types = detail::W8A8LocalCollectiveTypes;
@@ -558,9 +558,14 @@ void packNativeWeights(const NativeConfig& c, const PackedWeights& source, const
     MSCCLPP_CUDATHROW(cudaGetLastError());
     return;
   }
-#endif
   detail::packWeightsKernel<<<256, 256, 0, stream>>>(c, source, destination);
   MSCCLPP_CUDATHROW(cudaGetLastError());
+}
+
+void packSharedExpertWeights(const NativeConfig& c, const SharedExpertConfig& shared, const PackedWeights& source,
+                             const PackedWeights& destination, cudaStream_t stream) {
+  validateFusedConfig(c, shared);
+  packNativeWeights(detail::sharedNativeConfig(c, shared), source, destination, stream);
 }
 
 KernelResources preflightKernel(const NativeConfig& c) {
@@ -707,10 +712,13 @@ std::shared_ptr<KernelPlan> createFusedKernelPlan(const NativeConfig& c, const S
                                                                     sharedWeights, &sharedWorkspace, &symmetricLayout);
   shared.fc1WeightScale = sharedWeights.fc1TensorScale;
   shared.fc2WeightScale = sharedWeights.fc2TensorScale;
-  // MSCCLPP_MEGAMOE_FUSED_FC1_DELAY_NS tunes the shared FC1 start; 2500 ns hides it best at EP32 (see the fused v2
-  // notes).
+  // SharedExpertConfig::fc1DelayNs tunes the shared FC1 start (negative: 2500 ns, which hides it best at EP32; see
+  // the fused v2 notes). MSCCLPP_MEGAMOE_FUSED_FC1_DELAY_NS overrides it for tuning sweeps.
   const char* delayEnv = std::getenv("MSCCLPP_MEGAMOE_FUSED_FC1_DELAY_NS");
-  uint32_t sharedFc1DelayNs = delayEnv ? uint32_t(std::strtoul(delayEnv, nullptr, 10)) : 2500u;
+  uint32_t sharedFc1DelayNs = delayEnv && *delayEnv          ? uint32_t(std::strtoul(delayEnv, nullptr, 10))
+                              : sharedConfig.fc1DelayNs >= 0 ? uint32_t(sharedConfig.fc1DelayNs)
+                                                             : 2500u;
+  sharedFc1DelayNs &= 0xffffffu;
 #if defined(MSCCLPP_MEGAMOE_FUSED_DEBUG_SKIP) && MSCCLPP_MEGAMOE_FUSED_DEBUG_SKIP
   // Debug attribution flags only (see runFusedW4A8).
   if (const char* skipEnv = std::getenv("MSCCLPP_MEGAMOE_FUSED_SKIP"))

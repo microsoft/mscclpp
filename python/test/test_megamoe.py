@@ -65,7 +65,7 @@ def mocked_workspace_api(monkeypatch):
 
     def create_fused_shared(*args):
         fused_calls.append(args)
-        owner = args[-1]
+        owner = args[13]
         return SimpleNamespace(
             workspace_id=owner.workspace_id if owner is not None else (len(calls) + len(fused_calls)) * 4096,
             packed_weight_pointers=tuple((len(calls) + len(fused_calls)) * 256 + i * 32 for i in range(4)),
@@ -186,6 +186,23 @@ def test_fused_shared_constructor_contract(mocked_workspace_api):
     assert len(native.fused_calls) == 1
     native_shared = native.fused_calls[0][6]
     assert native_shared.hidden == 8704 and native_shared.intermediate == 2048 and native_shared.gate_up_clamp == 0.5
+    assert native_shared.fc1_delay_ns == -1
+    assert native.fused_calls[0][14:] == (context._kernel.path, "")
+    delayed = api.SharedExpertConfig(2048, 0.5, hidden=8704, fc1_delay_ns=1500)
+    api.MegaMoE(
+        config,
+        object(),
+        *weights,
+        shared_config=delayed,
+        shared_fc1=weights[0],
+        shared_fc1_scale=weights[1],
+        shared_fc2=weights[2],
+        shared_fc2_scale=weights[3],
+    )
+    assert native.fused_calls[1][6].fc1_delay_ns == 1500
+    for delay in (-1, 2**24, True, 1.5):
+        with pytest.raises(ValueError):
+            api.SharedExpertConfig(2048, fc1_delay_ns=delay)
 
 
 @pytest.mark.parametrize(

@@ -341,6 +341,34 @@ def load_cached_kernel(key, *, cache_dir=None):
     return _load_cached(key, cache_dir, runtime_fingerprint())
 
 
+def find_cached_kernel(config, *, cache_dir=None):
+    """Load a prepared module for ``config`` without nvcc or CUTLASS, or return None.
+
+    Scans the cache for a valid module built for this exact runtime environment and
+    specialization. When several toolchains built it, the most recent module wins.
+    """
+    if not isinstance(config, W4A8KernelConfig):
+        raise TypeError("config must be W4A8KernelConfig")
+    if config == W4A8KernelConfig():
+        return CompiledKernel(config, "", "builtin", True)
+    environment = runtime_fingerprint()
+    root = _cache_root(cache_dir)
+    candidates = []
+    for manifest in root.glob("*/manifest.json"):
+        try:
+            build = json.loads(manifest.read_text()).get("build", {})
+            if build.get("config") == asdict(config) and build.get("environment") == environment:
+                candidates.append((manifest.stat().st_mtime, manifest.parent.name))
+        except (OSError, ValueError, AttributeError):
+            continue
+    for _, key in sorted(candidates, reverse=True):
+        try:
+            return _load_cached(key, cache_dir, environment)
+        except (OSError, ValueError):
+            continue
+    return None
+
+
 def _tool(value, name):
     found = shutil.which(str(value))
     if found is None:
@@ -388,7 +416,8 @@ def compile_kernel(config, *, cache_dir=None, nvcc=None, cutlass_root=None, time
     """Compile one specialization once per host/cache, outside collective construction.
 
     Set ``MSCCLPP_MEGAMOE_NVCC`` (nvcc >=13.0),
-    ``MSCCLPP_MEGAMOE_CUTLASS_ROOT``, and optionally ``CUDA_HOME``.
+    ``MSCCLPP_MEGAMOE_CUTLASS_ROOT``, and optionally ``CUDA_HOME``. Without a CUTLASS
+    root, a module prepared for the same runtime is reused (see ``find_cached_kernel``).
     ``MSCCLPP_MEGAMOE_CUDA_INCLUDE_DIRS`` supplies path-separated matching runtime
     include directories when compiler and runtime packages are installed separately.
     """
@@ -398,6 +427,11 @@ def compile_kernel(config, *, cache_dir=None, nvcc=None, cutlass_root=None, time
         raise ValueError("timeout must be finite and positive")
     if config == W4A8KernelConfig():
         return CompiledKernel(config, "", "builtin", True)
+    if cutlass_root is None and not os.environ.get("MSCCLPP_MEGAMOE_CUTLASS_ROOT"):
+        # Without a toolchain, reuse a module prepared on an identical runtime.
+        cached = find_cached_kernel(config, cache_dir=cache_dir)
+        if cached is not None:
+            return cached
     environment = runtime_fingerprint()
     source_root = _source_root()
     sources = [source_root / name for name in ("megamoe_w4a8.cu", "megamoe_launch.cu", "megamoe_jit.cu")]
