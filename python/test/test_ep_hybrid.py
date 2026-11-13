@@ -283,7 +283,16 @@ def test_latency_hybrid_single_round_graph_changing_routes(ep_group):
 
 @pytest.mark.parametrize(
     "qps_per_peer,chunk_rows,hidden",
-    [(1, 8, 7168), (4, 8, 7168), (4, 7, 7168), (1, 7, 2048), (4, 16, 4096)],
+    [
+        (1, 8, 7168),
+        (4, 8, 7168),
+        (4, 7, 7168),
+        (1, 7, 2048),
+        (4, 16, 4096),
+        (4, 24, 4096),
+        (4, 32, 4096),
+        (4, 48, 4096),
+    ],
 )
 @pytest.mark.parametrize("emit_local_expert_ids", [False, True])
 @pytest.mark.parametrize("combine_mode", [CombineMode.RANK_LOCAL_REDUCE, CombineMode.DIRECT_SEND])

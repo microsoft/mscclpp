@@ -359,6 +359,9 @@ Run the same command with `--backend nccl` for NCCL-EP. `--qps-per-peer` also
 sets NCCL-EP's QPs per rank; `--n-tokens-per-chunk` is MSCCL++-specific.
 Omitting these options preserves each backend's defaults. NCCL-EP rank-major
 supports rank-local reduction, not MSCCL++'s per-top-k direct-send input layout.
+MSCCL++ hybrid `--n-tokens-per-chunk` accepts any integer from 1 through 128,
+including 16, 24, 32, and 48; it need not be a power of two. Partial final
+chunks are supported. All ranks must use the same chunk setting.
 
 `--routing random` preserves the default independent, approximately uniform
 expert selection. For sustained expert-load imbalance, add

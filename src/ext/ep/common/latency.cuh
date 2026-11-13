@@ -209,10 +209,19 @@ MSCCLPP_HOST_DEVICE_INLINE size_t dispatchRecvTmaBytes() {
   return static_cast<size_t>(NWorkers) * (tileBytes + sizeof(mscclpp::BulkBarrier));
 }
 
+template <int Hidden, DispatchDataType DataType>
+MSCCLPP_HOST_DEVICE_INLINE constexpr size_t hybridDispatchTmaBytes() {
+  static_assert(Hidden % 128 == 0);
+  constexpr int NTiles = HybridForwardWarps > HybridMaxProduceGroups ? HybridForwardWarps : HybridMaxProduceGroups;
+  constexpr size_t TileBytes = static_cast<size_t>(Hidden) * sizeof(DispatchElementType<DataType>);
+  return static_cast<size_t>(NTiles) * (TileBytes + sizeof(mscclpp::BulkBarrier));
+}
+
 template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, bool Hybrid = false>
 MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSharedBytes(int nRanks, int nExperts, int nTopk) {
   const size_t controlBytes = dispatchSharedControlBytes(nRanks, Hybrid);
-  const size_t sendBytes = dispatchSendTmaBytes<Hidden, DataType, ScaleBlockSize>(nTopk);
+  const size_t sendBytes = Hybrid ? hybridDispatchTmaBytes<Hidden, DataType>()
+                                  : dispatchSendTmaBytes<Hidden, DataType, ScaleBlockSize>(nTopk);
   const size_t recvBytes = Hybrid ? 0 : dispatchRecvTmaBytes<Hidden, DataType>();
   const size_t tmaBytes = controlBytes + (sendBytes > recvBytes ? sendBytes : recvBytes);
   const size_t metadataBytes = static_cast<size_t>(nRanks + nExperts) * sizeof(int);

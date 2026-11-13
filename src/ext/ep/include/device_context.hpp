@@ -50,8 +50,9 @@ struct HybridDeviceContext {
   float* aggregateSendBuffer_ = nullptr;
   float* aggregateRecvBuffer_ = nullptr;
   HybridAggregateControl* aggregateControl_ = nullptr;
-  /// Private completed-token counters, reset on the caller stream before each aggregate combine.
+  /// Private completed-token and TMA-load counters, reset on the caller stream during dispatch.
   int* aggregateChunkReady_ = nullptr;
+  int* aggregateChunkLoadDone_ = nullptr;
 };
 
 /// Persistent device resources shared by every dispatch and combine algorithm.

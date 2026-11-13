@@ -3,6 +3,7 @@
 #ifndef MSCCLPP_EP_COMMON_DEVICE_HELPERS_CUH_
 #define MSCCLPP_EP_COMMON_DEVICE_HELPERS_CUH_
 
+#include <mscclpp/atomic_device.hpp>
 #include <mscclpp/memory_channel_device.hpp>
 
 #include "exception.hpp"
@@ -20,6 +21,14 @@ namespace ep {
 
 MSCCLPP_DEVICE_INLINE void syncNamedBarrier(int barrierId, int numThreads) {
   asm volatile("bar.sync %0, %1;" ::"r"(barrierId), "r"(numThreads) : "memory");
+}
+
+MSCCLPP_DEVICE_INLINE void atomicAddReleaseDevice(int* ptr, int value) {
+#if defined(MSCCLPP_DEVICE_CUDA)
+  asm volatile("red.release.gpu.global.add.s32 [%0], %1;" ::"l"(ptr), "r"(value) : "memory");
+#else
+  (void)mscclpp::atomicFetchAdd<int, mscclpp::scopeDevice>(ptr, value, mscclpp::memoryOrderRelease);
+#endif
 }
 
 template <typename dtype_a_t, typename dtype_b_t>

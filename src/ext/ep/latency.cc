@@ -159,7 +159,9 @@ void LatencyRuntimeContext::initialize() {
         auto semaphore =
             std::make_shared<mscclpp::PortDevice2DeviceSemaphore>(communicator_, ibConnectionFutures[r][q].get());
         portChannels_.emplace_back(semaphore, peerBufferMemories_[r], ibLocalMemory_);
-        portChannelHandles[static_cast<size_t>(r) * qpsPerPeer_ + q] = portChannels_.back().deviceHandle();
+        auto handle = portChannels_.back().deviceHandle();
+        handle.device_.blueFlameLimit = 2 * 1024 * 1024;
+        portChannelHandles[static_cast<size_t>(r) * qpsPerPeer_ + q] = handle;
       }
     }
   }
@@ -197,10 +199,11 @@ void LatencyRuntimeContext::initialize() {
     distributeScratch_ =
         mscclpp::detail::gpuCallocShared<int>(HybridDistributeScratch::numInts(maxTokensPerRank_, nTokensPerChunk_));
     const auto storage = storageLayout();
+    const int maxCombineChunks = configCellDiv(maxTokensPerRank_, nTokensPerChunk_);
     aggregateMetadata_ =
         mscclpp::detail::gpuCallocShared<int>(1 + static_cast<size_t>(maxTokensPerRank_) * (1 + 3 * numTopk_));
     aggregateLocal_ = mscclpp::detail::gpuCallocShared<float>(static_cast<size_t>(maxTokensPerRank_) * hidden_);
-    aggregateChunkReady_ = mscclpp::detail::gpuCallocShared<int>(configCellDiv(maxTokensPerRank_, nTokensPerChunk_));
+    aggregateChunkReady_ = mscclpp::detail::gpuCallocShared<int>(2 * static_cast<size_t>(maxCombineChunks));
     deviceContext_.hybridCtx_ = {
         .portChannels_ = portChannelContext_.get(),
         .nTokensPerChunk_ = nTokensPerChunk_,
@@ -217,7 +220,8 @@ void LatencyRuntimeContext::initialize() {
         .aggregateSendBuffer_ = storage.aggregateSendBuffer_,
         .aggregateRecvBuffer_ = storage.aggregateRecvBuffer_,
         .aggregateControl_ = storage.aggregateControl_,
-        .aggregateChunkReady_ = aggregateChunkReady_.get()};
+        .aggregateChunkReady_ = aggregateChunkReady_.get(),
+        .aggregateChunkLoadDone_ = aggregateChunkReady_.get() + maxCombineChunks};
   }
   deviceContext_.devicePtr_ = static_cast<DeviceContext*>(mscclpp::detail::gpuCalloc(sizeof(DeviceContext)));
   mscclpp::gpuMemcpy<DeviceContext>(deviceContext_.devicePtr_, &deviceContext_, 1, cudaMemcpyHostToDevice);

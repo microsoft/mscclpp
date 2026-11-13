@@ -24,6 +24,9 @@ inline constexpr int MaxNumRanks = 128;
 
 inline constexpr int MaxQpsPerPeer = 4;
 inline constexpr int HybridForwardBlocks = 8;
+inline constexpr int HybridMaxForwardBlocks = 16;
+inline constexpr int HybridForwardWarps = 8;
+inline constexpr int HybridMaxProduceGroups = 4;
 
 inline constexpr bool isSupportedRanks(int numRanks) { return numRanks > 0 && numRanks <= MaxNumRanks; }
 
@@ -87,7 +90,7 @@ struct HybridDistributeScratch {
 struct alignas(BufferAlignmentBytes) HybridDispatchControl {
   uint64_t qpSignalCount[MaxQpsPerPeer];
   uint64_t bufferReuseReady;
-  uint32_t payloadReady[MaxNumRanks];
+  alignas(BufferAlignmentBytes) uint32_t payloadReady[MaxNumRanks];
   InterRackDispatchHeader sendHeader;
   InterRackDispatchHeader recvHeader;
 };

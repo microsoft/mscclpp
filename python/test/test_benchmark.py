@@ -125,7 +125,8 @@ def test_generic_config_matches_any_dtype():
     assert config.algorithm == "generic-allgather"
 
 
-def test_ep_hybrid_cli_options(monkeypatch):
+@pytest.mark.parametrize("chunk", [1, 7, 16, 24, 32, 48, 64, 96, 128])
+def test_ep_hybrid_cli_options(monkeypatch, chunk):
     from mscclpp_benchmark.ep.bench import parse_args
 
     monkeypatch.setattr(
@@ -140,7 +141,7 @@ def test_ep_hybrid_cli_options(monkeypatch):
             "--qps-per-peer",
             "4",
             "--n-tokens-per-chunk",
-            "16",
+            str(chunk),
             "-d",
             "4096",
             "-e",
@@ -149,7 +150,7 @@ def test_ep_hybrid_cli_options(monkeypatch):
     )
     args = parse_args()
     assert args.qps_per_peer == 4
-    assert args.n_tokens_per_chunk == 16
+    assert args.n_tokens_per_chunk == chunk
     assert args.hidden == 4096 and args.num_experts == 512
 
 

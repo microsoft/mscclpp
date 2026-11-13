@@ -8,24 +8,38 @@ namespace mscclpp::ep {
 
 #if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS) && MSCCLPP_BULK_AVAILABLE
 
+MSCCLPP_DEVICE_INLINE int hybridNumForwardBlocks(int gridBlocks) {
+  const int halfWorkers = (gridBlocks - 1) / 2;
+  return halfWorkers < HybridMaxForwardBlocks ? halfWorkers : HybridMaxForwardBlocks;
+}
+
+MSCCLPP_DEVICE_INLINE int hybridNumProduceGroups(int nTokens, int nProducers) {
+  static_assert(HybridMaxProduceGroups == 4);
+  return nTokens <= nProducers ? 1 : (nTokens <= 2 * nProducers ? 2 : HybridMaxProduceGroups);
+}
+
 MSCCLPP_DEVICE_INLINE int distributeExpert(const int64_t* routes, int tokenIdx, int laneIdx, const Workload& workload) {
   const int64_t expertIdx = laneIdx < workload.numTopk_ ? routes[tokenIdx * workload.numTopk_ + laneIdx] : -1;
   return expertIdx >= 0 && expertIdx < workload.numExperts_ ? static_cast<int>(expertIdx) : -1;
 }
 
-// Producer CTAs: load input tokens via TMA, send NVLink-local destinations directly, and stage
-// cross-domain tokens into distributeSendBuffer_ for the control CTA to RDMA-post in chunks.
+// Producer CTAs: quantize or TMA-load input tokens with SM-first token striding, prioritize cross-domain
+// staging into distributeSendBuffer_ so RDMA chunks post early, and then send NVLink-local tokens.
 template <int Hidden, DispatchDataType DataType>
 MSCCLPP_DEVICE_INLINE void distributeProduce(void* output, int* outputIds, float* outputWeights, const void* input,
                                              const int64_t* routes, const float* weights, const Workload& workload,
-                                             const DeviceContext* context, const TransportView& transport,
-                                             int* shared) {
-  const int firstProducerIdx = HybridForwardBlocks + 1;
-  const int producerIdx = static_cast<int>(blockIdx.x) - firstProducerIdx;
-  const int nProducers = static_cast<int>(gridDim.x) - firstProducerIdx;
-  const int warpIdx = threadIdx.x / WARP_SIZE;
+                                             const DeviceContext* context, const TransportView& transport, int* shared,
+                                             int producerIdx, int nProducers) {
+  static_assert(DispatchNWarps % HybridMaxProduceGroups == 0);
+  const int nGroups = hybridNumProduceGroups(workload.numTokens_, nProducers);
+  const int nWarpsPerGroup = DispatchNWarps / nGroups;
+  const int nGroupThreads = nWarpsPerGroup * WARP_SIZE;
+  const int warpIdx = static_cast<int>(threadIdx.x) / WARP_SIZE;
   const int laneIdx = getLaneId();
-  if (warpIdx >= DispatchMaxNWarpGroups) return;
+  const int groupIdx = warpIdx / nWarpsPerGroup;
+  const int subWarpIdx = warpIdx % nWarpsPerGroup;
+  const int groupThreadIdx = subWarpIdx * WARP_SIZE + laneIdx;
+  const int groupBarrierId = DispatchWarpGroupBarrierBase + groupIdx;
 
   using ElementType = DispatchElementType<DataType>;
   constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(ElementType);
@@ -35,86 +49,106 @@ MSCCLPP_DEVICE_INLINE void distributeProduce(void* output, int* outputIds, float
   const int nLocalExperts = workload.numExperts_ / context->numRanks_;
   const size_t stride = InterRackDispatchPayload::stride(Hidden, nTopk, sizeof(ElementType));
   const size_t controlBytes = dispatchSharedControlBytes(context->numRanks_, true);
-  const size_t payloadStride = dispatchPayloadStride<DataType>(Hidden, nTopk, 0);
-  auto* staged = reinterpret_cast<uint8_t*>(shared) + controlBytes + warpIdx * payloadStride;
+  auto* staged = reinterpret_cast<uint8_t*>(shared) + controlBytes + static_cast<size_t>(groupIdx) * HiddenBytes;
   auto* barriers = reinterpret_cast<mscclpp::BulkBarrier*>(reinterpret_cast<uint8_t*>(shared) + controlBytes +
-                                                           DispatchMaxNWarpGroups * payloadStride);
-  auto& barrier = barriers[warpIdx];
+                                                           static_cast<size_t>(HybridMaxProduceGroups) * HiddenBytes);
+  auto& barrier = barriers[groupIdx];
+  __shared__ int groupRemoteTokenIndices[HybridMaxProduceGroups];
   const bool quantizeInput =
       DataType == DispatchDataType::FP8_E4M3_STATIC && workload.inputMode_ == QuantConfig::InputMode::QUANTIZE;
-  if (!quantizeInput && laneIdx == 0) barrier.init();
-  __syncwarp();
+  // Spread tokens across distinct Producer SMs first so every SM's TMA engine is utilized at small T.
+  const int firstTokenIdx = groupIdx * nProducers + producerIdx;
+  const int tokenStride = nProducers * nGroups;
+  if (firstTokenIdx >= workload.numTokens_) return;
+  if (!quantizeInput && groupThreadIdx == 0) barrier.init();
+  syncNamedBarrier(groupBarrierId, nGroupThreads);
 
   uint32_t phase = 0;
   WorkspaceView workspace(context->workspace_, context->numRanks_, workload.numExperts_);
-  for (int tokenIdx = producerIdx * DispatchMaxNWarpGroups + warpIdx; tokenIdx < workload.numTokens_;
-       tokenIdx += nProducers * DispatchMaxNWarpGroups) {
+  for (int tokenIdx = firstTokenIdx; tokenIdx < workload.numTokens_; tokenIdx += tokenStride) {
     if constexpr (DataType == DispatchDataType::FP8_E4M3_STATIC) {
       if (quantizeInput) {
         constexpr int NHiddenVectors = Hidden / mscclpp::bf16x8::Size;
         const auto* inputData = static_cast<const uint4*>(input) + static_cast<size_t>(tokenIdx) * NHiddenVectors;
         auto* stagedData = reinterpret_cast<mscclpp::f8_e4m3x8*>(staged);
-        for (int vectorIdx = laneIdx; vectorIdx < NHiddenVectors; vectorIdx += WARP_SIZE) {
+        for (int vectorIdx = groupThreadIdx; vectorIdx < NHiddenVectors; vectorIdx += nGroupThreads) {
           stagedData[vectorIdx] =
               quantizeBf16x8ToStaticFp8(mscclpp::bf16x8(inputData[vectorIdx]), workload.dispatchScale_);
         }
       }
     }
-    if (!quantizeInput && laneIdx == 0) {
+    if (!quantizeInput && groupThreadIdx == 0) {
       barrier.arriveAndExpect(HiddenBytes);
       mscclpp::bulkLoad(staged, static_cast<const uint8_t*>(input) + static_cast<size_t>(tokenIdx) * HiddenBytes,
                         HiddenBytes, barrier);
     }
-    const RankMajorRoute route = prepareRankMajorRoute(workspace, routes, tokenIdx, nTopk, nLocalExperts,
-                                                       workload.maxTokensPerRank_, laneIdx, workload.numExperts_);
-    const int expertIdx = route.expertIdx;
-    const float weight = expertIdx >= 0 ? (weights == nullptr ? 1.0f : weights[tokenIdx * nTopk + laneIdx]) : 0.0f;
-    const bool remote = route.dstRank >= 0 && !transport.isNvlinkPeer(route.dstRank);
-    const bool hasRemote = __any_sync(0xffffffff, remote);
-    int remoteTokenIdx = -1;
-    if (laneIdx == 0 && hasRemote) remoteTokenIdx = atomicAdd(&hybridCtx.distributeScratch_->nRemoteTokens, 1);
-    remoteTokenIdx = __shfl_sync(0xffffffff, remoteTokenIdx, 0);
-    if (laneIdx == 0) hybridCtx.aggregateRemoteTokenIndices_[tokenIdx] = remoteTokenIdx;
 
-    if (!quantizeInput && laneIdx == 0) barrier.wait(phase);
-    __syncwarp();
+    RankMajorRoute route{-1, -1, false, -1};
+    float weight = 0.0f;
+    bool remote = false;
+    if (subWarpIdx == 0) {
+      route = prepareRankMajorRoute(workspace, routes, tokenIdx, nTopk, nLocalExperts, workload.maxTokensPerRank_,
+                                    laneIdx, workload.numExperts_);
+      weight = route.expertIdx >= 0 ? (weights == nullptr ? 1.0f : weights[tokenIdx * nTopk + laneIdx]) : 0.0f;
+      remote = route.dstRank >= 0 && !transport.isNvlinkPeer(route.dstRank);
+      const bool hasRemote = __any_sync(0xffffffff, remote);
+      int remoteTokenIdx = -1;
+      if (laneIdx == 0 && hasRemote) remoteTokenIdx = atomicAdd(&hybridCtx.distributeScratch_->nRemoteTokens, 1);
+      remoteTokenIdx = __shfl_sync(0xffffffff, remoteTokenIdx, 0);
+      if (laneIdx == 0) {
+        hybridCtx.aggregateRemoteTokenIndices_[tokenIdx] = remoteTokenIdx;
+        groupRemoteTokenIndices[groupIdx] = remoteTokenIdx;
+      }
+      if (hasRemote) {
+        EP_DEVICE_ASSERT(remoteTokenIdx < hybridCtx.distributeCapacity_);
+        auto* send =
+            static_cast<uint8_t*>(hybridCtx.distributeSendBuffer_) + static_cast<size_t>(remoteTokenIdx) * stride;
+        const InterRackDispatchPayload payload(send, Hidden, nTopk, sizeof(ElementType));
+        if (laneIdx < nTopk) {
+          payload.expertIds_[laneIdx] = route.expertIdx;
+          payload.topkWeights_[laneIdx] = weight;
+          payload.dstSlots_[laneIdx] = route.destinationSlot;
+        }
+      }
+    }
+
+    if (!quantizeInput && groupThreadIdx == 0) barrier.wait(phase);
     mscclpp::bulkFence();
+    syncNamedBarrier(groupBarrierId, nGroupThreads);
 
-    if (hasRemote) {
-      EP_DEVICE_ASSERT(remoteTokenIdx < hybridCtx.distributeCapacity_);
+    const int remoteTokenIdx = groupRemoteTokenIndices[groupIdx];
+    if (remoteTokenIdx >= 0) {
       auto* send =
           static_cast<uint8_t*>(hybridCtx.distributeSendBuffer_) + static_cast<size_t>(remoteTokenIdx) * stride;
-      const InterRackDispatchPayload payload(send, Hidden, nTopk, sizeof(ElementType));
-      for (int vectorIdx = laneIdx; vectorIdx < HiddenBytes / sizeof(int4); vectorIdx += WARP_SIZE) {
+      for (int vectorIdx = groupThreadIdx; vectorIdx < static_cast<int>(HiddenBytes / sizeof(int4));
+           vectorIdx += nGroupThreads) {
         reinterpret_cast<int4*>(send)[vectorIdx] = reinterpret_cast<const int4*>(staged)[vectorIdx];
       }
-      if (laneIdx < nTopk) {
-        payload.expertIds_[laneIdx] = expertIdx;
-        payload.topkWeights_[laneIdx] = weight;
-        payload.dstSlots_[laneIdx] = route.destinationSlot;
-      }
-      __syncwarp();
-      if (laneIdx == 0) {
-        (void)mscclpp::atomicFetchAdd<int, mscclpp::scopeDevice>(
-            hybridCtx.distributeScratch_->chunkReadySignals + remoteTokenIdx / nTokensPerChunk, 1,
-            mscclpp::memoryOrderRelease);
+      syncNamedBarrier(groupBarrierId, nGroupThreads);
+      if (groupThreadIdx == 0) {
+        atomicAddReleaseDevice(hybridCtx.distributeScratch_->chunkReadySignals + remoteTokenIdx / nTokensPerChunk, 1);
       }
     }
 
-    const int localDstRank = (route.dstRank >= 0 && route.isLeader && !remote) ? route.dstRank : -1;
-    if (localDstRank >= 0) {
-      issueRankMajorTokenStore<Hidden, DataType>(output, transport, route.destinationSlot, workload.maxTokensPerRank_,
-                                                 staged, localDstRank);
+    if (subWarpIdx == 0) {
+      const int localDstRank = (route.dstRank >= 0 && route.isLeader && !remote) ? route.dstRank : -1;
+      if (localDstRank >= 0) {
+        issueRankMajorTokenStore<Hidden, DataType>(output, transport, route.destinationSlot, workload.maxTokensPerRank_,
+                                                   staged, localDstRank);
+      }
+      const unsigned int localLeaders = __ballot_sync(0xffffffff, localDstRank >= 0);
+      const int outputExpertIdx =
+          workload.emitLocalExpertIds_ && route.expertIdx >= 0 ? route.expertIdx % nLocalExperts : route.expertIdx;
+      writeRankMajorMetadataNvlink(transport, outputIds, outputWeights, transport.rank_, route.dstRank,
+                                   route.destinationSlot, outputExpertIdx, weight, localLeaders, nTopk,
+                                   workload.maxTokensPerRank_, workload.invalidTokenExpertId_);
+      completeRankMajorTokenStore(workspace, localDstRank);
     }
-    const unsigned int localLeaders = __ballot_sync(0xffffffff, localDstRank >= 0);
-    const int outputExpertIdx = workload.emitLocalExpertIds_ && expertIdx >= 0 ? expertIdx % nLocalExperts : expertIdx;
-    writeRankMajorMetadataNvlink(transport, outputIds, outputWeights, transport.rank_, route.dstRank,
-                                 route.destinationSlot, outputExpertIdx, weight, localLeaders, nTopk,
-                                 workload.maxTokensPerRank_, workload.invalidTokenExpertId_);
-    completeRankMajorTokenStore(workspace, localDstRank);
-    __syncwarp();
+    if (tokenIdx + tokenStride < workload.numTokens_) {
+      syncNamedBarrier(groupBarrierId, nGroupThreads);
+    }
   }
-  if (!quantizeInput && laneIdx == 0) barrier.invalidate();
+  if (!quantizeInput && groupThreadIdx == 0) barrier.invalidate();
 }
 
 // Control CTA (block 0): count routes, publish NVLink signals, post RDMA header + chunks to the
@@ -141,15 +175,25 @@ MSCCLPP_DEVICE_INLINE void distributeControl(const int64_t* routes, const Worklo
   const int nCombineCounters = configCellDiv(hybridCtx.distributeCapacity_, nTokensPerChunk);
   for (int idx = threadIdx.x; idx < nCombineCounters; idx += blockDim.x) {
     hybridCtx.aggregateChunkReady_[idx] = 0;
+    hybridCtx.aggregateChunkLoadDone_[idx] = 0;
   }
   __syncthreads();
-  for (int tokenIdx = warpIdx; tokenIdx < workload.numTokens_; tokenIdx += DispatchNWarps) {
-    const int expertIdx = distributeExpert(routes, tokenIdx, laneIdx, workload);
+  static_assert(WARP_SIZE % MaxNumTopk == 0);
+  constexpr int NTokensPerWarp = WARP_SIZE / MaxNumTopk;
+  const int subWarpIdx = laneIdx / MaxNumTopk;
+  const int subLaneIdx = laneIdx % MaxNumTopk;
+  const unsigned int subWarpMask = ((1u << MaxNumTopk) - 1u) << (subWarpIdx * MaxNumTopk);
+  for (int tokenBase = warpIdx * NTokensPerWarp; tokenBase < workload.numTokens_;
+       tokenBase += DispatchNWarps * NTokensPerWarp) {
+    const int tokenIdx = tokenBase + subWarpIdx;
+    const int expertIdx =
+        tokenIdx < workload.numTokens_ ? distributeExpert(routes, tokenIdx, subLaneIdx, workload) : -1;
     const int dstRank = expertIdx >= 0 ? expertIdx / nLocalExperts : -1;
-    const bool leader = isFirstLaneForRank(dstRank, laneIdx);
-    if (dstRank >= 0 && leader) atomicAdd_block(shared + dstRank, 1);
-    const bool remote = __any_sync(0xffffffff, dstRank >= 0 && !transport.isNvlinkPeer(dstRank));
-    if (laneIdx == 0 && remote) atomicAdd_block(shared + nRanks, 1);
+    const unsigned int sameRankMask = __match_any_sync(0xffffffff, dstRank) & subWarpMask;
+    if (dstRank >= 0 && (__ffs(sameRankMask) - 1 == laneIdx)) atomicAdd_block(shared + dstRank, 1);
+    const unsigned int remoteMask =
+        __ballot_sync(0xffffffff, dstRank >= 0 && !transport.isNvlinkPeer(dstRank)) & subWarpMask;
+    if (subLaneIdx == 0 && remoteMask != 0) atomicAdd_block(shared + nRanks, 1);
   }
   __syncthreads();
 
@@ -157,7 +201,9 @@ MSCCLPP_DEVICE_INLINE void distributeControl(const int64_t* routes, const Worklo
     state->sendHeader.nTokensPerRank[peerIdx].write(shared[peerIdx], flag);
   }
   const int nRemoteTokens = shared[nRanks];
-  if (threadIdx.x == 0) state->sendHeader.nRemoteTokens.write(nRemoteTokens, flag);
+  if (threadIdx.x == 0) {
+    state->sendHeader.nRemoteTokens.write(nRemoteTokens, flag);
+  }
   __syncthreads();
 
   // Warps after the QP posters publish NVLink counts and signals.
@@ -193,12 +239,12 @@ MSCCLPP_DEVICE_INLINE void distributeControl(const int64_t* routes, const Worklo
       const uint64_t recvHeader = transport.symmetricOffset(&state->recvHeader);
       const uint64_t sendHeader = transport.symmetricOffset(&state->sendHeader);
       const size_t headerBytes = InterRackDispatchHeader::wireBytes(nRanks);
-      handle.put<kExclusive>(recvHeader, sendHeader, headerBytes, queueIdx);
+      handle.put<kExclusive, MaxQpsPerPeer>(recvHeader, sendHeader, headerBytes, queueIdx);
     }
     for (int chunkIdx = queueIdx, tokenBegin = queueIdx * nTokensPerChunk; tokenBegin < nRemoteTokens;
          chunkIdx += nQps, tokenBegin += nQps * nTokensPerChunk) {
       const int nChunkTokens = min(nTokensPerChunk, nRemoteTokens - tokenBegin);
-      handle.device_.putWithAccumulateAfter<kExclusive>(
+      handle.device_.putWithAccumulateAfter<kExclusive, MaxQpsPerPeer>(
           handle.dstMemory_, dstOffset + tokenBegin * stride, handle.srcMemory_, srcOffset + tokenBegin * stride,
           nChunkTokens * stride, handle.dstMemory_, flagOffset, 1,
           [&] {
@@ -211,7 +257,7 @@ MSCCLPP_DEVICE_INLINE void distributeControl(const int64_t* routes, const Worklo
     }
     if (queueIdx == 0) {
       const auto readyOffset = transport.symmetricOffset(&state->bufferReuseReady);
-      handle.device_.accumulateAfter<kExclusive>(
+      handle.device_.accumulateAfter<kExclusive, MaxQpsPerPeer>(
           handle.dstMemory_, readyOffset, 1,
           [&] {
             while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(&hybridCtx.distributeScratch_->forwardComplete,
@@ -228,11 +274,10 @@ MSCCLPP_DEVICE_INLINE void distributeControl(const int64_t* routes, const Worklo
 template <int Hidden, DispatchDataType DataType>
 MSCCLPP_DEVICE_INLINE void distributeForward(void* output, int* outputIds, float* outputWeights,
                                              const Workload& workload, void* recvBuffer, const DeviceContext* context,
-                                             const TransportView& transport, uint32_t flag, int* shared) {
-  const int forwarderIdx = static_cast<int>(blockIdx.x) - 1;
-  const int nForwarders = static_cast<int>(gridDim.x) - 1;
-  constexpr int NForwardWarps = DispatchMaxNWarpGroups;
-  const int laneIdx = getLaneId(), warpIdx = threadIdx.x / WARP_SIZE;
+                                             const TransportView& transport, uint32_t flag, int* shared,
+                                             int forwarderIdx, int nForwarders) {
+  constexpr int NForwardWarps = HybridForwardWarps;
+  const int laneIdx = getLaneId(), warpIdx = static_cast<int>(threadIdx.x) / WARP_SIZE;
   const auto& hybridCtx = context->hybridCtx_;
   const int sourceRank = hybridCtx.gatewayRank_;
   const int nTopk = workload.numTopk_;
@@ -245,10 +290,9 @@ MSCCLPP_DEVICE_INLINE void distributeForward(void* output, int* outputIds, float
   const size_t stride = InterRackDispatchPayload::stride(Hidden, nTopk, sizeof(ElementType));
   constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(ElementType);
   const size_t controlBytes = dispatchSharedControlBytes(context->numRanks_, true);
-  const size_t payloadStride = dispatchPayloadStride<DataType>(Hidden, nTopk, 0);
-  auto* staged = reinterpret_cast<uint8_t*>(shared) + controlBytes + warpIdx * payloadStride;
+  auto* staged = reinterpret_cast<uint8_t*>(shared) + controlBytes + static_cast<size_t>(warpIdx) * HiddenBytes;
   auto* barriers = reinterpret_cast<mscclpp::BulkBarrier*>(reinterpret_cast<uint8_t*>(shared) + controlBytes +
-                                                           NForwardWarps * payloadStride);
+                                                           static_cast<size_t>(NForwardWarps) * HiddenBytes);
   __shared__ int nIncomingTokens;
   __shared__ bool isLastForwarder;
   if (warpIdx < NForwardWarps && laneIdx == 0) barriers[warpIdx].init();
@@ -271,7 +315,8 @@ MSCCLPP_DEVICE_INLINE void distributeForward(void* output, int* outputIds, float
 
   uint32_t phase = 0;
   if (warpIdx < NForwardWarps) {
-    for (int tokenIdx = forwarderIdx * NForwardWarps + warpIdx; tokenIdx < nTokens;
+    // Stripe across all forwarder SMs first so every SM's TMA engine is utilized at small T.
+    for (int tokenIdx = warpIdx * nForwarders + forwarderIdx; tokenIdx < nTokens;
          tokenIdx += nForwarders * NForwardWarps) {
       const int chunkIdx = tokenIdx / nTokensPerChunk;
       if (laneIdx == 0) {
@@ -320,6 +365,7 @@ MSCCLPP_DEVICE_INLINE void distributeForward(void* output, int* outputIds, float
       if (localLeader) mscclpp::bulkStoreWait();
       __syncwarp();
     }
+    if (laneIdx == 0) barriers[warpIdx].invalidate();
   }
   __syncthreads();
 
@@ -365,24 +411,30 @@ __global__ __launch_bounds__(DispatchNThreads,
   WorkspaceView workspace(context->workspace_, context->numRanks_, workload.numExperts_);
   const uint32_t flag = getDispatchFlag(workspace) + 1;
   const TransportView transport(context);
-  if (blockIdx.x == 0) {
+  const int nGridBlocks = static_cast<int>(gridDim.x);
+  const int nForwardBlocks = hybridNumForwardBlocks(nGridBlocks);
+  const int blockIndex = static_cast<int>(blockIdx.x);
+  if (blockIndex == 0) {
     distributeControl<Hidden, DataType>(routes, workload, recvBuffer, context, transport, flag, shared);
   } else {
-    const int producerIdx = static_cast<int>(blockIdx.x) - (HybridForwardBlocks + 1);
-    if (producerIdx >= 0 && producerIdx * DispatchMaxNWarpGroups < workload.numTokens_) {
-      distributeProduce<Hidden, DataType>(output, outputIds, outputWeights, input, routes, weights, workload, context,
-                                          transport, shared);
-      __syncthreads();
+    if (blockIndex <= nForwardBlocks) {
+      distributeForward<Hidden, DataType>(output, outputIds, outputWeights, workload, recvBuffer, context, transport,
+                                          flag, shared, blockIndex - 1, nForwardBlocks);
+    } else {
+      const int producerIdx = blockIndex - (nForwardBlocks + 1);
+      const int nProducers = nGridBlocks - (nForwardBlocks + 1);
+      if (producerIdx < workload.numTokens_) {
+        distributeProduce<Hidden, DataType>(output, outputIds, outputWeights, input, routes, weights, workload, context,
+                                            transport, shared, producerIdx, nProducers);
+      }
     }
-    distributeForward<Hidden, DataType>(output, outputIds, outputWeights, workload, recvBuffer, context, transport,
-                                        flag, shared);
-  }
-  for (int sourceRank = static_cast<int>(blockIdx.x); sourceRank < context->numRanks_;
-       sourceRank += static_cast<int>(gridDim.x)) {
-    __syncthreads();
-    dispatchRankMajorRecvSource(outputIds, outputWeights, outputCount, transport, workspace, sourceRank,
-                                workload.numTopk_, workload.maxTokensPerRank_, workload.invalidTokenExpertId_,
-                                recvBuffer, flag, shared, context->hybridCtx_.distributeControl_->payloadReady);
+    const int nWorkers = nGridBlocks - 1;
+    for (int sourceRank = blockIndex - 1; sourceRank < context->numRanks_; sourceRank += nWorkers) {
+      __syncthreads();
+      dispatchRankMajorRecvSource(outputIds, outputWeights, outputCount, transport, workspace, sourceRank,
+                                  workload.numTopk_, workload.maxTokensPerRank_, workload.invalidTokenExpertId_,
+                                  recvBuffer, flag, shared, context->hybridCtx_.distributeControl_->payloadReady);
+    }
   }
   updateDispatchFlag(workspace, flag);
 #endif
