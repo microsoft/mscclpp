@@ -87,133 +87,138 @@ MSCCLPP_DEVICE_INLINE void publishRankMajorCombineReady(const TransportView& tra
   }
 }
 
+template <CombineMode Mode, int Hidden, DispatchDataType DispatchType>
+MSCCLPP_DEVICE_INLINE mscclpp::f32x8 reduceRankMajorVector(int vectorIdx, const uint8_t* sharedTokens,
+                                                           const RankMajorCombineSharedControl& sharedControl,
+                                                           float dequantScale) {
+  constexpr bool IsDirectSend = Mode == CombineMode::DIRECT_SEND;
+  constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(DispatchElementType<DispatchType>);
+  constexpr int NPairsPerVector = mscclpp::f32x8::Size / mscclpp::f32x2::Size;
+  mscclpp::f32x8 sum;
+  auto* sumPairs = reinterpret_cast<mscclpp::f32x2*>(&sum);
+#pragma unroll
+  for (int pairIdx = 0; pairIdx < NPairsPerVector; ++pairIdx) {
+    sumPairs[pairIdx].storage = make_float2(0.0f, 0.0f);
+  }
+#pragma unroll
+  for (int routeIdx = 0; routeIdx < MaxNumTopk; ++routeIdx) {
+    if (!sharedControl.validRoutes[routeIdx]) continue;
+    const float routeWeight = IsDirectSend ? sharedControl.routeWeights[routeIdx] : 1.0f;
+    const auto* routeToken = sharedTokens + static_cast<size_t>(routeIdx) * HiddenBytes;
+    if constexpr (DispatchType == DispatchDataType::BF16) {
+      const auto values = mscclpp::to<mscclpp::f32x8>(reinterpret_cast<const mscclpp::bf16x8*>(routeToken)[vectorIdx]);
+      const auto* pairs = reinterpret_cast<const mscclpp::f32x2*>(&values);
+#pragma unroll
+      for (int pairIdx = 0; pairIdx < NPairsPerVector; ++pairIdx) {
+        if constexpr (IsDirectSend) {
+          sumPairs[pairIdx] =
+              mscclpp::fma(pairs[pairIdx], mscclpp::f32x2(make_float2(routeWeight, routeWeight)), sumPairs[pairIdx]);
+        } else {
+          sumPairs[pairIdx] = sumPairs[pairIdx] + pairs[pairIdx];
+        }
+      }
+    } else {
+      const auto values = reinterpret_cast<const mscclpp::f8_e4m3x8*>(routeToken)[vectorIdx];
+      const float scale = IsDirectSend ? dequantScale * routeWeight : dequantScale;
+      if (scale != 0.0f) {
+        dequantizeAndAccumulateFp8E4M3(values, scale, sumPairs);
+      }
+    }
+  }
+  return sum;
+}
+
+// Worker blocks (blockIdx.x > 0): TMA-load rank-major expert outputs from peers and reduce into output.
 template <int Hidden, CombineMode Mode, DispatchDataType DispatchType>
-MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartialsTma(void* output, const void* expertOutput,
-                                                          const int64_t* __restrict__ topkIndices,
-                                                          const float* __restrict__ topkWeights, int nTokens, int nTopk,
-                                                          int nExperts, int nRanks, int maxTokensPerRank, uint32_t flag,
-                                                          const TransportView& transport, WorkspaceView& workspaceView,
-                                                          uint8_t* sharedMemory, float dequantScale) {
+MSCCLPP_DEVICE_INLINE void combineRankMajorTokens(void* output, const void* expertOutput,
+                                                  const int64_t* __restrict__ topkIndices,
+                                                  const float* __restrict__ topkWeights, const Workload& workload,
+                                                  const TransportView& transport, WorkspaceView& workspace,
+                                                  uint32_t flag, uint8_t* sharedMemory) {
 #if defined(__CUDA_ARCH__)
   static_assert(__CUDA_ARCH__ >= 900, "TMA rank-major combine requires SM90 or newer");
 #endif
   static_assert(DispatchType == DispatchDataType::BF16 || DispatchType == DispatchDataType::FP8_E4M3_STATIC);
-  static_assert(Hidden % (sizeof(int4) / sizeof(Bf16)) == 0);
+  static_assert(Hidden % mscclpp::bf16x8::Size == 0);
   using ElementType = DispatchElementType<DispatchType>;
   constexpr bool IsDirectSend = Mode == CombineMode::DIRECT_SEND;
   constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(ElementType);
-  constexpr int OutputInt4 = static_cast<size_t>(Hidden) * sizeof(Bf16) / sizeof(int4);
-  constexpr int Bf16PairsPerInt4 = sizeof(int4) / sizeof(mscclpp::bf16x2);
-  constexpr size_t RowsBytes = static_cast<size_t>(MaxNumTopk) * HiddenBytes;
-  const int threadId = static_cast<int>(threadIdx.x);
-  const int warpId = threadId / WARP_SIZE;
-  const int laneId = getLaneId();
-  const int nLocalExperts = nExperts / nRanks;
-  auto* sharedRows = sharedMemory;
-  auto& sharedControl = *reinterpret_cast<RankMajorCombineSharedControl*>(sharedMemory + RowsBytes);
-  auto* bulkBarriers = sharedControl.barriers;
-  auto* validRows = sharedControl.validRoutes;
+  constexpr int NHiddenVectors = Hidden / mscclpp::f32x8::Size;
+  constexpr size_t TokensBytes = static_cast<size_t>(MaxNumTopk) * HiddenBytes;
 
-  const int nWorkerBlocks = static_cast<int>(gridDim.x) - 1;
+  const int nTokens = workload.numTokens_;
+  const int nWorkers = static_cast<int>(gridDim.x) - 1;
   const int firstTokenIdx = static_cast<int>(blockIdx.x) - 1;
-  // Reuse each mbarrier by advancing its parity instead of reinitializing it.
-  uint32_t bulkPhase = 0;
-  if (warpId == 0) {
-    if (laneId < MaxNumTopk) {
-      bulkBarriers[laneId].init();
-    }
+  if (firstTokenIdx >= nTokens) return;
+
+  const int warpIdx = static_cast<int>(threadIdx.x) / WARP_SIZE;
+  const int laneIdx = getLaneId();
+  const int nTopk = workload.numTopk_;
+  const int nExperts = workload.numExperts_;
+  const int nLocalExperts = nExperts / transport.numRanks_;
+  const int maxTokensPerRank = workload.maxTokensPerRank_;
+  const float dequantScale = DispatchType == DispatchDataType::FP8_E4M3_STATIC ? 1.0f / workload.combineScale_ : 1.0f;
+  auto& sharedControl = *reinterpret_cast<RankMajorCombineSharedControl*>(sharedMemory + TokensBytes);
+  auto* barriers = sharedControl.barriers;
+
+  // Reuse each mbarrier across tokens by advancing its phase parity.
+  uint32_t phase = 0;
+  if (warpIdx == 0) {
+    if (laneIdx < MaxNumTopk) barriers[laneIdx].init();
     __syncwarp();
   }
 
-  for (int tokenIdx = firstTokenIdx; tokenIdx < nTokens; tokenIdx += nWorkerBlocks) {
-    if (warpId == 0) {
-      const int globalExpertIdx = laneId < nTopk ? static_cast<int>(topkIndices[tokenIdx * nTopk + laneId]) : -1;
-      const int destinationRank = globalExpertIdx >= 0 ? globalExpertIdx / nLocalExperts : -1;
-      const bool firstLaneForRank = isFirstLaneForRank(destinationRank, laneId);
-      const bool validRow = laneId < MaxNumTopk && destinationRank >= 0 && (IsDirectSend || firstLaneForRank);
-      int destinationSlot = -1;
-      if (validRow) {
-        destinationSlot = workspaceView.rankMajorSendIndices_[tokenIdx * nTopk + laneId];
-        EP_DEVICE_ASSERT(destinationSlot >= 0 && destinationSlot < maxTokensPerRank);
+  for (int tokenIdx = firstTokenIdx; tokenIdx < nTokens; tokenIdx += nWorkers) {
+    if (warpIdx == 0) {
+      const int64_t rawExpertIdx = laneIdx < nTopk ? topkIndices[tokenIdx * nTopk + laneIdx] : -1;
+      const int expertIdx = rawExpertIdx >= 0 && rawExpertIdx < nExperts ? static_cast<int>(rawExpertIdx) : -1;
+      const int peerIdx = expertIdx >= 0 ? expertIdx / nLocalExperts : -1;
+      const bool isLeader = isFirstLaneForRank(peerIdx, laneIdx);
+      const bool active = laneIdx < MaxNumTopk && peerIdx >= 0 && (IsDirectSend || isLeader);
+      int slotIdx = -1;
+      if (active) {
+        slotIdx = workspace.rankMajorSendIndices_[tokenIdx * nTopk + laneIdx];
+        EP_DEVICE_ASSERT(slotIdx >= 0 && slotIdx < maxTokensPerRank);
       }
-      if (laneId < MaxNumTopk) {
-        validRows[laneId] = validRow;
+      if (laneIdx < MaxNumTopk) {
+        sharedControl.validRoutes[laneIdx] = active;
+        if constexpr (IsDirectSend) {
+          const bool useWeights = workload.applyRouterWeights_ && topkWeights != nullptr;
+          sharedControl.routeWeights[laneIdx] =
+              useWeights && laneIdx < nTopk ? topkWeights[tokenIdx * nTopk + laneIdx] : 1.0f;
+        }
       }
       __syncwarp();
 
-      bool pending = validRow;
+      bool pending = active;
       while (__any_sync(0xffffffff, pending)) {
-        const bool ready =
-            pending && mscclpp::atomicLoad<uint32_t, mscclpp::scopeDevice>(
-                           workspaceView.combineRankReadyFlags_ + destinationRank, mscclpp::memoryOrderRelaxed) == flag;
-        if (ready) {
-          const auto* remoteExpertOutput = reinterpret_cast<const uint8_t*>(
-              transport.mappedBuffer(const_cast<void*>(expertOutput), destinationRank));
-          const size_t sourceRow = static_cast<size_t>(transport.rank_) * maxTokensPerRank + destinationSlot;
-          const size_t inputRow = IsDirectSend ? sourceRow * nTopk + laneId : sourceRow;
-          const uint8_t* source = remoteExpertOutput + inputRow * HiddenBytes;
-          auto* sharedRow = sharedRows + static_cast<size_t>(laneId) * HiddenBytes;
-          bulkBarriers[laneId].arriveAndExpect(static_cast<uint32_t>(HiddenBytes));
-          mscclpp::bulkLoad(sharedRow, source, static_cast<uint32_t>(HiddenBytes), bulkBarriers[laneId]);
+        if (pending && mscclpp::atomicLoad<uint32_t, mscclpp::scopeDevice>(workspace.combineRankReadyFlags_ + peerIdx,
+                                                                           mscclpp::memoryOrderRelaxed) == flag) {
+          const auto* peerOutput =
+              static_cast<const uint8_t*>(transport.mappedBuffer(const_cast<void*>(expertOutput), peerIdx));
+          const size_t srcTokenIdx = static_cast<size_t>(transport.rank_) * maxTokensPerRank + slotIdx;
+          const size_t inputTokenIdx = IsDirectSend ? srcTokenIdx * nTopk + laneIdx : srcTokenIdx;
+          barriers[laneIdx].arriveAndExpect(HiddenBytes);
+          mscclpp::bulkLoad(sharedMemory + static_cast<size_t>(laneIdx) * HiddenBytes,
+                            peerOutput + inputTokenIdx * HiddenBytes, HiddenBytes, barriers[laneIdx]);
           pending = false;
         }
       }
-      if (validRow) bulkBarriers[laneId].wait(bulkPhase);
+      if (active) barriers[laneIdx].wait(phase);
       __syncwarp();
-      if (laneId == 0) mscclpp::bulkFence();
+      if (laneIdx == 0) mscclpp::bulkFence();
     }
     __syncthreads();
 
-    for (int hiddenIdx = threadId; hiddenIdx < OutputInt4; hiddenIdx += CombineNThreads) {
-      int4 packedOutput;
-      auto* outputValues = reinterpret_cast<mscclpp::bf16x2*>(&packedOutput);
-      if constexpr (DispatchType == DispatchDataType::BF16) {
-        float2 reduced[Bf16PairsPerInt4] = {};
-#pragma unroll
-        for (int stage = 0; stage < MaxNumTopk; ++stage) {
-          if (validRows[stage] == 0) continue;
-          const auto* row = sharedRows + static_cast<size_t>(stage) * HiddenBytes;
-          const int4 packed = reinterpret_cast<const int4*>(row)[hiddenIdx];
-          const auto* values = reinterpret_cast<const mscclpp::bf16x2*>(&packed);
-          const float sourceWeight =
-              IsDirectSend && topkWeights != nullptr ? topkWeights[tokenIdx * nTopk + stage] : 1.0f;
-#pragma unroll
-          for (int pairIdx = 0; pairIdx < Bf16PairsPerInt4; ++pairIdx) {
-            const mscclpp::f32x2 value = mscclpp::to<mscclpp::f32x2>(values[pairIdx]);
-            reduced[pairIdx].x = fmaf(value.data[0], sourceWeight, reduced[pairIdx].x);
-            reduced[pairIdx].y = fmaf(value.data[1], sourceWeight, reduced[pairIdx].y);
-          }
-        }
-#pragma unroll
-        for (int pairIdx = 0; pairIdx < Bf16PairsPerInt4; ++pairIdx) {
-          outputValues[pairIdx] = mscclpp::to<mscclpp::bf16x2>(mscclpp::f32x2(reduced[pairIdx]));
-        }
-      } else {
-        mscclpp::f32x2 reduced[Bf16PairsPerInt4];
-#pragma unroll
-        for (int pairIdx = 0; pairIdx < Bf16PairsPerInt4; ++pairIdx) {
-          reduced[pairIdx].storage = make_float2(0.0f, 0.0f);
-        }
-#pragma unroll
-        for (int stage = 0; stage < MaxNumTopk; ++stage) {
-          if (validRows[stage] == 0) continue;
-          const auto* row = sharedRows + static_cast<size_t>(stage) * HiddenBytes;
-          const auto values = reinterpret_cast<const mscclpp::f8_e4m3x8*>(row)[hiddenIdx];
-          const float sourceWeight =
-              IsDirectSend && topkWeights != nullptr ? topkWeights[tokenIdx * nTopk + stage] : 1.0f;
-          if (sourceWeight == 0.0f) continue;
-          dequantizeAndAccumulateFp8E4M3(values, dequantScale * sourceWeight, reduced);
-        }
-#pragma unroll
-        for (int pairIdx = 0; pairIdx < Bf16PairsPerInt4; ++pairIdx) {
-          outputValues[pairIdx] = mscclpp::to<mscclpp::bf16x2>(reduced[pairIdx]);
-        }
-      }
-      auto* outputRow = reinterpret_cast<int4*>(output) + static_cast<size_t>(tokenIdx) * OutputInt4;
-      outputRow[hiddenIdx] = packedOutput;
+    auto* tokenOutput = static_cast<mscclpp::bf16x8*>(output) + static_cast<size_t>(tokenIdx) * NHiddenVectors;
+    for (int vectorIdx = static_cast<int>(threadIdx.x); vectorIdx < NHiddenVectors; vectorIdx += CombineNThreads) {
+      const auto sum =
+          reduceRankMajorVector<Mode, Hidden, DispatchType>(vectorIdx, sharedMemory, sharedControl, dequantScale);
+      tokenOutput[vectorIdx] = mscclpp::to<mscclpp::bf16x8>(sum);
     }
     __syncthreads();
   }
+  if (warpIdx == 0 && laneIdx < MaxNumTopk) barriers[laneIdx].invalidate();
 }
 
 #endif  // MSCCLPP_BULK_AVAILABLE

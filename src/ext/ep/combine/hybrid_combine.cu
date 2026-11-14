@@ -18,47 +18,6 @@ MSCCLPP_DEVICE_INLINE void aggregateWaitRemoteToken(int remoteTokenIdx, const De
   }
 }
 
-template <CombineMode Mode, int Hidden, DispatchDataType DispatchType>
-MSCCLPP_DEVICE_INLINE mscclpp::f32x8 aggregateReduceVector(int vectorIdx, const uint8_t* sharedTokens,
-                                                           const RankMajorCombineSharedControl& sharedControl,
-                                                           float dequantScale) {
-  constexpr bool IsDirectSend = Mode == CombineMode::DIRECT_SEND;
-  constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(DispatchElementType<DispatchType>);
-  constexpr int NPairsPerVector = mscclpp::f32x8::Size / mscclpp::f32x2::Size;
-  mscclpp::f32x8 sum;
-  auto* sumPairs = reinterpret_cast<mscclpp::f32x2*>(&sum);
-#pragma unroll
-  for (int pairIdx = 0; pairIdx < NPairsPerVector; ++pairIdx) {
-    sumPairs[pairIdx].storage = make_float2(0.0f, 0.0f);
-  }
-#pragma unroll
-  for (int routeIdx = 0; routeIdx < MaxNumTopk; ++routeIdx) {
-    if (!sharedControl.validRoutes[routeIdx]) continue;
-    const float routeWeight = IsDirectSend ? sharedControl.routeWeights[routeIdx] : 1.0f;
-    const auto* routeToken = sharedTokens + static_cast<size_t>(routeIdx) * HiddenBytes;
-    if constexpr (DispatchType == DispatchDataType::BF16) {
-      const auto values = mscclpp::to<mscclpp::f32x8>(reinterpret_cast<const mscclpp::bf16x8*>(routeToken)[vectorIdx]);
-      const auto* pairs = reinterpret_cast<const mscclpp::f32x2*>(&values);
-#pragma unroll
-      for (int pairIdx = 0; pairIdx < NPairsPerVector; ++pairIdx) {
-        if constexpr (IsDirectSend) {
-          sumPairs[pairIdx] =
-              mscclpp::fma(pairs[pairIdx], mscclpp::f32x2(make_float2(routeWeight, routeWeight)), sumPairs[pairIdx]);
-        } else {
-          sumPairs[pairIdx] = sumPairs[pairIdx] + pairs[pairIdx];
-        }
-      }
-    } else {
-      const auto values = reinterpret_cast<const mscclpp::f8_e4m3x8*>(routeToken)[vectorIdx];
-      const float scale = IsDirectSend ? dequantScale * routeWeight : dequantScale;
-      if (scale != 0.0f) {
-        dequantizeAndAccumulateFp8E4M3(values, scale, sumPairs);
-      }
-    }
-  }
-  return sum;
-}
-
 template <int Hidden, DispatchDataType DispatchType>
 MSCCLPP_DEVICE_INLINE void aggregateStoreFinalVector(void* output, mscclpp::f32x8 sum, int tokenIdx, int remoteTokenIdx,
                                                      int vectorIdx, const DeviceContext* context) {
@@ -181,7 +140,7 @@ MSCCLPP_DEVICE_INLINE void aggregateReduceToken(void* destination, const void* e
       const int vectorIdx = static_cast<int>(threadIdx.x) + stepIdx * CombineNThreads;
       if (vectorIdx < NHiddenVectors) {
         tileSum[stepIdx] =
-            aggregateReduceVector<Mode, Hidden, DispatchType>(vectorIdx, sharedMemory, sharedControl, dequantScale);
+            reduceRankMajorVector<Mode, Hidden, DispatchType>(vectorIdx, sharedMemory, sharedControl, dequantScale);
       }
     }
     // Keep the last token's local sum in registers while finalizing earlier tokens from scratch.
@@ -204,7 +163,7 @@ MSCCLPP_DEVICE_INLINE void aggregateReduceToken(void* destination, const void* e
   } else {
     for (int vectorIdx = threadIdx.x; vectorIdx < NHiddenVectors; vectorIdx += blockDim.x) {
       const auto sum =
-          aggregateReduceVector<Mode, Hidden, DispatchType>(vectorIdx, sharedMemory, sharedControl, dequantScale);
+          reduceRankMajorVector<Mode, Hidden, DispatchType>(vectorIdx, sharedMemory, sharedControl, dequantScale);
       if constexpr (Gateway && DispatchType == DispatchDataType::FP8_E4M3_STATIC) {
         reinterpret_cast<mscclpp::bf16x8*>(destination)[vectorIdx] = mscclpp::to<mscclpp::bf16x8>(sum);
       } else {

@@ -46,13 +46,36 @@ MSCCLPP_DEVICE_INLINE void distributeCountRoutes(const int64_t* routes, const Wo
   }
 }
 
+// One warp stores a staged token and its masked top-k metadata to all NVLink-local destination ranks.
+template <int Hidden, DispatchDataType DataType>
+MSCCLPP_DEVICE_INLINE void sendNvlinkToken(void* output, int* outputIds, float* outputWeights, const void* staged,
+                                           int sourceRank, int dstRank, int slotIdx, int expertIdx, float weight,
+                                           bool isLocalLeader, const Workload& workload,
+                                           const TransportView& transport) {
+  constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(DispatchElementType<DataType>);
+  const int nLocalExperts = workload.numExperts_ / transport.numRanks_;
+  if (isLocalLeader) {
+    EP_DEVICE_ASSERT(slotIdx >= 0 && slotIdx < workload.maxTokensPerRank_);
+    auto* dstBuffer = static_cast<uint8_t*>(transport.mappedBuffer(output, dstRank));
+    const size_t dstTokenIdx = static_cast<size_t>(sourceRank) * workload.maxTokensPerRank_ + slotIdx;
+    mscclpp::bulkStore(dstBuffer + dstTokenIdx * HiddenBytes, staged, HiddenBytes);
+    mscclpp::bulkStoreCommit();
+  }
+  const unsigned int leaderMask = __ballot_sync(0xffffffff, isLocalLeader);
+  const int outputExpertIdx = workload.emitLocalExpertIds_ && expertIdx >= 0 ? expertIdx % nLocalExperts : expertIdx;
+  writeRankMajorMetadataNvlink(transport, outputIds, outputWeights, sourceRank, dstRank, slotIdx, outputExpertIdx,
+                               weight, leaderMask, workload.numTopk_, workload.maxTokensPerRank_,
+                               workload.invalidTokenExpertId_);
+  if (isLocalLeader) mscclpp::bulkStoreWait();
+}
+
 // Producer blocks: quantize or TMA-load input tokens with SM-first token striding, prioritize cross-domain
 // staging into distributeSendBuffer_ so RDMA chunks post early, and then send NVLink-local tokens.
 template <int Hidden, DispatchDataType DataType>
 MSCCLPP_DEVICE_INLINE void distributeProduce(void* output, int* outputIds, float* outputWeights, const void* input,
                                              const int64_t* routes, const float* weights, const Workload& workload,
-                                             const DeviceContext* context, const TransportView& transport, int* shared,
-                                             int producerIdx, int nProducers) {
+                                             const DeviceContext* context, const TransportView& transport,
+                                             uint8_t* sharedMemory, int producerIdx, int nProducers) {
   static_assert(DispatchNWarps % HybridMaxProduceGroups == 0);
   const int nGroups = hybridNumProduceGroups(workload.numTokens_, nProducers);
   const int nWarpsPerGroup = DispatchNWarps / nGroups;
@@ -71,11 +94,10 @@ MSCCLPP_DEVICE_INLINE void distributeProduce(void* output, int* outputIds, float
   const int nTokensPerChunk = hybridCtx.nTokensPerChunk_;
   const int nLocalExperts = workload.numExperts_ / context->numRanks_;
   const size_t stride = InterRackDispatchPayload::stride(Hidden, nTopk, sizeof(ElementType));
-  const size_t controlBytes = dispatchSharedControlBytes(context->numRanks_, true);
-  auto* staged = reinterpret_cast<uint8_t*>(shared) + controlBytes + static_cast<size_t>(groupIdx) * HiddenBytes;
-  auto* barriers = reinterpret_cast<mscclpp::BulkBarrier*>(reinterpret_cast<uint8_t*>(shared) + controlBytes +
-                                                           static_cast<size_t>(HybridMaxProduceGroups) * HiddenBytes);
-  auto& barrier = barriers[groupIdx];
+  auto* tileBase = sharedMemory + dispatchSharedControlBytes(context->numRanks_, true);
+  auto* staged = tileBase + static_cast<size_t>(groupIdx) * HiddenBytes;
+  auto& barrier = reinterpret_cast<mscclpp::BulkBarrier*>(tileBase + static_cast<size_t>(HybridMaxProduceGroups) *
+                                                                         HiddenBytes)[groupIdx];
   __shared__ int groupRemoteTokenIndices[HybridMaxProduceGroups];
   const bool quantizeInput =
       DataType == DispatchDataType::FP8_E4M3_STATIC && workload.inputMode_ == QuantConfig::InputMode::QUANTIZE;
@@ -89,18 +111,17 @@ MSCCLPP_DEVICE_INLINE void distributeProduce(void* output, int* outputIds, float
   uint32_t phase = 0;
   WorkspaceView workspace(context->workspace_, context->numRanks_, workload.numExperts_);
   for (int tokenIdx = firstTokenIdx; tokenIdx < workload.numTokens_; tokenIdx += tokenStride) {
-    if constexpr (DataType == DispatchDataType::FP8_E4M3_STATIC) {
-      if (quantizeInput) {
+    if (quantizeInput) {
+      if constexpr (DataType == DispatchDataType::FP8_E4M3_STATIC) {
         constexpr int NHiddenVectors = Hidden / mscclpp::bf16x8::Size;
-        const auto* inputData =
+        const auto* inputTokens =
             static_cast<const mscclpp::bf16x8*>(input) + static_cast<size_t>(tokenIdx) * NHiddenVectors;
-        auto* stagedData = reinterpret_cast<mscclpp::f8_e4m3x8*>(staged);
+        auto* stagedTokens = reinterpret_cast<mscclpp::f8_e4m3x8*>(staged);
         for (int vectorIdx = groupThreadIdx; vectorIdx < NHiddenVectors; vectorIdx += nGroupThreads) {
-          stagedData[vectorIdx] = quantizeBf16x8ToStaticFp8(inputData[vectorIdx], workload.dispatchScale_);
+          stagedTokens[vectorIdx] = quantizeBf16x8ToStaticFp8(inputTokens[vectorIdx], workload.dispatchScale_);
         }
       }
-    }
-    if (!quantizeInput && groupThreadIdx == 0) {
+    } else if (groupThreadIdx == 0) {
       barrier.arriveAndExpect(HiddenBytes);
       mscclpp::bulkLoad(staged, static_cast<const uint8_t*>(input) + static_cast<size_t>(tokenIdx) * HiddenBytes,
                         HiddenBytes, barrier);
@@ -108,13 +129,13 @@ MSCCLPP_DEVICE_INLINE void distributeProduce(void* output, int* outputIds, float
 
     RankMajorRoute route{-1, -1, false, -1};
     float weight = 0.0f;
-    bool remote = false;
+    bool isRemote = false;
     if (subWarpIdx == 0) {
       route = prepareRankMajorRoute(workspace, routes, tokenIdx, nTopk, nLocalExperts, workload.maxTokensPerRank_,
                                     laneIdx, workload.numExperts_);
       weight = route.expertIdx >= 0 ? (weights == nullptr ? 1.0f : weights[tokenIdx * nTopk + laneIdx]) : 0.0f;
-      remote = route.dstRank >= 0 && !transport.isNvlinkPeer(route.dstRank);
-      const bool hasRemote = __any_sync(0xffffffff, remote);
+      isRemote = route.dstRank >= 0 && !transport.isNvlinkPeer(route.dstRank);
+      const bool hasRemote = __any_sync(0xffffffff, isRemote);
       int remoteTokenIdx = -1;
       if (laneIdx == 0 && hasRemote) remoteTokenIdx = atomicAdd(&hybridCtx.distributeScratch_->nRemoteTokens, 1);
       remoteTokenIdx = __shfl_sync(0xffffffff, remoteTokenIdx, 0);
@@ -122,16 +143,14 @@ MSCCLPP_DEVICE_INLINE void distributeProduce(void* output, int* outputIds, float
         hybridCtx.aggregateRemoteTokenIndices_[tokenIdx] = remoteTokenIdx;
         groupRemoteTokenIndices[groupIdx] = remoteTokenIdx;
       }
-      if (hasRemote) {
+      if (hasRemote && laneIdx < nTopk) {
         EP_DEVICE_ASSERT(remoteTokenIdx < hybridCtx.distributeCapacity_);
-        auto* send =
+        auto* sendToken =
             static_cast<uint8_t*>(hybridCtx.distributeSendBuffer_) + static_cast<size_t>(remoteTokenIdx) * stride;
-        const InterRackDispatchPayload payload(send, Hidden, nTopk, sizeof(ElementType));
-        if (laneIdx < nTopk) {
-          payload.expertIds_[laneIdx] = route.expertIdx;
-          payload.topkWeights_[laneIdx] = weight;
-          payload.dstSlots_[laneIdx] = route.destinationSlot;
-        }
+        const InterRackDispatchPayload payload(sendToken, Hidden, nTopk, sizeof(ElementType));
+        payload.expertIds_[laneIdx] = route.expertIdx;
+        payload.topkWeights_[laneIdx] = weight;
+        payload.dstSlots_[laneIdx] = route.destinationSlot;
       }
     }
 
@@ -141,11 +160,12 @@ MSCCLPP_DEVICE_INLINE void distributeProduce(void* output, int* outputIds, float
 
     const int remoteTokenIdx = groupRemoteTokenIndices[groupIdx];
     if (remoteTokenIdx >= 0) {
-      auto* send =
+      auto* sendToken =
           static_cast<uint8_t*>(hybridCtx.distributeSendBuffer_) + static_cast<size_t>(remoteTokenIdx) * stride;
       for (int vectorIdx = groupThreadIdx; vectorIdx < static_cast<int>(HiddenBytes / sizeof(mscclpp::u32x4));
            vectorIdx += nGroupThreads) {
-        reinterpret_cast<mscclpp::u32x4*>(send)[vectorIdx] = reinterpret_cast<const mscclpp::u32x4*>(staged)[vectorIdx];
+        reinterpret_cast<mscclpp::u32x4*>(sendToken)[vectorIdx] =
+            reinterpret_cast<const mscclpp::u32x4*>(staged)[vectorIdx];
       }
       syncNamedBarrier(groupBarrierId, nGroupThreads);
       if (groupThreadIdx == 0) {
@@ -154,18 +174,14 @@ MSCCLPP_DEVICE_INLINE void distributeProduce(void* output, int* outputIds, float
     }
 
     if (subWarpIdx == 0) {
-      const int localDstRank = (route.dstRank >= 0 && route.isLeader && !remote) ? route.dstRank : -1;
-      if (localDstRank >= 0) {
-        issueRankMajorTokenStore<Hidden, DataType>(output, transport, route.destinationSlot, workload.maxTokensPerRank_,
-                                                   staged, localDstRank);
+      const bool isLocalLeader = route.dstRank >= 0 && route.isLeader && !isRemote;
+      sendNvlinkToken<Hidden, DataType>(output, outputIds, outputWeights, staged, transport.rank_, route.dstRank,
+                                        route.destinationSlot, route.expertIdx, weight, isLocalLeader, workload,
+                                        transport);
+      if (isLocalLeader) {
+        (void)mscclpp::atomicFetchAdd<int, mscclpp::scopeDevice>(
+            workspace.dispatchRankPayloadCompletions_ + route.dstRank, 1, mscclpp::memoryOrderRelease);
       }
-      const unsigned int localLeaders = __ballot_sync(0xffffffff, localDstRank >= 0);
-      const int outputExpertIdx =
-          workload.emitLocalExpertIds_ && route.expertIdx >= 0 ? route.expertIdx % nLocalExperts : route.expertIdx;
-      writeRankMajorMetadataNvlink(transport, outputIds, outputWeights, transport.rank_, route.dstRank,
-                                   route.destinationSlot, outputExpertIdx, weight, localLeaders, nTopk,
-                                   workload.maxTokensPerRank_, workload.invalidTokenExpertId_);
-      completeRankMajorTokenStore(workspace, localDstRank);
     }
     if (tokenIdx + tokenStride < workload.numTokens_) {
       syncNamedBarrier(groupBarrierId, nGroupThreads);
@@ -223,12 +239,33 @@ MSCCLPP_DEVICE_INLINE void distributePostChunks(const Workload& workload, const 
   }
 }
 
+// Warps after the QP posters publish NVLink token counts and signal peers once local TMA stores complete.
+MSCCLPP_DEVICE_INLINE void distributePublishNvlink(void* recvBuffer, const int* rankTokenCounts,
+                                                   const TransportView& transport, const WorkspaceView& workspace,
+                                                   int nQps, uint32_t flag) {
+  const int dstRank = static_cast<int>(threadIdx.x) - nQps * WARP_SIZE;
+  if (dstRank < 0 || dstRank >= transport.numRanks_ || !transport.isNvlinkPeer(dstRank)) return;
+
+  const int nTokens = rankTokenCounts[dstRank];
+  auto* counts = static_cast<mscclpp::LL8Packet*>(transport.mappedBuffer(recvBuffer, dstRank));
+  counts[transport.rank_].write(nTokens, flag);
+  if (nTokens == 0) return;
+
+  while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(workspace.dispatchRankPayloadCompletions_ + dstRank,
+                                                        mscclpp::memoryOrderAcquire) != nTokens) {
+  }
+  if (transport.isSelf(dstRank)) {
+    workspace.dispatchLocalPayloadReady_->release();
+  } else {
+    transport.baseMemoryChannels_[dstRank].signal();
+  }
+}
+
 // Block 0 counts routes, publishes NVLink readiness, and posts RDMA transfers concurrently.
 template <int Hidden, DispatchDataType DataType>
 MSCCLPP_DEVICE_INLINE void distributeControl(const int64_t* routes, const Workload& workload, void* recvBuffer,
                                              const DeviceContext* context, const TransportView& transport,
                                              uint32_t flag, int* rankTokenCounts) {
-  const int rank = context->rank_;
   const int nRanks = context->numRanks_;
   const int laneIdx = getLaneId();
   const int warpIdx = static_cast<int>(threadIdx.x) / WARP_SIZE;
@@ -262,26 +299,7 @@ MSCCLPP_DEVICE_INLINE void distributeControl(const int64_t* routes, const Worklo
   }
   __syncthreads();
 
-  // Warps after the QP posters publish NVLink counts and signals.
-  const int firstPublisherIdx = nQps * WARP_SIZE;
-  if (threadIdx.x >= firstPublisherIdx && threadIdx.x < firstPublisherIdx + nRanks) {
-    const int dstRank = threadIdx.x - firstPublisherIdx;
-    const int nTokens = rankTokenCounts[dstRank];
-    if (transport.isNvlinkPeer(dstRank)) {
-      auto* counts = static_cast<mscclpp::LL8Packet*>(transport.mappedBuffer(recvBuffer, dstRank));
-      counts[rank].write(nTokens, flag);
-      if (nTokens > 0) {
-        while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(workspace.dispatchRankPayloadCompletions_ + dstRank,
-                                                              mscclpp::memoryOrderAcquire) != nTokens) {
-        }
-        if (dstRank == rank)
-          workspace.dispatchLocalPayloadReady_->release();
-        else
-          transport.baseMemoryChannels_[dstRank].signal();
-      }
-    }
-  }
-
+  distributePublishNvlink(recvBuffer, rankTokenCounts, transport, workspace, nQps, flag);
   if (warpIdx < nQps && laneIdx == 0) {
     distributePostChunks<Hidden, DataType>(workload, context, transport, warpIdx, nRemoteTokens);
   }
@@ -292,7 +310,7 @@ MSCCLPP_DEVICE_INLINE void distributeControl(const int64_t* routes, const Worklo
 template <int Hidden, DispatchDataType DataType>
 MSCCLPP_DEVICE_INLINE void distributeForward(void* output, int* outputIds, float* outputWeights,
                                              const Workload& workload, void* recvBuffer, const DeviceContext* context,
-                                             const TransportView& transport, uint32_t flag, int* shared,
+                                             const TransportView& transport, uint32_t flag, uint8_t* sharedMemory,
                                              int forwarderIdx, int nForwarders) {
   constexpr int NForwardWarps = HybridForwardWarps;
   const int laneIdx = getLaneId();
@@ -308,10 +326,9 @@ MSCCLPP_DEVICE_INLINE void distributeForward(void* output, int* outputIds, float
   using ElementType = DispatchElementType<DataType>;
   const size_t stride = InterRackDispatchPayload::stride(Hidden, nTopk, sizeof(ElementType));
   constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(ElementType);
-  const size_t controlBytes = dispatchSharedControlBytes(context->numRanks_, true);
-  auto* staged = reinterpret_cast<uint8_t*>(shared) + controlBytes + static_cast<size_t>(warpIdx) * HiddenBytes;
-  auto* barriers = reinterpret_cast<mscclpp::BulkBarrier*>(reinterpret_cast<uint8_t*>(shared) + controlBytes +
-                                                           static_cast<size_t>(NForwardWarps) * HiddenBytes);
+  auto* tileBase = sharedMemory + dispatchSharedControlBytes(context->numRanks_, true);
+  auto* staged = tileBase + static_cast<size_t>(warpIdx) * HiddenBytes;
+  auto* barriers = reinterpret_cast<mscclpp::BulkBarrier*>(tileBase + static_cast<size_t>(NForwardWarps) * HiddenBytes);
   __shared__ int nIncomingTokens;
   __shared__ bool isLastForwarder;
   if (warpIdx < NForwardWarps && laneIdx == 0) barriers[warpIdx].init();
@@ -364,25 +381,14 @@ MSCCLPP_DEVICE_INLINE void distributeForward(void* output, int* outputIds, float
         cached[nTopk + laneIdx] = slotIdx;
         reinterpret_cast<float*>(cached + 2 * nTopk)[laneIdx] = weight;
       }
-      const bool leader = isFirstLaneForRank(dstRank, laneIdx);
-      const bool localLeader = dstRank >= 0 && transport.isNvlinkPeer(dstRank) && leader;
-      const unsigned int leaders = __ballot_sync(0xffffffff, localLeader);
+      const bool isLeader = isFirstLaneForRank(dstRank, laneIdx);
+      const bool isLocalLeader = dstRank >= 0 && transport.isNvlinkPeer(dstRank) && isLeader;
       if (laneIdx == 0) barriers[warpIdx].wait(phase);
       __syncwarp();
       mscclpp::bulkFence();
 
-      if (localLeader) {
-        EP_DEVICE_ASSERT(slotIdx >= 0 && slotIdx < workload.maxTokensPerRank_);
-        auto* destinationBuffer = static_cast<uint8_t*>(transport.mappedBuffer(output, dstRank));
-        const size_t dstTokenIdx = static_cast<size_t>(sourceRank) * workload.maxTokensPerRank_ + slotIdx;
-        mscclpp::bulkStore(destinationBuffer + dstTokenIdx * HiddenBytes, staged, HiddenBytes);
-        mscclpp::bulkStoreCommit();
-      }
-      const int outputExpertIdx =
-          workload.emitLocalExpertIds_ && expertIdx >= 0 ? expertIdx % nLocalExperts : expertIdx;
-      writeRankMajorMetadataNvlink(transport, outputIds, outputWeights, sourceRank, dstRank, slotIdx, outputExpertIdx,
-                                   weight, leaders, nTopk, workload.maxTokensPerRank_, workload.invalidTokenExpertId_);
-      if (localLeader) mscclpp::bulkStoreWait();
+      sendNvlinkToken<Hidden, DataType>(output, outputIds, outputWeights, staged, sourceRank, dstRank, slotIdx,
+                                        expertIdx, weight, isLocalLeader, workload, transport);
       __syncwarp();
     }
     if (laneIdx == 0) barriers[warpIdx].invalidate();
@@ -401,7 +407,9 @@ MSCCLPP_DEVICE_INLINE void distributeForward(void* output, int* outputIds, float
   }
   __syncthreads();
   if (isLastForwarder) {
-    if (threadIdx.x == configAlign(context->numRanks_, WARP_SIZE)) {
+    // Use the first warp past the peer-signaling lanes so the local reuse-ACK flag is not delayed by system stores.
+    const int ackThreadIdx = configAlign(context->numRanks_, WARP_SIZE);
+    if (static_cast<int>(threadIdx.x) == ackThreadIdx) {
       mscclpp::atomicStore<int, mscclpp::scopeDevice>(&hybridCtx.distributeScratch_->forwardComplete, 1,
                                                       mscclpp::memoryOrderRelease);
     }
@@ -427,33 +435,34 @@ __global__ __launch_bounds__(DispatchNThreads,
 #if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS) && MSCCLPP_BULK_AVAILABLE
   static_assert(DataType == DispatchDataType::BF16 || DataType == DispatchDataType::FP8_E4M3_STATIC);
   extern __shared__ __align__(128) uint8_t sharedMemory[];
-  auto* shared = reinterpret_cast<int*>(sharedMemory);
   WorkspaceView workspace(context->workspace_, context->numRanks_, workload.numExperts_);
   const uint32_t flag = getDispatchFlag(workspace) + 1;
   const TransportView transport(context);
-  const int nGridBlocks = static_cast<int>(gridDim.x);
-  const int nWorkers = nGridBlocks - 1;
-  const int nForwardBlocks = hybridNumForwardBlocks(nGridBlocks);
   if (blockIdx.x == 0) {
-    distributeControl<Hidden, DataType>(routes, workload, recvBuffer, context, transport, flag, shared);
-  } else if (static_cast<int>(blockIdx.x) <= nForwardBlocks) {
-    distributeForward<Hidden, DataType>(output, outputIds, outputWeights, workload, recvBuffer, context, transport,
-                                        flag, shared, static_cast<int>(blockIdx.x) - 1, nForwardBlocks);
+    distributeControl<Hidden, DataType>(routes, workload, recvBuffer, context, transport, flag,
+                                        reinterpret_cast<int*>(sharedMemory));
   } else {
-    const int producerIdx = static_cast<int>(blockIdx.x) - (nForwardBlocks + 1);
-    const int nProducers = nWorkers - nForwardBlocks;
-    if (producerIdx < workload.numTokens_) {
-      distributeProduce<Hidden, DataType>(output, outputIds, outputWeights, input, routes, weights, workload, context,
-                                          transport, shared, producerIdx, nProducers);
+    const int nGridBlocks = static_cast<int>(gridDim.x);
+    const int nWorkers = nGridBlocks - 1;
+    const int nForwarders = hybridNumForwardBlocks(nGridBlocks);
+    const int workerIdx = static_cast<int>(blockIdx.x) - 1;
+    if (workerIdx < nForwarders) {
+      distributeForward<Hidden, DataType>(output, outputIds, outputWeights, workload, recvBuffer, context, transport,
+                                          flag, sharedMemory, workerIdx, nForwarders);
+    } else {
+      const int producerIdx = workerIdx - nForwarders;
+      const int nProducers = nWorkers - nForwarders;
+      if (producerIdx < workload.numTokens_) {
+        distributeProduce<Hidden, DataType>(output, outputIds, outputWeights, input, routes, weights, workload, context,
+                                            transport, sharedMemory, producerIdx, nProducers);
+      }
     }
-  }
-
-  if (blockIdx.x != 0) {
-    for (int sourceRank = static_cast<int>(blockIdx.x) - 1; sourceRank < context->numRanks_; sourceRank += nWorkers) {
+    for (int sourceRank = workerIdx; sourceRank < context->numRanks_; sourceRank += nWorkers) {
       __syncthreads();
       dispatchRankMajorRecvSource(outputIds, outputWeights, outputCount, transport, workspace, sourceRank,
                                   workload.numTopk_, workload.maxTokensPerRank_, workload.invalidTokenExpertId_,
-                                  recvBuffer, flag, shared, context->hybridCtx_.distributeControl_->payloadReady);
+                                  recvBuffer, flag, reinterpret_cast<int*>(sharedMemory),
+                                  context->hybridCtx_.distributeControl_->payloadReady);
     }
   }
   updateDispatchFlag(workspace, flag);
