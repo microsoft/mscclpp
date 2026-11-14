@@ -4,9 +4,56 @@
 #define MSCCLPP_EP_DEVICE_CONTEXT_HPP_
 
 #include <mscclpp/memory_channel_device.hpp>
+#include <mscclpp/port_channel_device.hpp>
 
 namespace mscclpp {
 namespace ep {
+
+using PortChannelDeviceHandle = mscclpp::PortChannelDeviceHandleT<mscclpp::PortChannelBackend::Device>;
+
+struct PortChannelDeviceContext {
+  PortChannelDeviceHandle* channels;
+  int numPeers;
+  int numQpsPerPeer;
+
+#if defined(MSCCLPP_DEVICE_COMPILE)
+  MSCCLPP_DEVICE_INLINE PortChannelDeviceHandle channel(int peer, int queue) const {
+    MSCCLPP_ASSERT_DEVICE(channels != nullptr && peer >= 0 && peer < numPeers && queue >= 0 && queue < numQpsPerPeer,
+                          "Invalid PortChannel index");
+    return channels[static_cast<size_t>(peer) * numQpsPerPeer + queue];
+  }
+#endif
+};
+
+struct HybridDispatchControl;
+struct HybridAggregateControl;
+struct HybridDistributeScratch;
+
+struct HybridDeviceContext {
+  /// Cross-domain PortChannel device context for peers outside this rank's NVLink/IPC domain,
+  /// or nullptr when every peer is NVLink-mapped.
+  PortChannelDeviceContext* portChannels_ = nullptr;
+  /// Tokens per hybrid dispatch/combine IB chunk.
+  int nTokensPerChunk_ = 0;
+  int gatewayRank_ = -1;
+  int distributeCapacity_ = 0;
+  void* distributeSendBuffer_ = nullptr;
+  void* distributeRecvBuffer_ = nullptr;
+  HybridDispatchControl* distributeControl_ = nullptr;
+  HybridDistributeScratch* distributeScratch_ = nullptr;
+  int* aggregateRemoteTokenIndices_ = nullptr;
+  int* nIncomingTokens_ = nullptr;
+  /// Private [compact token, IDs then destination slots then weights] cache, never exposed to remote writes.
+  int* aggregateRoutes_ = nullptr;
+  float* aggregateLocalBuffer_ = nullptr;
+  /// Independent registered FP32 send/landing tokens, indexed by compact remote token.
+  float* aggregateSendBuffer_ = nullptr;
+  float* aggregateRecvBuffer_ = nullptr;
+  HybridAggregateControl* aggregateControl_ = nullptr;
+  /// Private completed-token and TMA-load counters, reset on the caller stream during dispatch.
+  int* aggregateChunkReady_ = nullptr;
+  int* aggregateChunkLoadDone_ = nullptr;
+};
 
 /// Persistent device resources shared by every dispatch and combine algorithm.
 struct DeviceContext {
@@ -30,6 +77,8 @@ struct DeviceContext {
   int numRanks_;
   /// Persistent device copy used by kernel launches. Host launch code only.
   DeviceContext* devicePtr_ = nullptr;
+  /// Cross-domain resources for hybrid dispatch and combine.
+  HybridDeviceContext hybridCtx_{};
 };
 
 struct TransportView {
@@ -37,14 +86,31 @@ struct TransportView {
   void* const* peerMappedBufferBases_;
   mscclpp::BaseMemoryChannelDeviceHandle* baseMemoryChannels_;
   int rank_;
+  int numRanks_;
+  PortChannelDeviceContext* portChannels_;
 
   MSCCLPP_HOST_DEVICE_INLINE explicit TransportView(const DeviceContext* context)
       : symmetricBufferBase_(context->localBufferBase_),
         peerMappedBufferBases_(context->peerBufferBases_),
         baseMemoryChannels_(context->channels_),
-        rank_(context->rank_) {}
+        rank_(context->rank_),
+        numRanks_(context->numRanks_),
+        portChannels_(context->hybridCtx_.portChannels_) {}
 
   MSCCLPP_HOST_DEVICE_INLINE bool isSelf(int peerRank) const { return peerRank == rank_; }
+
+  // Byte offset of a symmetric-buffer pointer from this rank's base; the same
+  // offset addresses the identical region on any peer.
+  MSCCLPP_HOST_DEVICE_INLINE uint64_t symmetricOffset(const void* ptr) const {
+    return static_cast<uint64_t>(reinterpret_cast<const uint8_t*>(ptr) -
+                                 reinterpret_cast<const uint8_t*>(symmetricBufferBase_));
+  }
+
+  // A peer is NVLink/IPC-reachable if it is self or its symmetric buffer is
+  // directly mapped; otherwise it is a cross-domain peer served over PortChannel.
+  MSCCLPP_HOST_DEVICE_INLINE bool isNvlinkPeer(int peerRank) const {
+    return isSelf(peerRank) || peerMappedBufferBases_[peerRank] != nullptr;
+  }
 
   MSCCLPP_HOST_DEVICE_INLINE void* mappedBuffer(void* localBuffer, int peerRank) const {
     if (isSelf(peerRank)) return localBuffer;

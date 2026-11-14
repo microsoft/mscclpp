@@ -5,7 +5,13 @@ from __future__ import annotations
 
 import torch
 
-from .bench_common import sum_matching_kernel_us
+from .bench_common import (
+    MPI,
+    sum_matching_kernel_us,
+    rank_major_unit_output,
+    validate_combine_output_mpi,
+    validate_rank_major_counts,
+)
 
 
 def parse_kineto_kernels(key_averages):
@@ -28,7 +34,10 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
     import nccl.core as nccl_core
     import nccl.ep as nccl_ep
 
+    quantization_recipes = getattr(nccl_ep, "DispatchQuantizationRecipe", None)
     x, topk_idx, topk_weights, _ = inputs
+    if args.combine_mode == "direct_send" and args.ep_layout == "rank_major":
+        raise ValueError("NCCL-EP rank_major combines pre-reduced rank-local outputs; use rank_local_reduce")
     num_tokens, hidden = args.num_tokens, args.hidden
     num_experts, num_topk = args.num_experts, args.num_topk
     num_local_experts = num_experts // num_ranks
@@ -37,8 +46,8 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
     if use_fp8:
         if raw_disp_dtype != "fp8_e4m3":
             raise ValueError(f"NCCL-EP does not support --dispatch-dtype {raw_disp_dtype}")
-        if args.mode != "latency" or args.ep_layout == "rank_major":
-            raise ValueError("NCCL-EP FP8 dispatch requires latency mode with expert_major layout")
+        if args.mode != "latency":
+            raise ValueError("NCCL-EP FP8 dispatch requires latency mode")
     if args.mode == "latency":
         if args.ep_layout == "token_major":
             raise ValueError("NCCL-EP latency supports expert_major or rank_major layout")
@@ -83,9 +92,19 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
         # HT expert-major counts expanded expert slots; HT flat counts unique received tokens.
         max_recv_tokens_per_rank=max_recv_tokens,
         max_token_bytes=hidden * 2,  # BF16
+        num_qp_per_rank=args.qps_per_peer or 0,
+        max_num_sms=args.num_sms,
         alloc=nccl_ep.AllocConfig(),  # default cudaMalloc/cudaFree
     )
     ep_group = nccl_ep.Group.create(ncomm, config)
+    lsa_teams = ncomm.n_lsa_teams
+    gin_type = ncomm.gin_type
+    if rank == 0:
+        print(
+            f"[cfg] nccl lsa_teams={lsa_teams} gin_type={gin_type} "
+            f"ranks_per_lsa={num_ranks // lsa_teams} qps_per_rank={config.num_qp_per_rank or 'AUTO'}",
+            flush=True,
+        )
 
     stream_ptr = torch.cuda.current_stream().cuda_stream
 
@@ -121,7 +140,12 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
     else:
         recv = torch.empty((num_local_experts, num_ranks * num_tokens, hidden), dtype=recv_dtype, device="cuda")
         recv_count = torch.empty((num_local_experts,), dtype=torch.int32, device="cuda")
-    combine_in = torch.empty(recv.shape, dtype=torch.bfloat16, device="cuda").normal_(0.0, 0.1)
+    unit_aggregation = args.mode == "latency" and nccl_layout == nccl_ep.Layout.RANK_MAJOR
+    combine_in = torch.empty(recv.shape, dtype=torch.bfloat16, device="cuda")
+    if unit_aggregation:
+        combine_in.fill_(1)
+    else:
+        combine_in.normal_(0.0, 0.1)
     out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
 
     dispatch_x = x
@@ -129,9 +153,13 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
     if use_fp8:
         if hidden % 512 != 0:
             raise ValueError("NCCL-EP latency FP8 requires hidden to be a multiple of 512")
-        recv_scales = torch.empty(
-            (num_local_experts, num_ranks * num_tokens, hidden // 128), dtype=torch.float32, device="cuda"
-        )
+        if nccl_layout == nccl_ep.Layout.RANK_MAJOR and quantization_recipes is None:
+            # Legacy EP infers FP8 from scales and writes column planes into expert-major capacity.
+            recv_scales = torch.empty(
+                (num_local_experts, hidden // 128, num_ranks * num_tokens), dtype=torch.float32, device="cuda"
+            ).transpose(1, 2)
+        else:
+            recv_scales = torch.empty((*recv.shape[:-1], hidden // 128), dtype=torch.float32, device="cuda")
         recv_scales_t = nccl_ep.Tensor(recv_scales)
 
     x_t = nccl_ep.Tensor(dispatch_x)
@@ -163,15 +191,24 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
         recv_idx = torch.empty((num_ranks, num_tokens, num_topk), dtype=torch.int32, device="cuda")
         recv_idx_t = nccl_ep.Tensor(recv_idx)
         dispatch_inputs = nccl_ep.DispatchInputs(tokens=x_t, topk_weights=topk_weights_t)
-        dispatch_outputs = nccl_ep.DispatchOutputs(tokens=recv_t, topk_weights=recv_weights_t, topk_idx=recv_idx_t)
+        dispatch_outputs = nccl_ep.DispatchOutputs(
+            tokens=recv_t, topk_weights=recv_weights_t, topk_idx=recv_idx_t, scales=recv_scales_t
+        )
         dispatch_layout = nccl_ep.LayoutInfo(src_rank_counters=recv_count_t)
     else:
         dispatch_inputs = nccl_ep.DispatchInputs(tokens=x_t)
         dispatch_outputs = nccl_ep.DispatchOutputs(tokens=recv_t, scales=recv_scales_t)
         dispatch_layout = nccl_ep.LayoutInfo(expert_counters=recv_count_t)
-    dispatch_config = nccl_ep.DispatchConfig()
+    dispatch_config = (
+        nccl_ep.DispatchConfig(quantization_recipe=quantization_recipes.DS_FP8E3M4)
+        if use_fp8 and quantization_recipes is not None
+        else nccl_ep.DispatchConfig()
+    )
     combine_inputs = nccl_ep.CombineInputs(tokens=combine_in_t)
-    combine_outputs = nccl_ep.CombineOutputs(tokens=out_t, topk_weights=topk_weights_t)
+    combine_outputs = nccl_ep.CombineOutputs(
+        tokens=out_t,
+        topk_weights=topk_weights_t if args.mode == "latency" and nccl_layout == nccl_ep.Layout.EXPERT_MAJOR else None,
+    )
     combine_config = nccl_ep.CombineConfig()
 
     def _dispatch(stream):
@@ -199,6 +236,58 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
 
     def combine_fn(_dout):
         _combine(torch.cuda.current_stream().cuda_stream)
+
+    def validate_timed(replay):
+        torch.cuda.synchronize()
+        validate_rank_major_counts(recv_count, topk_idx, num_local_experts, comm)
+        if use_fp8:
+            scale_rows = (
+                recv_scales
+                if quantization_recipes is not None
+                else recv_scales[0].reshape(num_ranks, num_tokens, hidden // 128)
+            )
+            blocks = recv.float().reshape(num_ranks, num_tokens, hidden // 128, 128)
+            decoded = (blocks * scale_rows[..., None]).reshape(recv.shape).to(torch.bfloat16)
+        else:
+            decoded = recv
+        valid_rows = torch.arange(num_tokens, device=x.device)[None, :] < recv_count[:, None]
+        # Unified inputs encode source rank in all but the last128 features, and token ID in that tail.
+        token_ids = decoded[..., -1].float().round().long()
+        expected_dispatch = (
+            (torch.arange(num_ranks, device=x.device)[:, None, None] - 128)
+            .expand(-1, num_tokens, hidden)
+            .to(torch.bfloat16)
+            .clone()
+        )
+        expected_dispatch[..., -128:] = token_ids[..., None]
+        validate_combine_output_mpi(decoded[valid_rows], expected_dispatch[valid_rows], comm, exact=True)
+        routes = comm.allgather(topk_idx.cpu())
+        actual_rows = token_ids.cpu()
+        counts = recv_count.cpu().tolist()
+        correct_rows = all(
+            sorted(actual_rows[source, : counts[source]].tolist())
+            == ((ids >= 0) & (ids // num_local_experts == rank)).any(dim=-1).nonzero().flatten().tolist()
+            for source, ids in enumerate(routes)
+        )
+        if comm.allreduce(int(correct_rows), op=MPI.MIN) != 1:
+            raise RuntimeError("NCCL rank-major dispatch token identities do not match the original routes")
+        expected = rank_major_unit_output(topk_idx, num_local_experts, hidden)
+        validate_combine_output_mpi(out, expected, comm, exact=True)
+        combine_in.fill_(2)
+        replay()
+        torch.cuda.synchronize()
+        validate_combine_output_mpi(out, expected * 2, comm, exact=True)
+        combine_in.fill_(1)
+        replay()
+        torch.cuda.synchronize()
+        validate_combine_output_mpi(out, expected, comm, exact=True)
+        if rank == 0:
+            print("[validate] nccl timed output and alternating expert-output replay OK", flush=True)
+
+    if args.validate and unit_aggregation:
+        dispatch_fn()
+        combine_fn(None)
+        validate_timed(lambda: combine_fn(dispatch_fn()))
 
     # Capturable at any scale; hand the same capture-safe ops to the harness, which
     # owns the single-graph capture. When captured, main() times the paired kineto
@@ -230,6 +319,7 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
         "teardown": teardown,
         "barrier": None,
         "graph": graph_spec,
+        "validate": validate_timed if unit_aggregation else None,
         "summary_meta": {
             "algorithm": algorithm_name,
             "layout": effective_layout,
@@ -239,5 +329,15 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
                 "direct_send" if args.mode == "latency" and effective_layout == "expert_major" else "rank_local_reduce"
             ),
             "execution": "cuda_graph" if graph_spec is not None else "eager",
+            "lsa_teams": lsa_teams,
+            "ranks_per_lsa": num_ranks // lsa_teams,
+            "gin_type": int(gin_type),
+            "qps_per_rank": config.num_qp_per_rank,
+            "library_version": str(nccl_ep.get_lib_version()),
+            "library_path": str(nccl_ep.get_lib_path()),
+            "dispatch_quantization_recipe": (
+                ("DS_FP8E3M4" if quantization_recipes is not None else "legacy inferred FP8") if use_fp8 else "NONE"
+            ),
+            "expert_input": "unit-valued, prepared outside timing" if unit_aggregation else "fixed synthetic",
         },
     }

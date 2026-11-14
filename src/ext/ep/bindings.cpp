@@ -2,6 +2,8 @@
 // Licensed under the MIT License.
 
 #include <nanobind/nanobind.h>
+#include <nanobind/stl/optional.h>
+#include <nanobind/stl/pair.h>
 #include <nanobind/stl/shared_ptr.h>
 
 #include <cstdint>
@@ -48,7 +50,7 @@ NB_MODULE(mscclpp_ep_cpp, m) {
       .value("QUANTIZE", QuantConfig::InputMode::QUANTIZE);
   quantConfig.def(nb::init<>())
       .def_rw("dispatch_data_type", &QuantConfig::dispatchDataType)
-      .def_rw("dispatch_scale", &QuantConfig::dispatchScale)
+      .def_rw("scale", &QuantConfig::scale)
       .def_rw("input_mode", &QuantConfig::inputMode)
       .def_rw("combine_data_type", &QuantConfig::combineDataType);
 
@@ -58,7 +60,8 @@ NB_MODULE(mscclpp_ep_cpp, m) {
   m.def("create_moe_runtime", &createMoERuntime, nb::arg("comm"), nb::arg("mode"), nb::arg("max_tokens_per_rank"),
         nb::arg("hidden"), nb::arg("num_experts"), nb::arg("num_topk"),
         nb::arg("output_layout") = DispatchLayout::EXPERT_MAJOR,
-        nb::arg("combine_mode") = CombineMode::RANK_LOCAL_REDUCE, nb::keep_alive<0, 1>());
+        nb::arg("combine_mode") = CombineMode::RANK_LOCAL_REDUCE, nb::arg("qps_per_peer") = 4,
+        nb::arg("n_tokens_per_chunk") = 8, nb::keep_alive<0, 1>());
 
   nb::class_<MoERuntime>(m, "MoERuntime")
       .def_prop_ro("mode", &MoERuntime::mode)

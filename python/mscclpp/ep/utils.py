@@ -61,13 +61,25 @@ def resolve_dispatch_data_type(quant: Optional[QuantConfig]) -> DispatchDataType
     return data_type
 
 
+def _unpack_scale(
+    scale: Optional[Union[float, Tuple[Optional[float], Optional[float]]]],
+) -> Tuple[Optional[float], Optional[float]]:
+    if scale is None:
+        return None, None
+    if isinstance(scale, tuple):
+        if len(scale) != 2:
+            raise ValueError("quant.scale must be a real number or a (dispatch_scale, combine_scale) tuple")
+        return scale
+    return scale, None
+
+
 def validate_quant(
     quant: Optional[QuantConfig], mode: MoEMode, layout: DispatchLayout, hidden: int
 ) -> DispatchDataType:
     """Validate the mode-specific dispatch and combine quantization contract."""
     data_type = resolve_dispatch_data_type(quant)
     block_scales = None if quant is None else quant.block_scales
-    scale = None if quant is None else quant.scale
+    scale, combine_scale = _unpack_scale(None if quant is None else quant.scale)
     input_mode = QuantConfig.InputMode.PREQUANTIZED if quant is None else quant.input_mode
     combine_type = DispatchDataType.BF16 if quant is None else quant.combine_format
     if not isinstance(input_mode, QuantConfig.InputMode):
@@ -85,11 +97,14 @@ def validate_quant(
         raise ValueError("quant.input_mode is supported only by latency RANK_MAJOR static FP8")
     if combine_type == DispatchDataType.FP8_E4M3_STATIC and not static_fp8:
         raise ValueError("FP8_E4M3_STATIC combine input requires matching static FP8 dispatch")
-    if scale is not None:
-        if isinstance(scale, bool) or not isinstance(scale, Real):
-            raise TypeError("quant.scale must be a real number")
-        if not math.isfinite(float(scale)) or scale <= 0:
-            raise ValueError("quant.scale must be finite and positive")
+    for value in (scale, combine_scale):
+        if value is not None:
+            if isinstance(value, bool) or not isinstance(value, Real):
+                raise TypeError("quant.scale must be a real number or a (dispatch_scale, combine_scale) tuple")
+            if not math.isfinite(float(value)) or value <= 0:
+                raise ValueError("quant.scale must be finite and positive")
+    if combine_scale is not None and combine_type != DispatchDataType.FP8_E4M3_STATIC:
+        raise ValueError("combine scale is supported only by FP8_E4M3_STATIC combine input")
     if data_type == DispatchDataType.BF16:
         if block_scales is not None:
             raise ValueError("BF16 dispatch does not accept block_scales")
@@ -130,16 +145,19 @@ def resolve_dispatch_format(config: MoECommunicatorConfig, quant: Optional[Quant
     Optional[float],
     NativeQuantConfig.InputMode,
     DispatchDataType,
+    Optional[float],
 ]:
     """Resolve a per-call format override or the communicator's quantization default."""
     quant = config.quant if quant is None else quant
     data_type = validate_quant(quant, config.mode, config.output_layout, config.hidden_size)
+    scale, combine_scale = _unpack_scale(None if quant is None else quant.scale)
     return (
         data_type,
         None if quant is None else quant.block_scales,
-        None if quant is None or quant.scale is None else float(quant.scale),
+        None if scale is None else float(scale),
         QuantConfig.InputMode.PREQUANTIZED if quant is None else quant.input_mode,
         DispatchDataType.BF16 if quant is None else quant.combine_format,
+        None if combine_scale is None else float(combine_scale),
     )
 
 

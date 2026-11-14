@@ -20,8 +20,15 @@ namespace ep {
 
 inline constexpr size_t BufferAlignmentBytes = 128;
 inline constexpr int MaxNumTopk = 8;
+inline constexpr int MaxNumRanks = 128;
 
-inline constexpr bool isSupportedRanks(int numRanks) { return numRanks > 0 && numRanks <= 64; }
+inline constexpr int MaxQpsPerPeer = 4;
+inline constexpr int HybridForwardBlocks = 8;
+inline constexpr int HybridMaxForwardBlocks = 16;
+inline constexpr int HybridForwardWarps = 8;
+inline constexpr int HybridMaxProduceGroups = 4;
+
+inline constexpr bool isSupportedRanks(int numRanks) { return numRanks > 0 && numRanks <= MaxNumRanks; }
 
 template <typename dtype_t>
 MSCCLPP_HOST_DEVICE_INLINE constexpr dtype_t configCellDiv(dtype_t a, dtype_t b) {
@@ -32,6 +39,65 @@ template <typename dtype_t>
 MSCCLPP_HOST_DEVICE_INLINE constexpr dtype_t configAlign(dtype_t a, dtype_t b) {
   return configCellDiv<dtype_t>(a, b) * b;
 }
+
+// Inter-rack (hybrid) dispatch RDMA payload layout per compact remote token:
+//
+//   [data: ElementType[hidden]]
+//   [expertIds: int[topk]]
+//   [topkWeights: float[topk]]
+//   [dstSlots: int[topk] (compact token index on each destination rank)]
+//
+// Each token payload is 128-byte aligned (BufferAlignmentBytes) for TMA bulkLoad.
+struct InterRackDispatchPayload {
+  int* expertIds_;
+  float* topkWeights_;
+  int* dstSlots_;
+
+  MSCCLPP_HOST_DEVICE_INLINE static size_t stride(int hidden, int topk, size_t elementBytes = sizeof(uint16_t)) {
+    const size_t dataBytes = static_cast<size_t>(hidden) * elementBytes;
+    const size_t metadataBytes = static_cast<size_t>(topk) * (sizeof(int) + sizeof(float) + sizeof(int));
+    return configAlign<size_t>(dataBytes + metadataBytes, BufferAlignmentBytes);
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE InterRackDispatchPayload(void* token, int hidden, int topk,
+                                                      size_t elementBytes = sizeof(uint16_t))
+      : expertIds_(reinterpret_cast<int*>(reinterpret_cast<uint8_t*>(token) + hidden * elementBytes)),
+        topkWeights_(reinterpret_cast<float*>(expertIds_ + topk)),
+        dstSlots_(reinterpret_cast<int*>(topkWeights_ + topk)) {}
+};
+
+struct alignas(BufferAlignmentBytes) InterRackDispatchHeader {
+  mscclpp::LL8Packet nRemoteTokens;
+  mscclpp::LL8Packet nTokensPerRank[MaxNumRanks];
+
+  MSCCLPP_HOST_DEVICE_INLINE static constexpr size_t wireBytes(int nRanks) {
+    return static_cast<size_t>(1 + nRanks) * sizeof(mscclpp::LL8Packet);
+  }
+};
+
+struct HybridDistributeScratch {
+  int nRemoteTokens;
+  int nCompletedForwarders;
+  int forwardComplete;
+  int chunkReadySignals[1];
+
+  MSCCLPP_HOST_DEVICE_INLINE static constexpr size_t numInts(int maxTokensPerRank, int nTokensPerChunk) {
+    return offsetof(HybridDistributeScratch, chunkReadySignals) / sizeof(int) +
+           static_cast<size_t>(configCellDiv(maxTokensPerRank, nTokensPerChunk));
+  }
+};
+
+struct alignas(BufferAlignmentBytes) HybridDispatchControl {
+  uint64_t qpSignalCount[MaxQpsPerPeer];
+  uint64_t bufferReuseReady;
+  alignas(BufferAlignmentBytes) uint32_t payloadReady[MaxNumRanks];
+  InterRackDispatchHeader sendHeader;
+  InterRackDispatchHeader recvHeader;
+};
+
+struct alignas(BufferAlignmentBytes) HybridAggregateControl {
+  uint64_t qpSignalCount[MaxQpsPerPeer];
+};
 
 using Bf16 = typename mscclpp::bf16x2::ElementType;
 using Fp8E4M3 = typename mscclpp::f8_e4m3x2::ElementType;
@@ -167,8 +233,7 @@ struct LatencyPayloadView {
 };
 
 MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTopkIdsOffset(int numRanks, int numExperts) {
-  return configAlign<size_t>(static_cast<size_t>(numRanks + numExperts) * sizeof(mscclpp::LL8Packet),
-                             BufferAlignmentBytes);
+  return configAlign<size_t>(static_cast<size_t>(numRanks + numExperts) * sizeof(uint64_t), BufferAlignmentBytes);
 }
 
 MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTopkWeightsOffset(int numRanks, int numExperts, int maxTokensPerRank,
@@ -187,6 +252,12 @@ MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTokenOffset(int numRanks, int numExpe
 
 struct LatencyStorageLayout {
   size_t totalBytes_;
+  void* distributeSendBuffer_ = nullptr;
+  void* distributeRecvBuffer_ = nullptr;
+  HybridDispatchControl* distributeControl_ = nullptr;
+  float* aggregateSendBuffer_ = nullptr;
+  float* aggregateRecvBuffer_ = nullptr;
+  HybridAggregateControl* aggregateControl_ = nullptr;
   void* dispatchRecvBuffer_ = nullptr;
   // Rank-major expert input or expert-major receive staging.
   void* combineBuffer_ = nullptr;
@@ -196,7 +267,7 @@ struct LatencyStorageLayout {
   void* dispatchOutputBuffer_ = nullptr;
 
   LatencyStorageLayout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts,
-                       int numTopk, DispatchLayout outputLayout, CombineMode combineMode) {
+                       int numTopk, DispatchLayout outputLayout, CombineMode combineMode, bool isHybrid = false) {
     const bool rankMajor = outputLayout == DispatchLayout::RANK_MAJOR;
     const bool rankMajorDirectSend = rankMajor && combineMode == CombineMode::DIRECT_SEND;
     const bool rankMajorLocalReduce = rankMajor && combineMode == CombineMode::RANK_LOCAL_REDUCE;
@@ -220,7 +291,8 @@ struct LatencyStorageLayout {
         static_cast<size_t>(numExperts) * maxTokensPerRank * hidden * sizeof(Bf16);
     const size_t rankLocalReduceCombineRecvBytes =
         static_cast<size_t>(numRanks) * maxTokensPerRank * hidden * sizeof(Bf16);
-    const size_t rankMajorDispatchBufferBytes = rankMajorScalesOffset + (rankMajor ? rankMajorScalesBytes : 0);
+    const size_t rankMajorDispatchBufferBytes =
+        rankMajorScalesOffset + (rankMajor && !isHybrid ? rankMajorScalesBytes : 0);
     const size_t dispatchOutputBytes = rankMajor ? rankMajorDispatchOutputBytes : expertMajorDispatchOutputBytes;
     const size_t dispatchRecvBufferBytes =
         std::max({dispatchBufferBytes, rankMajorDispatchBufferBytes, dispatchOutputBytes});
@@ -233,24 +305,40 @@ struct LatencyStorageLayout {
     totalBytes_ = alignedDispatchRecvBufferBytes + alignedCombineBufferBytes +
                   (rankMajor ? 0 : configAlign<size_t>(dispatchOutputBytes, BufferAlignmentBytes));
 
+    const size_t distributeOffset = totalBytes_;
+    const size_t distributeBytes =
+        isHybrid ? static_cast<size_t>(maxTokensPerRank) * InterRackDispatchPayload::stride(hidden, numTopk) : 0;
+    if (isHybrid) totalBytes_ += 2 * distributeBytes + sizeof(HybridDispatchControl);
+    const size_t aggregateOffset = totalBytes_;
+    const size_t aggregateBytes = isHybrid ? static_cast<size_t>(maxTokensPerRank) * hidden * sizeof(float) : 0;
+    if (isHybrid) totalBytes_ += 2 * aggregateBytes + sizeof(HybridAggregateControl);
+
     if (symmetricBuffer != nullptr) {
       auto* base = reinterpret_cast<uint8_t*>(symmetricBuffer);
       dispatchRecvBuffer_ = base;
       rankMajorTopkIdsBuffer_ = base + rankMajorTopkIdsOffset(numRanks, numExperts);
       rankMajorTopkWeightsBuffer_ = base + rankMajorTopkWeightsOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
-      rankMajorScalesBuffer_ = rankMajor ? base + rankMajorScalesOffset : nullptr;
+      rankMajorScalesBuffer_ = rankMajor && !isHybrid ? base + rankMajorScalesOffset : nullptr;
       dispatchOutputBuffer_ = rankMajor ? base + rankMajorTokenOffsetBytes
                                         : base + alignedDispatchRecvBufferBytes + alignedCombineBufferBytes;
       combineBuffer_ = base + alignedDispatchRecvBufferBytes;
+      if (isHybrid) {
+        distributeSendBuffer_ = base + distributeOffset;
+        distributeRecvBuffer_ = base + distributeOffset + distributeBytes;
+        distributeControl_ = reinterpret_cast<HybridDispatchControl*>(base + distributeOffset + 2 * distributeBytes);
+        aggregateSendBuffer_ = reinterpret_cast<float*>(base + aggregateOffset);
+        aggregateRecvBuffer_ = reinterpret_cast<float*>(base + aggregateOffset + aggregateBytes);
+        aggregateControl_ = reinterpret_cast<HybridAggregateControl*>(base + aggregateOffset + 2 * aggregateBytes);
+      }
     }
   }
 };
 
 inline size_t latencyStorageSize(int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk,
-                                 DispatchLayout outputLayout, CombineMode combineMode) {
-  const auto numBytes =
-      LatencyStorageLayout(nullptr, maxTokensPerRank, hidden, numRanks, numExperts, numTopk, outputLayout, combineMode)
-          .totalBytes_;
+                                 DispatchLayout outputLayout, CombineMode combineMode, bool isHybrid = false) {
+  const auto numBytes = LatencyStorageLayout(nullptr, maxTokensPerRank, hidden, numRanks, numExperts, numTopk,
+                                             outputLayout, combineMode, isHybrid)
+                            .totalBytes_;
   return configAlign<size_t>(numBytes, BufferAlignmentBytes);
 }
 

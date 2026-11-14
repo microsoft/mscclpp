@@ -11,6 +11,7 @@
 #include <mscclpp/ext/ep/moe_runtime.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/memory_channel.hpp>
+#include <mscclpp/port_channel.hpp>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -62,7 +63,7 @@ struct DispatchHandle::Impl {
         maxTokensPerRank_(request.maxTokensPerRank),
         dispatchDataType_(request.quant.dispatchDataType),
         combineDataType_(request.quant.combineDataType),
-        dispatchScale_(request.quant.dispatchScale),
+        scale_{request.quant.scale.first, request.quant.scale.second.value_or(request.quant.scale.first)},
         metadata_(
             LatencyMetadata{request.topkIdx, request.topkWeights, request.outputSrcInfo, request.outputLayoutRange}) {}
 
@@ -80,7 +81,7 @@ struct DispatchHandle::Impl {
   int maxTokensPerRank_;
   DispatchDataType dispatchDataType_;
   DispatchDataType combineDataType_ = DispatchDataType::BF16;
-  float dispatchScale_ = 1.0f;
+  std::pair<float, float> scale_ = {1.0f, 1.0f};
   // Latency borrows caller metadata; throughput's inverse routing lives in its workspace.
   std::variant<LatencyMetadata, ThroughputMetadata> metadata_;
 };
@@ -89,13 +90,14 @@ struct DispatchHandle::Impl {
 struct LatencyRuntimeContext {
   LatencyRuntimeContext(mscclpp::Communicator& communicator, int rank, int numRanks, int numRanksPerIpcDomain,
                         int maxTokensPerRank, int hidden, int numExperts, int numTopk, DispatchLayout outputLayout,
-                        CombineMode combineMode);
+                        CombineMode combineMode, int qpsPerPeer = 4, int nTokensPerChunk = 8);
   ~LatencyRuntimeContext() noexcept(false);
 
  private:
   friend class MoERuntime;
 
   void initialize();
+  LatencyStorageLayout storageLayout() const;
 
   int rank_;
   int numRanks_;
@@ -108,6 +110,9 @@ struct LatencyRuntimeContext {
   int numTopk_;
   DispatchLayout outputLayout_;
   CombineMode combineMode_;
+  int qpsPerPeer_ = 4;
+  int nTokensPerChunk_ = 8;
+  bool isHybrid_ = false;
   int64_t symmetricBufferBytes_;
   size_t workspaceBytes_;
   uint32_t epoch_ = 1;
@@ -117,9 +122,17 @@ struct LatencyRuntimeContext {
   mscclpp::Communicator& communicator_;
   std::vector<void*> peerMappedBufferBases_;
   std::vector<mscclpp::RegisteredMemory> peerBufferMemories_;
+  mscclpp::RegisteredMemory ibLocalMemory_;
   void** peerMappedBufferBasesGpu_ = nullptr;
   std::vector<mscclpp::BaseMemoryChannel> baseMemoryChannels_;
   std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> baseMemoryChannelHandles_;
+  std::vector<mscclpp::PortChannel<mscclpp::PortChannelBackend::Device>> portChannels_;
+  std::shared_ptr<PortChannelDeviceHandle> portChannelHandles_;
+  std::shared_ptr<PortChannelDeviceContext> portChannelContext_;
+  std::shared_ptr<int> distributeScratch_;
+  std::shared_ptr<int> aggregateMetadata_;
+  std::shared_ptr<float> aggregateLocal_;
+  std::shared_ptr<int> aggregateChunkReady_;
 };
 
 struct ThroughputRuntimeContext {

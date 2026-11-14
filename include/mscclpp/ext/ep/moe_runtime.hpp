@@ -32,7 +32,8 @@ class MoERuntime {
   /// Only resources required by @p mode are allocated. Mode-specific
   /// communicator buffers are deferred until initialize().
   /// The configured capacity, dimensions, and layout must match across ranks.
-  /// Both modes support 1-64 ranks within one CUDA IPC domain.
+  /// Both modes support 1-64 ranks within one CUDA IPC domain, and latency mode supports up to 128 ranks across two
+  /// domains.
   /// @param communicator Initialized MSCCL++ communicator.
   /// @param mode Runtime algorithm family.
   /// @param maxTokensPerRank Fixed per-rank token capacity.
@@ -41,12 +42,14 @@ class MoERuntime {
   /// @param numTopk Number of routed experts per token, in [1, 8].
   /// @param outputLayout Dispatch output layout.
   /// @param combineMode Latency-mode combine algorithm.
+  /// @param qpsPerPeer Queue pairs per peer for cross-domain hybrid EP (1 or 4).
+  /// @param nTokensPerChunk Tokens per IB chunk for cross-domain hybrid EP, in [1, 128].
   /// @throws EPException For an unsupported mode or invalid configuration.
   /// @warning @p communicator is retained by reference and must remain alive
   /// until initialize() returns.
   MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank, int hidden, int numExperts,
              int numTopk, DispatchLayout outputLayout = DispatchLayout::EXPERT_MAJOR,
-             CombineMode combineMode = CombineMode::RANK_LOCAL_REDUCE);
+             CombineMode combineMode = CombineMode::RANK_LOCAL_REDUCE, int qpsPerPeer = 4, int nTokensPerChunk = 8);
   /// Release owned resources without explicitly synchronizing user streams.
   /// The caller must ensure all local and peer GPU work using these resources,
   /// including graph replays, has completed before destruction.
@@ -141,6 +144,8 @@ class MoERuntime {
   /// handle requests automatic GPU preparation; a non-empty handle skips count
   /// recomputation. Both paths support CUDA graph capture. Keep routing
   /// unchanged when replaying a graph that does not recompute preparation.
+  /// @warning Hybrid aggregate combine requires a fresh dispatch before each
+  /// combine, including graph replays.
   /// @param request Dispatch inputs, outputs, and CUDA stream.
   /// @return A non-owning handle identifying this dispatch. The matching
   /// successful combine consumes the handle. In THROUGHPUT mode, starting a
@@ -186,7 +191,8 @@ class MoERuntime {
 std::shared_ptr<MoERuntime> createMoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank,
                                              int hidden, int numExperts, int numTopk,
                                              DispatchLayout outputLayout = DispatchLayout::EXPERT_MAJOR,
-                                             CombineMode combineMode = CombineMode::RANK_LOCAL_REDUCE);
+                                             CombineMode combineMode = CombineMode::RANK_LOCAL_REDUCE,
+                                             int qpsPerPeer = 4, int nTokensPerChunk = 8);
 
 }  // namespace ep
 }  // namespace mscclpp

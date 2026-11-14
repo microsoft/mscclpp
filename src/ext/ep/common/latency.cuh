@@ -150,6 +150,7 @@ struct WorkspaceView {
   }
 };
 
+#if defined(MSCCLPP_DEVICE_COMPILE)
 MSCCLPP_DEVICE_INLINE uint32_t getDispatchFlag(const WorkspaceView& workspaceView) {
   return workspaceView.dispatchFlags_[static_cast<int>(blockIdx.x)];
 }
@@ -168,14 +169,21 @@ MSCCLPP_DEVICE_INLINE void updateDispatchFlag(WorkspaceView& workspaceView, uint
     workspaceView.dispatchFlags_[thread] = flag;
   }
 }
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
 MSCCLPP_HOST_DEVICE_INLINE size_t workspaceBytes(int nRanks, int nExperts, int maxTokensPerRank, int nTopk) {
   return WorkspaceView::numBytes(nRanks, nExperts, maxTokensPerRank, nTopk);
 }
 
-MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSharedControlBytes(int nRanks) {
+MSCCLPP_HOST_DEVICE_INLINE int dispatchSharedSendSlots(int nRanks) {
   constexpr int NSendSlots = DispatchMaxNWarpGroups * WARP_SIZE;
-  const int nSlots = nRanks > NSendSlots ? nRanks : NSendSlots;
+  return nRanks > NSendSlots ? nRanks : NSendSlots;
+}
+
+MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSharedControlBytes(int nRanks, bool hybrid = false) {
+  constexpr int NSendSlots = DispatchMaxNWarpGroups * WARP_SIZE;
+  const int counts = nRanks + (hybrid ? 1 : 0);
+  const int nSlots = counts > NSendSlots ? counts : NSendSlots;
   return configAlign<size_t>(static_cast<size_t>(nSlots) * sizeof(int), BufferAlignmentBytes);
 }
 
@@ -201,11 +209,20 @@ MSCCLPP_HOST_DEVICE_INLINE size_t dispatchRecvTmaBytes() {
   return static_cast<size_t>(NWorkers) * (tileBytes + sizeof(mscclpp::BulkBarrier));
 }
 
-template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
+template <int Hidden, DispatchDataType DataType>
+MSCCLPP_HOST_DEVICE_INLINE constexpr size_t hybridDispatchTmaBytes() {
+  static_assert(Hidden % 128 == 0);
+  constexpr int NTiles = HybridForwardWarps > HybridMaxProduceGroups ? HybridForwardWarps : HybridMaxProduceGroups;
+  constexpr size_t TileBytes = static_cast<size_t>(Hidden) * sizeof(DispatchElementType<DataType>);
+  return static_cast<size_t>(NTiles) * (TileBytes + sizeof(mscclpp::BulkBarrier));
+}
+
+template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, bool Hybrid = false>
 MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSharedBytes(int nRanks, int nExperts, int nTopk) {
-  const size_t controlBytes = dispatchSharedControlBytes(nRanks);
-  const size_t sendBytes = dispatchSendTmaBytes<Hidden, DataType, ScaleBlockSize>(nTopk);
-  const size_t recvBytes = dispatchRecvTmaBytes<Hidden, DataType>();
+  const size_t controlBytes = dispatchSharedControlBytes(nRanks, Hybrid);
+  const size_t sendBytes = Hybrid ? hybridDispatchTmaBytes<Hidden, DataType>()
+                                  : dispatchSendTmaBytes<Hidden, DataType, ScaleBlockSize>(nTopk);
+  const size_t recvBytes = Hybrid ? 0 : dispatchRecvTmaBytes<Hidden, DataType>();
   const size_t tmaBytes = controlBytes + (sendBytes > recvBytes ? sendBytes : recvBytes);
   const size_t metadataBytes = static_cast<size_t>(nRanks + nExperts) * sizeof(int);
   return tmaBytes > metadataBytes ? tmaBytes : metadataBytes;

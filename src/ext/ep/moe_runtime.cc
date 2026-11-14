@@ -11,7 +11,8 @@ namespace mscclpp {
 namespace ep {
 
 MoERuntime::MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank, int hidden,
-                       int numExperts, int numTopk, DispatchLayout outputLayout, CombineMode combineMode)
+                       int numExperts, int numTopk, DispatchLayout outputLayout, CombineMode combineMode,
+                       int qpsPerPeer, int nTokensPerChunk)
     : communicator_(communicator),
       mode_(mode),
       rank_(communicator_.bootstrap()->getRank()),
@@ -24,8 +25,9 @@ MoERuntime::MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int ma
     case MoEMode::LATENCY:
       latencyContext_ = std::make_shared<LatencyRuntimeContext>(communicator_, rank_, numRanks_, numRanksPerIpcDomain_,
                                                                 maxTokensPerRank, hidden, numExperts, numTopk,
-                                                                outputLayout, combineMode);
+                                                                outputLayout, combineMode, qpsPerPeer, nTokensPerChunk);
       available_ = latencyContext_->available_;
+      numRanksPerIpcDomain_ = latencyContext_->numRanksPerIpcDomain_;
       break;
     case MoEMode::THROUGHPUT:
       throughputContext_ =
@@ -70,10 +72,7 @@ void* MoERuntime::outputTopkIdsBuffer() const {
   const auto& context = *latencyContext_;
   EP_HOST_ASSERT(context.outputLayout_ == DispatchLayout::RANK_MAJOR);
   EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
-  return LatencyStorageLayout(context.symmetricBuffer_.get(), context.maxTokensPerRank_, context.hidden_,
-                              context.numRanks_, context.numExperts_, context.numTopk_, context.outputLayout_,
-                              context.combineMode_)
-      .rankMajorTopkIdsBuffer_;
+  return context.storageLayout().rankMajorTopkIdsBuffer_;
 }
 
 void* MoERuntime::outputTopkWeightsBuffer() const {
@@ -86,10 +85,7 @@ void* MoERuntime::outputTopkWeightsBuffer() const {
   const auto& context = *latencyContext_;
   EP_HOST_ASSERT(context.outputLayout_ == DispatchLayout::RANK_MAJOR);
   EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
-  return LatencyStorageLayout(context.symmetricBuffer_.get(), context.maxTokensPerRank_, context.hidden_,
-                              context.numRanks_, context.numExperts_, context.numTopk_, context.outputLayout_,
-                              context.combineMode_)
-      .rankMajorTopkWeightsBuffer_;
+  return context.storageLayout().rankMajorTopkWeightsBuffer_;
 }
 
 void* MoERuntime::outputScalesBuffer() const {
@@ -102,10 +98,7 @@ void* MoERuntime::outputScalesBuffer() const {
   const auto& context = *latencyContext_;
   EP_HOST_ASSERT(context.outputLayout_ == DispatchLayout::RANK_MAJOR);
   EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
-  return LatencyStorageLayout(context.symmetricBuffer_.get(), context.maxTokensPerRank_, context.hidden_,
-                              context.numRanks_, context.numExperts_, context.numTopk_, context.outputLayout_,
-                              context.combineMode_)
-      .rankMajorScalesBuffer_;
+  return context.storageLayout().rankMajorScalesBuffer_;
 }
 
 void* MoERuntime::dispatchOutputBuffer() const {
@@ -113,10 +106,7 @@ void* MoERuntime::dispatchOutputBuffer() const {
     case MoEMode::LATENCY: {
       const auto& context = *latencyContext_;
       EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
-      return LatencyStorageLayout(context.symmetricBuffer_.get(), context.maxTokensPerRank_, context.hidden_,
-                                  context.numRanks_, context.numExperts_, context.numTopk_, context.outputLayout_,
-                                  context.combineMode_)
-          .dispatchOutputBuffer_;
+      return context.storageLayout().dispatchOutputBuffer_;
     }
     case MoEMode::THROUGHPUT: {
       const auto& context = *throughputContext_;
@@ -134,10 +124,7 @@ void* MoERuntime::combineInputBuffer() const {
       const auto& context = *latencyContext_;
       EP_HOST_ASSERT(context.outputLayout_ == DispatchLayout::RANK_MAJOR);
       EP_HOST_ASSERT(context.symmetricBuffer_ != nullptr);
-      return LatencyStorageLayout(context.symmetricBuffer_.get(), context.maxTokensPerRank_, context.hidden_,
-                                  context.numRanks_, context.numExperts_, context.numTopk_, context.outputLayout_,
-                                  context.combineMode_)
-          .combineBuffer_;
+      return context.storageLayout().combineBuffer_;
     }
     case MoEMode::THROUGHPUT: {
       const auto& context = *throughputContext_;
@@ -195,9 +182,9 @@ void MoERuntime::combine(const CombineRequest& request) {
 
 std::shared_ptr<MoERuntime> createMoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank,
                                              int hidden, int numExperts, int numTopk, DispatchLayout outputLayout,
-                                             CombineMode combineMode) {
+                                             CombineMode combineMode, int qpsPerPeer, int nTokensPerChunk) {
   return std::make_shared<MoERuntime>(communicator, mode, maxTokensPerRank, hidden, numExperts, numTopk, outputLayout,
-                                      combineMode);
+                                      combineMode, qpsPerPeer, nTokensPerChunk);
 }
 
 }  // namespace ep
