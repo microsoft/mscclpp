@@ -8,6 +8,7 @@
 
 #include "api.h"
 #include "context.hpp"
+#include "gpunetio.hpp"
 #include "ib.hpp"
 #include "logger.hpp"
 #include "registered_memory.hpp"
@@ -26,6 +27,21 @@ Endpoint::Impl::Impl(const EndpointConfig& config, Context::Impl& contextImpl)
     ibLocal_ = true;
     if (config_.maxWriteQueueSize <= 0) {
       config_.maxWriteQueueSize = config_.ib.maxCqSize;
+    }
+
+    if (config_.ib.mode == EndpointConfig::Ib::Mode::Device) {
+      ibNoAtomic_ = false;
+      if (config_.device.type != DeviceType::GPU) {
+        THROW(NET, Error, ErrorCode::InvalidUsage, "IB Device mode requires a GPU endpoint");
+      }
+      if (config_.ib.gidIndex < 0) {
+        config_.ib.gidIndex = env()->ibGidIndex;
+      }
+      gpuNetIoQp_ = std::make_shared<GpuNetIoQp>(*contextImpl.getIbContext(config_.transport),
+                                                 contextImpl.getGpuNetIoContext(config_.transport), config_.device.id,
+                                                 config_.ib.port, config_.ib.gidIndex);
+      ibQpInfo_ = gpuNetIoQp_->info();
+      return;
     }
 
     // Determine if we should use no-atomics mode
