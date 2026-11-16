@@ -204,7 +204,7 @@ MSCCLPP_DEVICE_INLINE void dispatchRecv(void* output, const int64_t* __restrict_
 
 #endif  // MSCCLPP_BULK_AVAILABLE
 
-template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout>
+template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout, int MaxNTopk>
 __global__ __launch_bounds__(CombineNThreads,
                              1) void combineKernel(void* output, const void* expertOutput, const int64_t* topkIndices,
                                                    const float* topkWeights, const int* srcInfo,
@@ -222,7 +222,7 @@ __global__ __launch_bounds__(CombineNThreads,
     if (blockIdx.x == 0) {
       publishRankMajorCombineReady(transport, nRanks, flag, workspaceView);
     } else {
-      combineRankMajorTokens<Hidden, CombineMode::RANK_LOCAL_REDUCE, DispatchType>(
+      combineRankMajorTokens<Hidden, CombineMode::RANK_LOCAL_REDUCE, DispatchType, MaxNTopk>(
           output, expertOutput, topkIndices, nullptr, workload, transport, workspaceView, flag, sharedMemory);
     }
   } else {
@@ -245,9 +245,9 @@ __global__ __launch_bounds__(CombineNThreads,
 }
 
 struct KernelSelector {
-  template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout>
+  template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout, int MaxNTopk>
   static auto get() {
-    return combineKernel<Hidden, DispatchType, ScaleBlockSize, Layout>;
+    return combineKernel<Hidden, DispatchType, ScaleBlockSize, Layout, MaxNTopk>;
   }
 };
 

@@ -88,8 +88,8 @@ class MoECommunicatorConfig:
             value = getattr(self, name)
             if type(value) is not int or not 0 < value < (1 << 31):
                 raise ValueError(f"{name} must be a positive int32")
-        if self.topk > 8:
-            raise ValueError("topk must be in [1, 8]")
+        if self.topk > 16:
+            raise ValueError("topk must be in [1, 16]")
         if self.qps_per_peer not in (1, 4):
             raise ValueError("qps_per_peer must be 1 or 4")
         if not 1 <= self.n_tokens_per_chunk <= 128:
@@ -169,9 +169,10 @@ class MoECommunicatorConfig:
             default=(min(130, num_sms), min(128, num_sms)) if latency else (min(24, num_sms), min(32, num_sms)),
             scalar_combine_offset=-2 if latency else 0,
         )
-        if not (world_size + 2 if latency else 1) <= blocks[0] <= 130 or not 1 <= blocks[1] <= 128:
+        min_combine_blocks = 2 if latency and layout == DispatchLayout.RANK_MAJOR else 1
+        if not (world_size + 2 if latency else 1) <= blocks[0] <= 130 or not min_combine_blocks <= blocks[1] <= 128:
             raise ValueError(
-                "num_blocks must satisfy dispatch <= 130 and combine <= 128; "
+                f"num_blocks must satisfy dispatch <= 130 and {min_combine_blocks} <= combine <= 128; "
                 "latency dispatch requires at least world_size + 2 blocks, and all counts must be positive"
             )
         object.__setattr__(self, "device", device)

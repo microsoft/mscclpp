@@ -96,8 +96,8 @@ per peer (1 or 4, default 4). Hybrid dispatch and combine stripe their chunks ro
 ### Hybrid dispatch
 
 Latency `RANK_MAJOR` EP automatically uses the hybrid algorithm when ranks span CUDA IPC domains. It requires exactly
-two equal, fully IPC-mapped domains, 1 or 4 QPs per peer, `topk <= 8`, and BF16 or `FP8_E4M3_STATIC` dispatch;
-initialization or dispatch fails otherwise. Rank `r` is paired with gateway rank `(r + domainSize) % worldSize` in
+two equal, fully IPC-mapped domains, 1 or 4 QPs per peer, `topk <= 16`, and BF16, `FP8_E4M3_STATIC`, or `MXFP8_E4M3`
+dispatch; initialization or dispatch fails otherwise. Rank `r` is paired with gateway rank `(r + domainSize) % worldSize` in
 the other domain, so every rank both sends to and forwards for exactly one remote peer. `nTokensPerChunk`
 (`n_tokens_per_chunk` in `MoECommunicatorConfig`) sets the tokens per IB chunk (1–128, default eight).
 

@@ -88,8 +88,8 @@ void LatencyRuntimeContext::initialize() {
     if (nTokensPerChunk_ < 1 || nTokensPerChunk_ > 128) {
       EP_THROW("Hybrid EP requires nTokensPerChunk in [1, 128]");
     }
-    if (numTopk_ > 8) {
-      EP_THROW("Hybrid combine requires topk <= 8");
+    if (numTopk_ > MaxNumTopk) {
+      EP_THROW("Hybrid combine requires topk <= 16");
     }
   }
 
@@ -418,7 +418,8 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
                           .emitLocalExpertIds_ = false,
                           .applyRouterWeights_ = request.applyRouterWeights,
                           .inputMode_ = QuantConfig::InputMode::PREQUANTIZED};
-  EP_HOST_ASSERT(numBlocks > 0 && numBlocks <= MaxWorkerBlocks);
+  const int minCombineBlocks = dispatchLayout == DispatchLayout::RANK_MAJOR ? 2 : 1;
+  EP_HOST_ASSERT(numBlocks >= minCombineBlocks && numBlocks <= MaxWorkerBlocks);
 
   const auto allocationLayout = context.storageLayout();
   EP_HOST_ASSERT(allocationLayout.totalBytes_ <= static_cast<size_t>(context.symmetricBufferBytes_));

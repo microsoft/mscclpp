@@ -19,7 +19,7 @@ namespace mscclpp {
 namespace ep {
 
 inline constexpr size_t BufferAlignmentBytes = 128;
-inline constexpr int MaxNumTopk = 8;
+inline constexpr int MaxNumTopk = 16;
 inline constexpr int MaxNumRanks = 128;
 
 inline constexpr int MaxQpsPerPeer = 4;

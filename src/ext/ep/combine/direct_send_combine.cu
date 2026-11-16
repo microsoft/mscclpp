@@ -98,7 +98,7 @@ MSCCLPP_DEVICE_INLINE void sendExpertMajorTokens(const void* expertOutput, const
 }
 
 // Reduce each token's per-expert outputs from combineBuffer with FP32 weighted accumulation.
-template <int Hidden>
+template <int Hidden, int MaxNTopk>
 MSCCLPP_DEVICE_INLINE void reduceExpertMajorTokens(void* output, const int64_t* __restrict__ topkIndices,
                                                    const float* __restrict__ topkWeights, const Workload& workload,
                                                    const void* combineBuffer) {
@@ -113,8 +113,8 @@ MSCCLPP_DEVICE_INLINE void reduceExpertMajorTokens(void* output, const int64_t* 
   auto* outputTokens = static_cast<mscclpp::bf16x8*>(output);
 
   for (int tokenIdx = static_cast<int>(blockIdx.x); tokenIdx < nTokens; tokenIdx += static_cast<int>(gridDim.x)) {
-    int routeExperts[MaxNumTopk];
-    float routeWeights[MaxNumTopk];
+    int routeExperts[MaxNTopk];
+    float routeWeights[MaxNTopk];
     for (int routeIdx = 0; routeIdx < nTopk; ++routeIdx) {
       const int64_t rawExpertIdx = topkIndices[tokenIdx * nTopk + routeIdx];
       routeExperts[routeIdx] = rawExpertIdx >= 0 && rawExpertIdx < nExperts ? static_cast<int>(rawExpertIdx) : -1;
@@ -148,7 +148,7 @@ MSCCLPP_DEVICE_INLINE void reduceExpertMajorTokens(void* output, const int64_t* 
 
 #endif  // MSCCLPP_BULK_AVAILABLE
 
-template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout>
+template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout, int MaxNTopk>
 __global__ __launch_bounds__(CombineNThreads,
                              1) void combineKernel(void* output, const void* expertOutput, const int64_t* topkIndices,
                                                    const float* topkWeights, const int* srcInfo,
@@ -164,7 +164,7 @@ __global__ __launch_bounds__(CombineNThreads,
     if (blockIdx.x == 0) {
       publishRankMajorCombineReady(transport, context->numRanks_, flag, workspace);
     } else {
-      combineRankMajorTokens<Hidden, CombineMode::DIRECT_SEND, DispatchType>(
+      combineRankMajorTokens<Hidden, CombineMode::DIRECT_SEND, DispatchType, MaxNTopk>(
           output, expertOutput, topkIndices, topkWeights, workload, transport, workspace, flag, sharedMemory);
     }
   } else {
@@ -175,15 +175,15 @@ __global__ __launch_bounds__(CombineNThreads,
     exchangeCombineReady(transport, context->numRanks_);
     workspace.combineSyncer_->sync(gridDim.x);
 
-    reduceExpertMajorTokens<Hidden>(output, topkIndices, topkWeights, workload, combineBuffer);
+    reduceExpertMajorTokens<Hidden, MaxNTopk>(output, topkIndices, topkWeights, workload, combineBuffer);
   }
 #endif  // MSCCLPP_BULK_AVAILABLE
 }
 
 struct KernelSelector {
-  template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout>
+  template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout, int MaxNTopk>
   static auto get() {
-    return combineKernel<Hidden, DispatchType, ScaleBlockSize, Layout>;
+    return combineKernel<Hidden, DispatchType, ScaleBlockSize, Layout, MaxNTopk>;
   }
 };
 

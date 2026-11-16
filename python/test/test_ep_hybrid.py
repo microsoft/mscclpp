@@ -865,3 +865,112 @@ def test_latency_hybrid_mxfp8(ep_group, combine_mode, emit_local_expert_ids, hid
                 stream.synchronize()
                 ep_group.barrier()
                 collective_check(lambda sf=scale_factor: check_combine_for(sf))
+
+
+@pytest.mark.parametrize("combine_mode", [CombineMode.RANK_LOCAL_REDUCE, CombineMode.DIRECT_SEND])
+@pytest.mark.parametrize("hidden", [2048, 9216])
+@pytest.mark.parametrize("fmt", ["bf16", "mxfp8", "fp8_static"])
+def test_latency_hybrid_topk_16(ep_group, combine_mode, hidden, fmt):
+    """Hybrid top-k=16 across single-round (H=2048) and two-round (H=9216) combine staging and all formats."""
+    topk, num_tokens, capacity = 16, 9, 16
+    num_experts = NUM_LOCAL_EXPERTS * ep_group.nranks
+    quant = (
+        QuantConfig(format=DispatchDataType.MXFP8_E4M3)
+        if fmt == "mxfp8"
+        else (
+            QuantConfig(
+                format=DispatchDataType.FP8_E4M3_STATIC,
+                scale=0.5,
+                input_mode=QuantConfig.InputMode.QUANTIZE,
+                combine_format=DispatchDataType.FP8_E4M3_STATIC,
+            )
+            if fmt == "fp8_static"
+            else None
+        )
+    )
+
+    def routes_16(source, token):
+        if token == num_tokens - 1:
+            return [-1] * topk
+        base = (source * NUM_LOCAL_EXPERTS + token * 11) % num_experts
+        row = [(base + k * 7) % num_experts for k in range(topk)]
+        if token == 1:
+            row[3] = -1
+            row[14] = -1
+        return row
+
+    with initialized_runtime(
+        ep_group,
+        mode=MoEMode.LATENCY,
+        output_layout=DispatchLayout.RANK_MAJOR,
+        combine_mode=combine_mode,
+        num_experts=num_experts,
+        hidden_size=hidden,
+        topk=topk,
+        max_tokens_per_rank=capacity,
+        quant=quant,
+    ) as runtime:
+        stream = torch.cuda.Stream()
+        with torch.cuda.stream(stream):
+            routes = torch.tensor(
+                [routes_16(ep_group.my_rank, t) for t in range(num_tokens)], dtype=torch.int64, device="cuda"
+            )
+            weights = torch.full((num_tokens, topk), 1.0 / topk, device="cuda")
+            values = ((torch.arange(num_tokens, device="cuda") + ep_group.my_rank * num_tokens) % 15 + 1).float() * topk
+            bf16_input = values[:, None].expand(-1, hidden).to(torch.bfloat16).contiguous()
+            out = torch.empty_like(bf16_input)
+
+            def run_round():
+                result, handle = runtime.dispatch(bf16_input, routes, weights, stream=stream)
+                counts = result.layout.num_tokens_per_rank
+                valid_rows = torch.arange(capacity, device="cuda")[None, :] < counts[:, None]
+                if fmt == "mxfp8":
+                    scales = torch.ldexp(
+                        torch.ones_like(result.quant.block_scales, dtype=torch.float32),
+                        result.quant.block_scales.to(torch.int32) - 127,
+                    )
+                    tokens = result.tokens.float() * scales.repeat_interleave(32, dim=-1)
+                elif fmt == "fp8_static":
+                    tokens = result.tokens.float() / 0.5
+                else:
+                    tokens = result.tokens.float()
+                if combine_mode == CombineMode.DIRECT_SEND:
+                    valid_slots = valid_rows[..., None] & (result.weights != 0)
+                    expert_out = torch.where(valid_slots[..., None], tokens[:, :, None, :], 0)
+                else:
+                    local_weights = torch.where(valid_rows[..., None], result.weights, 0).sum(dim=-1, keepdim=True)
+                    expert_out = torch.where(valid_rows[..., None], tokens * local_weights, 0)
+                if fmt == "fp8_static":
+                    result.combine_input_buffer.copy_((expert_out * 0.5).to(torch.float8_e4m3fn))
+                else:
+                    result.combine_input_buffer.copy_(expert_out.to(torch.bfloat16))
+                return result, runtime.combine(result.combine_input_buffer, handle, out=out, stream=stream)
+
+            result, _ = run_round()
+
+            def check_round():
+                stream.synchronize()
+                assert tuple(result.topk_ids.shape) == (ep_group.nranks, capacity, topk)
+                expected_in = bf16_input.float()
+                expected = expected_in * torch.where(routes >= 0, weights, 0).sum(dim=-1, keepdim=True)
+                torch.testing.assert_close(
+                    out.float(),
+                    expected,
+                    rtol=1e-2 if fmt == "fp8_static" else 0,
+                    atol=2 if fmt == "fp8_static" else 0,
+                )
+
+            collective_check(check_round)
+
+            ep_group.barrier()
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph, stream=stream):
+                run_round()
+            stream.synchronize()
+            ep_group.barrier()
+
+            bf16_input.copy_((values * 0.5)[:, None].expand(-1, hidden).to(torch.bfloat16))
+            graph.replay()
+            stream.synchronize()
+            ep_group.barrier()
+            collective_check(check_round)

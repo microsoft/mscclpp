@@ -56,7 +56,8 @@ MSCCLPP_DEVICE_INLINE void aggregateFinalize(void* output, int tokenIdx, const D
   }
 }
 
-template <CombineMode Mode, int Hidden, DispatchDataType DispatchType, bool Gateway, bool FuseFinal = false>
+template <CombineMode Mode, int Hidden, DispatchDataType DispatchType, int MaxNTopk, bool Gateway,
+          bool FuseFinal = false>
 MSCCLPP_DEVICE_INLINE void aggregateReduceToken(void* destination, const void* expertOutput, const int64_t* topkIndices,
                                                 const float* topkWeights, int tokenIdx, const Workload& workload,
                                                 const DeviceContext* context, const TransportView& transport,
@@ -69,80 +70,113 @@ MSCCLPP_DEVICE_INLINE void aggregateReduceToken(void* destination, const void* e
   constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(ElementType);
   constexpr int NHiddenVectors = Hidden / mscclpp::f32x8::Size;
   constexpr int MaxVectorsPerThread = configCellDiv(NHiddenVectors, CombineNThreads);
-  constexpr size_t TokensBytes = MaxNumTopk * HiddenBytes;
+  constexpr int NPairsPerVector = mscclpp::f32x8::Size / mscclpp::f32x2::Size;
+  constexpr int StageSlots = rankMajorCombineStageSlots<Hidden, DispatchType, MaxNTopk>();
+  constexpr int NumRounds = configCellDiv(MaxNTopk, StageSlots);
+  constexpr size_t TokensBytes = static_cast<size_t>(StageSlots) * HiddenBytes;
   const auto& hybridCtx = context->hybridCtx_;
   const int nTokensPerChunk = hybridCtx.nTokensPerChunk_;
   const int laneIdx = getLaneId();
   const int nTopk = workload.numTopk_;
   const int nLocalExperts = workload.numExperts_ / context->numRanks_;
   const int ownerRank = Gateway ? hybridCtx.gatewayRank_ : context->rank_;
-  auto& sharedControl = *reinterpret_cast<RankMajorCombineSharedControl*>(sharedMemory + TokensBytes);
+  auto& sharedControl = *reinterpret_cast<RankMajorCombineSharedControl<StageSlots>*>(sharedMemory + TokensBytes);
   auto* barriers = sharedControl.barriers;
-  auto* validRoutes = sharedControl.validRoutes;
-  auto* routeWeights = sharedControl.routeWeights;
+
+  int lanePeerIdx = -1;
+  int laneSlotIdx = -1;
+  float laneWeight = 1.0f;
+  uint32_t validRouteMask = 0;
   if (threadIdx.x < WARP_SIZE) {
     int64_t expertIdx = -1;
-    int slotIdx = -1;
-    float weight = 1.0f;
     if (laneIdx < nTopk) {
       if constexpr (Gateway) {
         const auto* cached = hybridCtx.aggregateRoutes_ + static_cast<size_t>(tokenIdx) * 3 * nTopk;
         expertIdx = cached[laneIdx];
-        slotIdx = cached[nTopk + laneIdx];
+        laneSlotIdx = cached[nTopk + laneIdx];
         if (IsDirectSend && workload.applyRouterWeights_) {
-          weight = reinterpret_cast<const float*>(cached + 2 * nTopk)[laneIdx];
+          laneWeight = reinterpret_cast<const float*>(cached + 2 * nTopk)[laneIdx];
         }
       } else {
         expertIdx = topkIndices[tokenIdx * nTopk + laneIdx];
-        slotIdx = workspace.rankMajorSendIndices_[tokenIdx * nTopk + laneIdx];
+        laneSlotIdx = workspace.rankMajorSendIndices_[tokenIdx * nTopk + laneIdx];
         if (IsDirectSend && workload.applyRouterWeights_ && topkWeights != nullptr) {
-          weight = topkWeights[tokenIdx * nTopk + laneIdx];
+          laneWeight = topkWeights[tokenIdx * nTopk + laneIdx];
         }
       }
     }
-    const int peerIdx =
-        expertIdx >= 0 && expertIdx < workload.numExperts_ ? static_cast<int>(expertIdx) / nLocalExperts : -1;
-    const bool leader = isFirstLaneForRank(peerIdx, laneIdx);
-    const bool active = peerIdx >= 0 && (IsDirectSend || leader) && transport.isNvlinkPeer(peerIdx);
-    if (laneIdx < MaxNumTopk) {
-      validRoutes[laneIdx] = active;
-      if constexpr (IsDirectSend) routeWeights[laneIdx] = weight;
-    }
-    bool pending = active;
-    while (__any_sync(0xffffffff, pending)) {
-      if (pending && mscclpp::atomicLoad<uint32_t, mscclpp::scopeDevice>(workspace.combineRankReadyFlags_ + peerIdx,
-                                                                         mscclpp::memoryOrderAcquire) == flag) {
-        EP_DEVICE_ASSERT(slotIdx >= 0 && slotIdx < workload.maxTokensPerRank_);
-        const auto* peerOutput =
-            static_cast<const uint8_t*>(transport.mappedBuffer(const_cast<void*>(expertOutput), peerIdx));
-        const size_t sourceTokenIdx = static_cast<size_t>(ownerRank) * workload.maxTokensPerRank_ + slotIdx;
-        const size_t inputTokenIdx = IsDirectSend ? sourceTokenIdx * nTopk + laneIdx : sourceTokenIdx;
-        barriers[laneIdx].arriveAndExpect(HiddenBytes);
-        mscclpp::bulkLoad(sharedMemory + laneIdx * HiddenBytes, peerOutput + inputTokenIdx * HiddenBytes, HiddenBytes,
-                          barriers[laneIdx]);
-        pending = false;
-      }
-    }
-    if (active) barriers[laneIdx].wait(phase);
-    __syncwarp();
-    if (laneIdx == 0) {
-      mscclpp::bulkFence();
-      if constexpr (Gateway) {
-        atomicAddReleaseDevice(hybridCtx.aggregateChunkLoadDone_ + tokenIdx / nTokensPerChunk, 1);
-      }
+    lanePeerIdx = expertIdx >= 0 && expertIdx < workload.numExperts_ ? static_cast<int>(expertIdx) / nLocalExperts : -1;
+    const bool isLeader = isFirstLaneForRank(lanePeerIdx, laneIdx);
+    const bool active =
+        laneIdx < MaxNTopk && lanePeerIdx >= 0 && (IsDirectSend || isLeader) && transport.isNvlinkPeer(lanePeerIdx);
+    validRouteMask = __ballot_sync(0xffffffff, active);
+  }
+
+  mscclpp::f32x8 tileSum[MaxVectorsPerThread];
+#pragma unroll
+  for (int stepIdx = 0; stepIdx < MaxVectorsPerThread; ++stepIdx) {
+    auto* sumPairs = reinterpret_cast<mscclpp::f32x2*>(&tileSum[stepIdx]);
+#pragma unroll
+    for (int pairIdx = 0; pairIdx < NPairsPerVector; ++pairIdx) {
+      sumPairs[pairIdx].storage = make_float2(0.0f, 0.0f);
     }
   }
-  __syncthreads();
-  if constexpr (FuseFinal) {
-    mscclpp::f32x8 tileSum[MaxVectorsPerThread];
+
+#pragma unroll
+  for (int roundIdx = 0; roundIdx < NumRounds; ++roundIdx) {
+    if (threadIdx.x < WARP_SIZE) {
+      const int routeIdx = roundIdx * StageSlots + laneIdx;
+      const int srcLane = routeIdx < WARP_SIZE ? routeIdx : 0;
+      const bool active = laneIdx < StageSlots && ((validRouteMask >> routeIdx) & 1u) != 0;
+      const int peerIdx = NumRounds == 1 ? lanePeerIdx : __shfl_sync(0xffffffff, lanePeerIdx, srcLane);
+      const int slotIdx = NumRounds == 1 ? laneSlotIdx : __shfl_sync(0xffffffff, laneSlotIdx, srcLane);
+      const float weight = NumRounds == 1 ? laneWeight : __shfl_sync(0xffffffff, laneWeight, srcLane);
+      if (laneIdx < StageSlots) {
+        sharedControl.validRoutes[laneIdx] = active;
+        if constexpr (IsDirectSend) sharedControl.routeWeights[laneIdx] = weight;
+      }
+      bool pending = active;
+      while (__any_sync(0xffffffff, pending)) {
+        if (pending && mscclpp::atomicLoad<uint32_t, mscclpp::scopeDevice>(workspace.combineRankReadyFlags_ + peerIdx,
+                                                                           mscclpp::memoryOrderAcquire) == flag) {
+          EP_DEVICE_ASSERT(slotIdx >= 0 && slotIdx < workload.maxTokensPerRank_);
+          const auto* peerOutput =
+              static_cast<const uint8_t*>(transport.mappedBuffer(const_cast<void*>(expertOutput), peerIdx));
+          const size_t sourceTokenIdx = static_cast<size_t>(ownerRank) * workload.maxTokensPerRank_ + slotIdx;
+          const size_t inputTokenIdx = IsDirectSend ? sourceTokenIdx * nTopk + routeIdx : sourceTokenIdx;
+          barriers[laneIdx].arriveAndExpect(HiddenBytes);
+          mscclpp::bulkLoad(sharedMemory + static_cast<size_t>(laneIdx) * HiddenBytes,
+                            peerOutput + inputTokenIdx * HiddenBytes, HiddenBytes, barriers[laneIdx]);
+          pending = false;
+        }
+      }
+      if (active) barriers[laneIdx].wait(phase);
+      __syncwarp();
+      if (laneIdx == 0) {
+        mscclpp::bulkFence();
+        if constexpr (Gateway) {
+          if (roundIdx == NumRounds - 1) {
+            atomicAddReleaseDevice(hybridCtx.aggregateChunkLoadDone_ + tokenIdx / nTokensPerChunk, 1);
+          }
+        }
+      }
+    }
+    __syncthreads();
+
 #pragma unroll
     for (int stepIdx = 0; stepIdx < MaxVectorsPerThread; ++stepIdx) {
       const int vectorIdx = static_cast<int>(threadIdx.x) + stepIdx * CombineNThreads;
       if (vectorIdx < NHiddenVectors) {
-        tileSum[stepIdx] =
-            reduceRankMajorVector<Mode, Hidden, DispatchType>(vectorIdx, sharedMemory, sharedControl, dequantScale);
+        accumulateRankMajorVector<Mode, Hidden, DispatchType, StageSlots>(tileSum[stepIdx], vectorIdx, sharedMemory,
+                                                                          sharedControl, dequantScale);
       }
     }
+    if constexpr (NumRounds > 1) {
+      if (roundIdx + 1 < NumRounds) __syncthreads();
+    }
+  }
+
+  if constexpr (FuseFinal) {
     // Keep the last token's local sum in registers while finalizing earlier tokens from scratch.
     for (int prevIdx = localWorkerIdx; prevIdx < tokenIdx; prevIdx += nLocalWorkers) {
       aggregateFinalize<Hidden, DispatchType>(destination, prevIdx, context);
@@ -161,13 +195,15 @@ MSCCLPP_DEVICE_INLINE void aggregateReduceToken(void* destination, const void* e
       }
     }
   } else {
-    for (int vectorIdx = threadIdx.x; vectorIdx < NHiddenVectors; vectorIdx += blockDim.x) {
-      const auto sum =
-          reduceRankMajorVector<Mode, Hidden, DispatchType>(vectorIdx, sharedMemory, sharedControl, dequantScale);
-      if constexpr (Gateway && DispatchType == DispatchDataType::FP8_E4M3_STATIC) {
-        reinterpret_cast<mscclpp::bf16x8*>(destination)[vectorIdx] = mscclpp::to<mscclpp::bf16x8>(sum);
-      } else {
-        reinterpret_cast<mscclpp::f32x8*>(destination)[vectorIdx] = sum;
+#pragma unroll
+    for (int stepIdx = 0; stepIdx < MaxVectorsPerThread; ++stepIdx) {
+      const int vectorIdx = static_cast<int>(threadIdx.x) + stepIdx * CombineNThreads;
+      if (vectorIdx < NHiddenVectors) {
+        if constexpr (Gateway && DispatchType == DispatchDataType::FP8_E4M3_STATIC) {
+          reinterpret_cast<mscclpp::bf16x8*>(destination)[vectorIdx] = mscclpp::to<mscclpp::bf16x8>(tileSum[stepIdx]);
+        } else {
+          reinterpret_cast<mscclpp::f32x8*>(destination)[vectorIdx] = tileSum[stepIdx];
+        }
       }
     }
     // The block barrier joins every writer into thread 0's release counter.
@@ -241,7 +277,7 @@ MSCCLPP_DEVICE_INLINE void aggregateControl(const DeviceContext* context, const 
   }
 }
 
-template <CombineMode Mode, int Hidden, DispatchDataType DispatchType>
+template <CombineMode Mode, int Hidden, DispatchDataType DispatchType, int MaxNTopk>
 MSCCLPP_DEVICE_INLINE void aggregateGatewayTokens(const void* expertOutput, const int64_t* topkIndices,
                                                   const float* topkWeights, const Workload& workload,
                                                   const DeviceContext* context, const TransportView& transport,
@@ -279,7 +315,7 @@ MSCCLPP_DEVICE_INLINE void aggregateGatewayTokens(const void* expertOutput, cons
       }
     }
     __syncthreads();
-    aggregateReduceToken<Mode, Hidden, DispatchType, true>(
+    aggregateReduceToken<Mode, Hidden, DispatchType, MaxNTopk, true>(
         sendBase + static_cast<size_t>(tokenIdx) * Hidden, expertOutput, topkIndices, topkWeights, tokenIdx, workload,
         context, transport, workspace, flag, sharedMemory, phase, dequantScale);
   }
@@ -298,7 +334,8 @@ MSCCLPP_DEVICE_INLINE void aggregateGatewayTokens(const void* expertOutput, cons
 
 #endif
 
-template <CombineMode Mode, int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout>
+template <CombineMode Mode, int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout,
+          int MaxNTopk>
 __global__ __launch_bounds__(CombineNThreads,
                              1) void hybridCombineKernel(void* output, const void* expertOutput,
                                                          const int64_t* topkIndices, const float* topkWeights,
@@ -312,9 +349,10 @@ __global__ __launch_bounds__(CombineNThreads,
     const TransportView transport(context);
     const WorkspaceView workspace(context->workspace_, context->numRanks_, workload.numExperts_);
     const uint32_t flag = getDispatchFlag(workspace);
-    constexpr size_t TokensBytes = static_cast<size_t>(MaxNumTopk) * Hidden * sizeof(DispatchElementType<DispatchType>);
+    constexpr int StageSlots = rankMajorCombineStageSlots<Hidden, DispatchType, MaxNTopk>();
+    constexpr size_t TokensBytes = static_cast<size_t>(StageSlots) * Hidden * sizeof(DispatchElementType<DispatchType>);
     const auto& hybridCtx = context->hybridCtx_;
-    auto& sharedControl = *reinterpret_cast<RankMajorCombineSharedControl*>(sharedMemory + TokensBytes);
+    auto& sharedControl = *reinterpret_cast<RankMajorCombineSharedControl<StageSlots>*>(sharedMemory + TokensBytes);
     const float dequantScale = DispatchType == DispatchDataType::FP8_E4M3_STATIC ? 1.0f / workload.combineScale_ : 1.0f;
     uint32_t phase = 0;
 
@@ -322,38 +360,39 @@ __global__ __launch_bounds__(CombineNThreads,
       aggregateControl<Hidden, DispatchType>(context, transport, workspace, flag);
       __syncthreads();
     }
-    if (threadIdx.x < MaxNumTopk) sharedControl.barriers[threadIdx.x].init();
+    if (threadIdx.x < StageSlots) sharedControl.barriers[threadIdx.x].init();
     __syncthreads();
 
     if (blockIdx.x != 0) {
-      aggregateGatewayTokens<Mode, Hidden, DispatchType>(expertOutput, topkIndices, topkWeights, workload, context,
-                                                         transport, workspace, flag, sharedMemory, phase, dequantScale);
+      aggregateGatewayTokens<Mode, Hidden, DispatchType, MaxNTopk>(expertOutput, topkIndices, topkWeights, workload,
+                                                                   context, transport, workspace, flag, sharedMemory,
+                                                                   phase, dequantScale);
     }
 
     const int nLocalWorkers = static_cast<int>(gridDim.x);
     const int localWorkerIdx = blockIdx.x == 0 ? nLocalWorkers - 1 : static_cast<int>(blockIdx.x) - 1;
     for (int tokenIdx = localWorkerIdx; tokenIdx < workload.numTokens_; tokenIdx += nLocalWorkers) {
       if (tokenIdx + nLocalWorkers < workload.numTokens_) {
-        aggregateReduceToken<Mode, Hidden, DispatchType, false, false>(
+        aggregateReduceToken<Mode, Hidden, DispatchType, MaxNTopk, false, false>(
             hybridCtx.aggregateLocalBuffer_ + static_cast<size_t>(tokenIdx) * Hidden, expertOutput, topkIndices,
             topkWeights, tokenIdx, workload, context, transport, workspace, flag, sharedMemory, phase, dequantScale);
       } else {
-        aggregateReduceToken<Mode, Hidden, DispatchType, false, true>(
+        aggregateReduceToken<Mode, Hidden, DispatchType, MaxNTopk, false, true>(
             output, expertOutput, topkIndices, topkWeights, tokenIdx, workload, context, transport, workspace, flag,
             sharedMemory, phase, dequantScale, localWorkerIdx, nLocalWorkers);
       }
     }
     __syncthreads();
-    if (threadIdx.x < MaxNumTopk) sharedControl.barriers[threadIdx.x].invalidate();
+    if (threadIdx.x < StageSlots) sharedControl.barriers[threadIdx.x].invalidate();
   }
 #endif
 }
 
 template <CombineMode Mode>
 struct HybridCombineKernelSelector {
-  template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout>
+  template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout, int MaxNTopk>
   static auto get() {
-    return hybridCombineKernel<Mode, Hidden, DispatchType, ScaleBlockSize, Layout>;
+    return hybridCombineKernel<Mode, Hidden, DispatchType, ScaleBlockSize, Layout, MaxNTopk>;
   }
 };
 

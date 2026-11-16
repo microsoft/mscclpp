@@ -1113,7 +1113,7 @@ class MoERuntimeTest : public CommunicatorTestBase {
 };
 
 TEST(MoERuntimeTest, InitializationAndModeValidation) {
-  for (const int numTopk : {0, 9}) {
+  for (const int numTopk : {0, 17}) {
     ASSERT_TRUE(rejectsEpRequest([&] {
       mscclpp::ep::MoERuntime invalid(*communicator, mscclpp::ep::MoEMode::THROUGHPUT, CorrectnessTokens,
                                       CorrectnessHidden, NumExperts, numTopk, mscclpp::ep::DispatchLayout::TOKEN_MAJOR);
@@ -1339,7 +1339,7 @@ TEST(MoERuntimeTest, ThroughputCorrectness) {
   mscclpp::gpuMemcpy<Bf16>(deviceInput.data(), input.data(), input.size(), cudaMemcpyHostToDevice);
 
   for (const auto layout : {DispatchLayout::TOKEN_MAJOR, DispatchLayout::RANK_MAJOR}) {
-    for (const int numTopk : {1, 2, 3, 4, 5, 8}) {
+    for (const int numTopk : {1, 2, 3, 4, 5, 8, 9, 16}) {
       auto runtime = std::make_unique<MoERuntime>(*communicator, MoEMode::THROUGHPUT, Tokens, Hidden,
                                                   ExpertsPerRank * NumRanks, numTopk, layout);
       runtime->initialize();
@@ -1349,7 +1349,7 @@ TEST(MoERuntimeTest, ThroughputCorrectness) {
       for (int token = 0; token < Tokens; ++token) {
         std::array<bool, NumRanks> selectedRanks{};
         for (int topk = 0; topk < numTopk; ++topk) {
-          int peer = (gEnv->rank + NumRanks - 1 - topk) % NumRanks;
+          int peer = (gEnv->rank + numTopk * NumRanks - 1 - topk) % NumRanks;
           if (token == 1) peer = (gEnv->rank + 3) % NumRanks;
           if (token == 2) peer = (gEnv->rank + topk % 2) % NumRanks;
           const bool valid = token != 3 && (token != 2 || topk % 3 != 0) && (token != 4 || topk == numTopk - 1);
