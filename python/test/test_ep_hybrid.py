@@ -708,3 +708,160 @@ def test_latency_hybrid_static_fp8(
                     combined.float(), expected, rtol=1e-2 if combine_fp8 else 0, atol=1 if combine_fp8 else 0
                 )
             )
+
+
+def _reference_mxfp8_quantize(bf16_input):
+    blocks = bf16_input.float().reshape(bf16_input.shape[0], bf16_input.shape[1] // 32, 32)
+    maximum = blocks.abs().amax(dim=-1)
+    bits = maximum.view(torch.int32)
+    exponent = (bits >> 23) & 0xFF
+    scale = torch.clamp(exponent - 8 + ((bits & 0x7FFFFF) > 0x600000).to(torch.int32), 1, 254)
+    scale = torch.where(maximum == 0, 127, torch.where(exponent == 0xFF, 254, scale)).to(torch.uint8)
+    inv_bits = torch.where(scale == 254, 0x00400000, (254 - scale.to(torch.int32)) << 23).to(torch.int32)
+    inv = inv_bits.view(torch.float32)
+    quantized = (blocks * inv[..., None]).to(torch.float8_e4m3fn).reshape_as(bf16_input)
+    dequantized = quantized.float() * torch.ldexp(
+        torch.ones_like(scale, dtype=torch.float32), scale.to(torch.int32) - 127
+    ).repeat_interleave(32, dim=-1)
+    return quantized, scale, dequantized
+
+
+@pytest.mark.parametrize("combine_mode", [CombineMode.RANK_LOCAL_REDUCE, CombineMode.DIRECT_SEND])
+@pytest.mark.parametrize("emit_local_expert_ids", [False, True])
+@pytest.mark.parametrize("hidden", [2048, 4352])
+def test_latency_hybrid_mxfp8(ep_group, combine_mode, emit_local_expert_ids, hidden):
+    """MXFP8 E4M3 payload + E8M0 block scales across NVLink and RDMA, including non-16B-aligned H=4352 and graphs."""
+    num_tokens, capacity = 9, 16
+    quant = QuantConfig(format=DispatchDataType.MXFP8_E4M3)
+
+    def mxfp8_inputs(source, scale_factor):
+        # First two elements uniquely identify the source token; block 1 is all-zero (E8M0=127); other blocks vary.
+        token_idx = torch.arange(num_tokens, device="cuda", dtype=torch.float32)[:, None]
+        block_idx = torch.arange(hidden // 32, device="cuda", dtype=torch.float32)[None, :]
+        block_scale = torch.where(
+            block_idx == 1, 0.0, torch.ldexp(torch.ones_like(block_idx), (block_idx % 5).int() - 2)
+        )
+        elem_pattern = ((torch.arange(32, device="cuda", dtype=torch.float32) % 7) - 3.0) * 1.5
+        values = ((token_idx + source + 1.0)[..., None] * block_scale[..., None] * elem_pattern).reshape(
+            num_tokens, hidden
+        ) * scale_factor
+        values[:, 0] = token_idx[:, 0] + 1.0
+        values[:, 1] = float(source + 1)
+        return values.to(torch.bfloat16).contiguous()
+
+    with initialized_runtime(
+        ep_group,
+        mode=MoEMode.LATENCY,
+        output_layout=DispatchLayout.RANK_MAJOR,
+        combine_mode=combine_mode,
+        emit_local_expert_ids=emit_local_expert_ids,
+        num_experts=NUM_LOCAL_EXPERTS * ep_group.nranks,
+        hidden_size=hidden,
+        topk=NUM_TOPK,
+        max_tokens_per_rank=capacity,
+        quant=quant,
+    ) as runtime:
+        stream = torch.cuda.Stream()
+        with torch.cuda.stream(stream):
+            routes = torch.tensor(
+                [token_routes(ep_group.my_rank, ep_group.nranks, t, num_tokens) for t in range(num_tokens)],
+                dtype=torch.int64,
+                device="cuda",
+            )
+            weights = torch.full((num_tokens, NUM_TOPK), 1.0 / NUM_TOPK, device="cuda")
+            bf16_input = mxfp8_inputs(ep_group.my_rank, 1.0)
+            out = torch.empty_like(bf16_input)
+
+            def run_round():
+                result, handle = runtime.dispatch(bf16_input, routes, weights, stream=stream)
+                counts = result.layout.num_tokens_per_rank
+                valid_rows = torch.arange(capacity, device="cuda")[None, :] < counts[:, None]
+                scales = torch.ldexp(
+                    torch.ones_like(result.quant.block_scales, dtype=torch.float32),
+                    result.quant.block_scales.to(torch.int32) - 127,
+                )
+                dequant_tokens = result.tokens.float() * scales.repeat_interleave(32, dim=-1)
+                if combine_mode == CombineMode.DIRECT_SEND:
+                    valid_slots = valid_rows[..., None] & (result.weights != 0)
+                    expert_out = torch.where(valid_slots[..., None], dequant_tokens[:, :, None, :], 0)
+                else:
+                    local_weights = torch.where(valid_rows[..., None], result.weights, 0).sum(dim=-1, keepdim=True)
+                    expert_out = torch.where(valid_rows[..., None], dequant_tokens * local_weights, 0)
+                result.combine_input_buffer.copy_(expert_out.to(torch.bfloat16))
+                combined = runtime.combine(result.combine_input_buffer, handle, out=out, stream=stream)
+                return result, combined
+
+            result, combined = run_round()
+
+            def check_dispatch():
+                assert result.tokens.dtype == torch.float8_e4m3fn
+                assert result.combine_input_buffer.dtype == torch.bfloat16
+                assert result.quant.format == DispatchDataType.MXFP8_E4M3
+                assert result.quant.block_scales.dtype == torch.uint8
+                assert result.quant.block_scales.shape == (ep_group.nranks, capacity, hidden // 32)
+                stream.synchronize()
+                _check_dispatch_metadata(ep_group, result, num_tokens)
+                counts = result.layout.num_tokens_per_rank.cpu().tolist()
+                for source in range(ep_group.nranks):
+                    count = counts[source]
+                    if count == 0:
+                        continue
+                    ref_q, ref_s, ref_deq = _reference_mxfp8_quantize(mxfp8_inputs(source, 1.0))
+                    recv_scales = result.quant.block_scales[source, :count]
+                    recv_deq = result.tokens[source, :count].float() * torch.ldexp(
+                        torch.ones_like(recv_scales, dtype=torch.float32), recv_scales.to(torch.int32) - 127
+                    ).repeat_interleave(32, dim=-1)
+                    row_ids = recv_deq[:, 0].round().long() - 1
+                    torch.testing.assert_close(
+                        result.tokens[source, :count].view(torch.uint8),
+                        ref_q[row_ids].view(torch.uint8),
+                        rtol=0,
+                        atol=0,
+                    )
+                    torch.testing.assert_close(recv_scales, ref_s[row_ids], rtol=0, atol=0)
+
+            collective_check(check_dispatch)
+
+            def check_combine_for(scale_factor):
+                _, _, real_input = _reference_mxfp8_quantize(mxfp8_inputs(ep_group.my_rank, scale_factor))
+                valid_routes = routes >= 0
+                peers = torch.div(routes, NUM_LOCAL_EXPERTS, rounding_mode="floor")
+                domain = ep_group.nranks_per_ipc_domain
+                my_domain = ep_group.my_rank // domain
+                local_sum = torch.zeros_like(real_input, dtype=torch.float32)
+                remote_sum = torch.zeros_like(real_input, dtype=torch.float32)
+                for lane in range(NUM_TOPK):
+                    active = valid_routes[:, lane]
+                    peer = peers[:, lane]
+                    if combine_mode == CombineMode.DIRECT_SEND:
+                        staged = torch.where(active[:, None], real_input.to(torch.bfloat16).float(), 0.0)
+                        contrib = staged * weights[:, lane : lane + 1]
+                    else:
+                        for prev in range(lane):
+                            active = active & ~(valid_routes[:, prev] & (peers[:, prev] == peer))
+                        same_peer = valid_routes & (peers == peer[:, None])
+                        rank_weight = torch.where(same_peer, weights, 0.0).sum(dim=-1, keepdim=True)
+                        contrib = torch.where(
+                            active[:, None], (real_input * rank_weight).to(torch.bfloat16).float(), 0.0
+                        )
+                    is_local = (peer // domain) == my_domain
+                    local_sum = local_sum + torch.where(is_local[:, None], contrib, 0.0)
+                    remote_sum = remote_sum + torch.where(~is_local[:, None], contrib, 0.0)
+                expected = (local_sum + remote_sum).to(torch.bfloat16).float()
+                torch.testing.assert_close(out.float(), expected, rtol=0, atol=0)
+
+            collective_check(lambda: check_combine_for(1.0))
+
+            ep_group.barrier()
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph, stream=stream):
+                run_round()
+            stream.synchronize()
+            ep_group.barrier()
+
+            for scale_factor in (0.5, 2.0):
+                bf16_input.copy_(mxfp8_inputs(ep_group.my_rank, scale_factor))
+                graph.replay()
+                stream.synchronize()
+                ep_group.barrier()
+                collective_check(lambda sf=scale_factor: check_combine_for(sf))

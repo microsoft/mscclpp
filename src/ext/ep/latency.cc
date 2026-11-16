@@ -325,20 +325,6 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
   EP_HOST_ASSERT(allocationLayout.totalBytes_ <= static_cast<size_t>(context.symmetricBufferBytes_));
   const size_t workspaceBytes = workspaceSize(context.numRanks_, numExperts, maxTokensPerRank, numTopk);
   EP_HOST_ASSERT(workspaceBytes <= context.workspaceBytes_);
-  if (context.isHybrid_) {
-    if (dispatchDataType != DispatchDataType::BF16 && dispatchDataType != DispatchDataType::FP8_E4M3_STATIC) {
-      EP_THROW("Hybrid latency dispatch supports BF16 and FP8_E4M3_STATIC only");
-    }
-    EP_HOST_ASSERT(output == allocationLayout.dispatchOutputBuffer_);
-    EP_HOST_ASSERT(outputTopkIdx == allocationLayout.rankMajorTopkIdsBuffer_);
-    EP_HOST_ASSERT(outputTopkWeights == allocationLayout.rankMajorTopkWeightsBuffer_);
-    DispatchHandle handle(std::make_shared<const DispatchHandle::Impl>(latencyContext_, context.epoch_, request));
-    hybridDispatch(output, outputTopkIdx, outputTopkWeights, outputCount, input, topkIdx, topkWeights, workload,
-                   allocationLayout.dispatchRecvBuffer_, context.deviceContext_, numBlocks, stream);
-    return handle;
-  }
-
-  void* dispatchRecvBuffer = allocationLayout.dispatchRecvBuffer_;
   if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
     EP_HOST_ASSERT(output == allocationLayout.dispatchOutputBuffer_);
     EP_HOST_ASSERT(outputTopkIdx == allocationLayout.rankMajorTopkIdsBuffer_);
@@ -348,6 +334,18 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
       EP_HOST_ASSERT(reinterpret_cast<uintptr_t>(input) % alignof(mscclpp::bf16x8) == 0);
     }
   }
+  if (context.isHybrid_) {
+    if (dispatchDataType != DispatchDataType::BF16 && dispatchDataType != DispatchDataType::FP8_E4M3_STATIC &&
+        dispatchDataType != DispatchDataType::MXFP8_E4M3) {
+      EP_THROW("Hybrid latency dispatch supports BF16, FP8_E4M3_STATIC, and MXFP8_E4M3 only");
+    }
+    DispatchHandle handle(std::make_shared<const DispatchHandle::Impl>(latencyContext_, context.epoch_, request));
+    hybridDispatch(output, outputScales, outputTopkIdx, outputTopkWeights, outputCount, input, topkIdx, topkWeights,
+                   workload, allocationLayout.dispatchRecvBuffer_, context.deviceContext_, numBlocks, stream);
+    return handle;
+  }
+
+  void* dispatchRecvBuffer = allocationLayout.dispatchRecvBuffer_;
 
   DispatchHandle handle(std::make_shared<const DispatchHandle::Impl>(latencyContext_, context.epoch_, request));
   if (dispatchLayout == DispatchLayout::RANK_MAJOR) {

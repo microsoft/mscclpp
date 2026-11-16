@@ -210,11 +210,17 @@ MSCCLPP_HOST_DEVICE_INLINE size_t dispatchRecvTmaBytes() {
 }
 
 template <int Hidden, DispatchDataType DataType>
-MSCCLPP_HOST_DEVICE_INLINE constexpr size_t hybridDispatchTmaBytes() {
+MSCCLPP_HOST_DEVICE_INLINE constexpr size_t hybridDispatchTileStride() {
   static_assert(Hidden % 128 == 0);
+  constexpr size_t ScaleBytes = DataType == DispatchDataType::MXFP8_E4M3 ? Hidden / 32 : 0;
+  return configAlign<size_t>(static_cast<size_t>(Hidden) * sizeof(DispatchElementType<DataType>) + ScaleBytes,
+                             BufferAlignmentBytes);
+}
+
+template <int Hidden, DispatchDataType DataType>
+MSCCLPP_HOST_DEVICE_INLINE constexpr size_t hybridDispatchTmaBytes() {
   constexpr int NTiles = HybridForwardWarps > HybridMaxProduceGroups ? HybridForwardWarps : HybridMaxProduceGroups;
-  constexpr size_t TileBytes = static_cast<size_t>(Hidden) * sizeof(DispatchElementType<DataType>);
-  return static_cast<size_t>(NTiles) * (TileBytes + sizeof(mscclpp::BulkBarrier));
+  return static_cast<size_t>(NTiles) * (hybridDispatchTileStride<Hidden, DataType>() + sizeof(mscclpp::BulkBarrier));
 }
 
 template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, bool Hybrid = false>

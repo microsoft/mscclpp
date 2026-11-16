@@ -43,6 +43,7 @@ MSCCLPP_HOST_DEVICE_INLINE constexpr dtype_t configAlign(dtype_t a, dtype_t b) {
 // Inter-rack (hybrid) dispatch RDMA payload layout per compact remote token:
 //
 //   [data: ElementType[hidden]]
+//   [optional scales: uint8_t[hidden / 32], padded to 16 bytes for TMA]
 //   [expertIds: int[topk]]
 //   [topkWeights: float[topk]]
 //   [dstSlots: int[topk] (compact token index on each destination rank)]
@@ -53,15 +54,22 @@ struct InterRackDispatchPayload {
   float* topkWeights_;
   int* dstSlots_;
 
-  MSCCLPP_HOST_DEVICE_INLINE static size_t stride(int hidden, int topk, size_t elementBytes = sizeof(uint16_t)) {
-    const size_t dataBytes = static_cast<size_t>(hidden) * elementBytes;
+  MSCCLPP_HOST_DEVICE_INLINE static constexpr size_t payloadBytes(int hidden, size_t elementBytes = sizeof(uint16_t),
+                                                                  size_t scaleBytes = 0) {
+    return configAlign<size_t>(static_cast<size_t>(hidden) * elementBytes + scaleBytes, 16);
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE static constexpr size_t stride(int hidden, int topk,
+                                                            size_t elementBytes = sizeof(uint16_t),
+                                                            size_t scaleBytes = 0) {
     const size_t metadataBytes = static_cast<size_t>(topk) * (sizeof(int) + sizeof(float) + sizeof(int));
-    return configAlign<size_t>(dataBytes + metadataBytes, BufferAlignmentBytes);
+    return configAlign<size_t>(payloadBytes(hidden, elementBytes, scaleBytes) + metadataBytes, BufferAlignmentBytes);
   }
 
   MSCCLPP_HOST_DEVICE_INLINE InterRackDispatchPayload(void* token, int hidden, int topk,
-                                                      size_t elementBytes = sizeof(uint16_t))
-      : expertIds_(reinterpret_cast<int*>(reinterpret_cast<uint8_t*>(token) + hidden * elementBytes)),
+                                                      size_t elementBytes = sizeof(uint16_t), size_t scaleBytes = 0)
+      : expertIds_(
+            reinterpret_cast<int*>(reinterpret_cast<uint8_t*>(token) + payloadBytes(hidden, elementBytes, scaleBytes))),
         topkWeights_(reinterpret_cast<float*>(expertIds_ + topk)),
         dstSlots_(reinterpret_cast<int*>(topkWeights_ + topk)) {}
 };
@@ -291,8 +299,7 @@ struct LatencyStorageLayout {
         static_cast<size_t>(numExperts) * maxTokensPerRank * hidden * sizeof(Bf16);
     const size_t rankLocalReduceCombineRecvBytes =
         static_cast<size_t>(numRanks) * maxTokensPerRank * hidden * sizeof(Bf16);
-    const size_t rankMajorDispatchBufferBytes =
-        rankMajorScalesOffset + (rankMajor && !isHybrid ? rankMajorScalesBytes : 0);
+    const size_t rankMajorDispatchBufferBytes = rankMajorScalesOffset + (rankMajor ? rankMajorScalesBytes : 0);
     const size_t dispatchOutputBytes = rankMajor ? rankMajorDispatchOutputBytes : expertMajorDispatchOutputBytes;
     const size_t dispatchRecvBufferBytes =
         std::max({dispatchBufferBytes, rankMajorDispatchBufferBytes, dispatchOutputBytes});
@@ -318,7 +325,7 @@ struct LatencyStorageLayout {
       dispatchRecvBuffer_ = base;
       rankMajorTopkIdsBuffer_ = base + rankMajorTopkIdsOffset(numRanks, numExperts);
       rankMajorTopkWeightsBuffer_ = base + rankMajorTopkWeightsOffset(numRanks, numExperts, maxTokensPerRank, numTopk);
-      rankMajorScalesBuffer_ = rankMajor && !isHybrid ? base + rankMajorScalesOffset : nullptr;
+      rankMajorScalesBuffer_ = rankMajor ? base + rankMajorScalesOffset : nullptr;
       dispatchOutputBuffer_ = rankMajor ? base + rankMajorTokenOffsetBytes
                                         : base + alignedDispatchRecvBufferBytes + alignedCombineBufferBytes;
       combineBuffer_ = base + alignedDispatchRecvBufferBytes;

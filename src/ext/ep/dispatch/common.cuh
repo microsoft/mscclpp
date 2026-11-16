@@ -234,8 +234,11 @@ inline void dispatchHidden(void* output, void* outputScales, int* outputSrcInfo,
         return dispatchHiddenMode<Hidden, DispatchDataType::FP8_E4M3_STATIC, 0, Layout, KernelSelector, true>(
             output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
             topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
-      case DispatchDataType::FP8_E4M3:
       case DispatchDataType::MXFP8_E4M3:
+        return dispatchHiddenMode<Hidden, DispatchDataType::MXFP8_E4M3, 32, Layout, KernelSelector, true>(
+            output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
+            topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
+      case DispatchDataType::FP8_E4M3:
         break;
     }
     EP_HOST_ASSERT(false && "unsupported hybrid dispatch data type");

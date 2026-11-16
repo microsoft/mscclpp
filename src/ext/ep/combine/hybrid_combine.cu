@@ -363,7 +363,9 @@ void hybridCombine(void* output, const void* input, const int64_t* topkIdx, cons
   EP_HOST_ASSERT(context.hybridCtx_.portChannels_ != nullptr && workload.numTopk_ <= MaxNumTopk);
   EP_HOST_ASSERT(workload.outputLayout_ == DispatchLayout::RANK_MAJOR);
   EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16 ||
-                 workload.dispatchDataType_ == DispatchDataType::FP8_E4M3_STATIC);
+                 workload.dispatchDataType_ == DispatchDataType::FP8_E4M3_STATIC ||
+                 workload.dispatchDataType_ == DispatchDataType::MXFP8_E4M3);
+  EP_HOST_ASSERT(isSupportedCombineDataType(workload.combineDataType_));
   if (combineMode == CombineMode::DIRECT_SEND) {
     combineAlgorithm<CombineMode::DIRECT_SEND, HybridCombineKernelSelector<CombineMode::DIRECT_SEND>, true>(
         output, input, topkIdx, topkWeights, nullptr, nullptr, workload, recvBuffer, dispatchRecvBuffer, context,
