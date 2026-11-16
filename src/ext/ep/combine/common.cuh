@@ -278,8 +278,7 @@ inline void combineHiddenMode(void* output, const void* expertOutput, const int6
                               const float* topkWeights, const int* srcInfo, const int64_t* layoutRange,
                               const Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
                               const DeviceContext& context, int numBlocks, cudaStream_t stream) {
-  static_assert(Hidden == 1024 || Hidden == 2048 || Hidden == 4096 || Hidden == 4352 || Hidden == 5120 ||
-                Hidden == 6656 || Hidden == 7168 || Hidden == 8192 || Hidden == 8704 || Hidden == 9216);
+  static_assert(isSupportedHidden(Hidden));
   const int nExperts = workload.numExperts_;
   const int nRanks = context.numRanks_;
   const int nLocalExperts = nExperts / nRanks;
@@ -432,6 +431,10 @@ inline void combineAlgorithm(void* output, const void* expertOutput, const int64
                                                                context, numBlocks, stream);
     case 5120:
       return combineHidden<Mode, 5120, KernelSelector, Hybrid>(output, expertOutput, topkIndices, topkWeights, srcInfo,
+                                                               layoutRange, workload, recvBuffer, dispatchRecvBuffer,
+                                                               context, numBlocks, stream);
+    case 5376:
+      return combineHidden<Mode, 5376, KernelSelector, Hybrid>(output, expertOutput, topkIndices, topkWeights, srcInfo,
                                                                layoutRange, workload, recvBuffer, dispatchRecvBuffer,
                                                                context, numBlocks, stream);
     case 6656:

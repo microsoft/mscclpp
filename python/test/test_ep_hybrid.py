@@ -868,10 +868,10 @@ def test_latency_hybrid_mxfp8(ep_group, combine_mode, emit_local_expert_ids, hid
 
 
 @pytest.mark.parametrize("combine_mode", [CombineMode.RANK_LOCAL_REDUCE, CombineMode.DIRECT_SEND])
-@pytest.mark.parametrize("hidden", [2048, 9216])
+@pytest.mark.parametrize("hidden", [5376, 9216])
 @pytest.mark.parametrize("fmt", ["bf16", "mxfp8", "fp8_static"])
 def test_latency_hybrid_topk_16(ep_group, combine_mode, hidden, fmt):
-    """Hybrid top-k=16 across single-round (H=2048) and two-round (H=9216) combine staging and all formats."""
+    """Hybrid top-k=16 across single-round (H=5376) and two-round (H=9216) combine staging and all formats."""
     topk, num_tokens, capacity = 16, 9, 16
     num_experts = NUM_LOCAL_EXPERTS * ep_group.nranks
     quant = (

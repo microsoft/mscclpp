@@ -1276,9 +1276,10 @@ def test_latency_rank_major_graph_replay(ep_group, combine_mode, graph_iteration
 
 @pytest.mark.parametrize("layout", [DispatchLayout.EXPERT_MAJOR, DispatchLayout.RANK_MAJOR])
 @pytest.mark.parametrize("combine_mode", [CombineMode.RANK_LOCAL_REDUCE, CombineMode.DIRECT_SEND])
-def test_latency_topk_16_wide_hidden(ep_group, layout, combine_mode):
-    """Top-k=16 with hidden=9216 exercises two-round shared-memory TMA staging in BF16 combine."""
-    topk, hidden_size, num_tokens, capacity = 16, 9216, 5, 8
+@pytest.mark.parametrize("hidden_size", [5376, 9216])
+def test_latency_topk_16_wide_hidden(ep_group, layout, combine_mode, hidden_size):
+    """Top-k=16 across 5376 (single-round) and 9216 (two-round) shared-memory TMA staging in BF16 combine."""
+    topk, num_tokens, capacity = 16, 5, 8
     num_experts = NUM_LOCAL_EXPERTS * ep_group.nranks
 
     def routes_16(source, token):
