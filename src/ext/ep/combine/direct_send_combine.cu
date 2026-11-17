@@ -102,7 +102,7 @@ MSCCLPP_DEVICE_INLINE void reduceExpertMajorTokens(void* output, const int64_t* 
                                                    const float* __restrict__ topkWeights, const Workload& workload,
                                                    const void* combineBuffer) {
   constexpr int NHiddenVectors = Hidden / mscclpp::bf16x8::Size;
-  constexpr int NPairsPerVector = mscclpp::f32x8::Size / mscclpp::f32x2::Size;
+  constexpr int NFp32x2PerVector = mscclpp::f32x8::Size / mscclpp::f32x2::Size;
   const int nTokens = workload.numTokens_;
   const int nTopk = workload.numTopk_;
   const int nExperts = workload.numExperts_;
@@ -123,21 +123,21 @@ MSCCLPP_DEVICE_INLINE void reduceExpertMajorTokens(void* output, const int64_t* 
 #pragma unroll
     for (int vectorIdx = static_cast<int>(threadIdx.x); vectorIdx < NHiddenVectors; vectorIdx += CombineNThreads) {
       mscclpp::f32x8 sum;
-      auto* sumPairs = reinterpret_cast<mscclpp::f32x2*>(&sum);
+      auto* sumFp32x2 = reinterpret_cast<mscclpp::f32x2*>(&sum);
 #pragma unroll
-      for (int pairIdx = 0; pairIdx < NPairsPerVector; ++pairIdx) {
-        sumPairs[pairIdx].storage = make_float2(0.0f, 0.0f);
+      for (int fp32x2Idx = 0; fp32x2Idx < NFp32x2PerVector; ++fp32x2Idx) {
+        sumFp32x2[fp32x2Idx].storage = make_float2(0.0f, 0.0f);
       }
       for (int routeIdx = 0; routeIdx < nTopk; ++routeIdx) {
         const int expertIdx = routeExperts[routeIdx];
         if (expertIdx < 0) continue;
         const size_t expertTokenIdx = static_cast<size_t>(expertIdx) * maxTokensPerRank + tokenIdx;
         const auto values = mscclpp::to<mscclpp::f32x8>(expertTokens[expertTokenIdx * NHiddenVectors + vectorIdx]);
-        const auto* valuePairs = reinterpret_cast<const mscclpp::f32x2*>(&values);
-        const mscclpp::f32x2 weightPair(make_float2(routeWeights[routeIdx], routeWeights[routeIdx]));
+        const auto* valuesFp32x2 = reinterpret_cast<const mscclpp::f32x2*>(&values);
+        const mscclpp::f32x2 weightFp32x2(make_float2(routeWeights[routeIdx], routeWeights[routeIdx]));
 #pragma unroll
-        for (int pairIdx = 0; pairIdx < NPairsPerVector; ++pairIdx) {
-          sumPairs[pairIdx] = mscclpp::fma(valuePairs[pairIdx], weightPair, sumPairs[pairIdx]);
+        for (int fp32x2Idx = 0; fp32x2Idx < NFp32x2PerVector; ++fp32x2Idx) {
+          sumFp32x2[fp32x2Idx] = mscclpp::fma(valuesFp32x2[fp32x2Idx], weightFp32x2, sumFp32x2[fp32x2Idx]);
         }
       }
       outputTokens[static_cast<size_t>(tokenIdx) * NHiddenVectors + vectorIdx] = mscclpp::to<mscclpp::bf16x8>(sum);
