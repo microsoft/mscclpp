@@ -103,11 +103,20 @@ Semaphore::Semaphore(const SemaphoreStub& localStub, const SemaphoreStub& remote
   }
 }
 
-MSCCLPP_API_CPP Connection& Semaphore::connection() { return pimpl_->localStub_.pimpl_->connection_; }
+MSCCLPP_API_CPP Connection& Semaphore::connection() {
+  if (!pimpl_) THROW(CONN, Error, ErrorCode::InvalidUsage, "Semaphore is not initialized");
+  return pimpl_->localStub_.pimpl_->connection_;
+}
 
-MSCCLPP_API_CPP const RegisteredMemory& Semaphore::localMemory() const { return pimpl_->localStub_.memory(); }
+MSCCLPP_API_CPP const RegisteredMemory& Semaphore::localMemory() const {
+  if (!pimpl_) THROW(CONN, Error, ErrorCode::InvalidUsage, "Semaphore is not initialized");
+  return pimpl_->localStub_.memory();
+}
 
-MSCCLPP_API_CPP const RegisteredMemory& Semaphore::remoteMemory() const { return pimpl_->remoteStubMemory_; }
+MSCCLPP_API_CPP const RegisteredMemory& Semaphore::remoteMemory() const {
+  if (!pimpl_) THROW(CONN, Error, ErrorCode::InvalidUsage, "Semaphore is not initialized");
+  return pimpl_->remoteStubMemory_;
+}
 
 static Semaphore buildSemaphoreFromConnection(Communicator& communicator, const Connection& connection) {
   auto semaphoreFuture =
@@ -156,6 +165,7 @@ MSCCLPP_API_CPP void Host2DeviceSemaphore::signal() {
 }
 
 MSCCLPP_API_CPP Host2DeviceSemaphore::DeviceHandle Host2DeviceSemaphore::deviceHandle() const {
+  if (!expectedInboundToken_) THROW(CONN, Error, ErrorCode::InvalidUsage, "Host2DeviceSemaphore was moved from");
   Host2DeviceSemaphore::DeviceHandle device;
   // If inboundToken_ is allocated (signal forwarding mode), the GPU polls it.
   // Otherwise (atomic mode), the GPU polls the SemaphoreStub token directly,
@@ -214,11 +224,13 @@ MSCCLPP_API_CPP void Host2HostSemaphore::wait(int64_t maxSpinCount) {
 }
 
 MSCCLPP_API_CPP MemoryDevice2DeviceSemaphore::MemoryDevice2DeviceSemaphore(const Semaphore& semaphore)
-    : semaphore_(semaphore), expectedInboundToken_(detail::gpuCallocUnique<uint64_t>()) {
+    : semaphore_(semaphore) {
   if (connection().localDevice().type != DeviceType::GPU) {
     THROW(CONN, Error, ErrorCode::InvalidUsage,
           "Local endpoint device type of MemoryDevice2DeviceSemaphore should be GPU");
   }
+  CudaDeviceGuard deviceGuard(connection().localDevice().id);
+  expectedInboundToken_ = detail::gpuCallocUnique<uint64_t>();
 }
 
 MSCCLPP_API_CPP MemoryDevice2DeviceSemaphore::MemoryDevice2DeviceSemaphore(Communicator& communicator,
@@ -228,6 +240,8 @@ MSCCLPP_API_CPP MemoryDevice2DeviceSemaphore::MemoryDevice2DeviceSemaphore(Commu
 MSCCLPP_API_CPP Connection& MemoryDevice2DeviceSemaphore::connection() { return semaphore_.connection(); }
 
 MSCCLPP_API_CPP MemoryDevice2DeviceSemaphore::DeviceHandle MemoryDevice2DeviceSemaphore::deviceHandle() const {
+  if (!expectedInboundToken_)
+    THROW(CONN, Error, ErrorCode::InvalidUsage, "MemoryDevice2DeviceSemaphore was moved from");
   MemoryDevice2DeviceSemaphore::DeviceHandle device;
   device.remoteInboundToken = reinterpret_cast<uint64_t*>(semaphore_.remoteMemory().data());
   device.inboundToken = reinterpret_cast<uint64_t*>(semaphore_.localMemory().data());
@@ -237,6 +251,10 @@ MSCCLPP_API_CPP MemoryDevice2DeviceSemaphore::DeviceHandle MemoryDevice2DeviceSe
 
 MSCCLPP_API_CPP PortDevice2DeviceSemaphore::PortDevice2DeviceSemaphore(const Semaphore& semaphore)
     : semaphore_(semaphore) {
+  if (connection().localDevice().type != DeviceType::GPU) {
+    THROW(CONN, Error, ErrorCode::InvalidUsage,
+          "Local endpoint device type of PortDevice2DeviceSemaphore should be GPU");
+  }
   auto& conn = BaseConnection::getImpl(connection());
   if (!conn->isDeviceBackend()) {
     THROW(CONN, Error, ErrorCode::InvalidUsage,
@@ -257,6 +275,7 @@ MSCCLPP_API_CPP PortDevice2DeviceSemaphore::PortDevice2DeviceSemaphore(Communica
 MSCCLPP_API_CPP Connection& PortDevice2DeviceSemaphore::connection() { return semaphore_.connection(); }
 
 MSCCLPP_API_CPP PortDevice2DeviceSemaphore::DeviceHandle PortDevice2DeviceSemaphore::deviceHandle() const {
+  if (!expectedInboundToken_) THROW(CONN, Error, ErrorCode::InvalidUsage, "PortDevice2DeviceSemaphore was moved from");
   PortDevice2DeviceSemaphore::DeviceHandle device;
   device.inboundToken = reinterpret_cast<uint64_t*>(semaphore_.localMemory().data());
   device.expectedInboundToken = expectedInboundToken_.get();

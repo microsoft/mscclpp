@@ -105,14 +105,14 @@ struct BasePortChannel {
   using SemaphoreType =
       std::conditional_t<Backend == PortChannelBackend::Host, Host2DeviceSemaphore, PortDevice2DeviceSemaphore>;
 
-  SemaphoreId semaphoreId_;
+  SemaphoreId semaphoreId_ = 0;
 
   std::shared_ptr<SemaphoreType> semaphore_;
 
   std::shared_ptr<Proxy> proxy_;
 
  public:
-  /// Constructor.
+  /// Construct an unassigned channel. Handle extraction throws InvalidUsage until assigned.
   BasePortChannel() = default;
 
   /// Constructor.
@@ -161,13 +161,13 @@ BasePortChannel(std::shared_ptr<PortDevice2DeviceSemaphore>) -> BasePortChannel<
 template <PortChannelBackend Backend>
 struct PortChannel : public BasePortChannel<Backend> {
  private:
-  MemoryId dst_;
-  MemoryId src_;
+  MemoryId dst_ = 0;
+  MemoryId src_ = 0;
   RegisteredMemory dstMemory_;
   RegisteredMemory srcMemory_;
 
  public:
-  /// Constructor.
+  /// Construct an unassigned channel. Handle extraction throws InvalidUsage until assigned.
   PortChannel() = default;
 
   /// Constructor.

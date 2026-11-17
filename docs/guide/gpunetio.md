@@ -3,8 +3,8 @@
 By default, `PortChannel` operations over InfiniBand are pushed by GPU threads into a FIFO and posted to the NIC by the
 host proxy thread of a `ProxyService`. With the optional GPUNetIO backend, GPU threads build the RDMA work requests and
 ring the NIC doorbell themselves through [DOCA GPUNetIO](https://github.com/NVIDIA-DOCA/gpunetio) (GDAKI), removing
-the proxy from the data path. The host setup flow and `PortChannel` posting methods are unchanged; kernels provide
-shared-memory WQE scratch as shown below. The backend is selected per endpoint with `EndpointConfig::Ib::Mode::Device`.
+the proxy from the data path. Select the backend per endpoint with `EndpointConfig::Ib::Mode::Device`, then use a
+Device-typed channel owner and GPU handle. Posting methods allocate their shared-memory WQE scratch internally.
 
 ## Build
 
@@ -47,6 +47,22 @@ auto semaphore = std::make_shared<mscclpp::PortDevice2DeviceSemaphore>(*communic
 mscclpp::PortChannel channel(semaphore, remoteMem, localMem);
 auto deviceHandle = channel.deviceHandle();
 ```
+
+`PortChannel<PortChannelBackend::Host>` and `PortChannel<PortChannelBackend::Device>` are distinct owner types.
+Their nested `DeviceHandle` aliases and the generic `mscclpp::deviceHandle(channel)` helper select the matching
+GPU view. `PortChannelDeviceHandle` remains the Host alias. Store Host and Device GPU views in separate typed arrays;
+select the owner and kernel instantiation on the host rather than reinterpreting handle bytes.
+
+Keep the channel and application buffers alive during GPU use. Channel copies share the semaphore owner and its
+expected-signal counter; creating another semaphore creates a separate counter. `MemoryDevice2DeviceSemaphore` and
+`PortDevice2DeviceSemaphore` allocate their counters on the connection's local GPU and restore the caller's current
+GPU afterward. Both require a GPU endpoint.
+
+Default channel owners are unassigned, and handle extraction throws `InvalidUsage` until a valid channel is assigned.
+Host construction rejects null semaphore owners or proxies. Device construction rejects null or moved-from semaphore
+owners and uninitialized or incompatible memory registrations. Extracting a handle from a moved-from semaphore also
+throws `InvalidUsage`. Raw GPU handle fields start at zero, but raw handles still require valid initialization before
+operations; zero-initialization does not make an unassigned handle usable. Host registry ID zero remains valid.
 
 Exclusive-mode operations automatically use internal shared-memory WQE slots for BlueFlame submission when the
 transfer fits `device_.blueFlameLimit` (default: 512 KiB) and the calling thread has a slot:

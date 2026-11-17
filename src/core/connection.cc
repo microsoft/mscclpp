@@ -62,7 +62,12 @@ static bool isSameProcess(const Endpoint& a, const Endpoint& b) {
 
 const Endpoint::Impl& BaseConnection::getImpl(const Endpoint& endpoint) { return *(endpoint.pimpl_); }
 
-const RegisteredMemory::Impl& BaseConnection::getImpl(const RegisteredMemory& memory) { return *(memory.pimpl_); }
+const RegisteredMemory::Impl& BaseConnection::getImpl(const RegisteredMemory& memory) {
+  if (!memory.pimpl_) {
+    THROW(CONN, Error, ErrorCode::InvalidUsage, "RegisteredMemory is not initialized");
+  }
+  return *(memory.pimpl_);
+}
 
 Context::Impl& BaseConnection::getImpl(Context& context) { return *(context.pimpl_); }
 

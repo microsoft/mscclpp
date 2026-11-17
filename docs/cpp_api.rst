@@ -71,6 +71,9 @@ Semaphores
 .. doxygenclass:: mscclpp::MemoryDevice2DeviceSemaphore
    :members:
 
+.. doxygenclass:: mscclpp::PortDevice2DeviceSemaphore
+   :members:
+
 .. doxygenclass:: mscclpp::Semaphore
    :members:
 
@@ -79,6 +82,10 @@ Semaphores
 
 Channels
 ~~~~~~~~
+
+``BasePortChannel<Backend>`` and ``PortChannel<Backend>`` default to the Host backend.
+Their ``DeviceHandle`` aliases and ``mscclpp::deviceHandle(channel)`` preserve the owner's backend type.
+Device owners use ``PortDevice2DeviceSemaphore``; Host owners use ``Host2DeviceSemaphore`` and a proxy.
 
 .. doxygenstruct:: mscclpp::BaseMemoryChannel
    :members:
@@ -230,7 +237,12 @@ Channel Device Interfaces
 .. doxygenstruct:: mscclpp::BaseMemoryChannelDeviceHandle
    :members:
 
-.. doxygenstruct:: mscclpp::BasePortChannelDeviceHandle
+.. doxygentypedef:: mscclpp::BasePortChannelDeviceHandle
+
+.. doxygenstruct:: mscclpp::BasePortChannelDeviceHandleT< PortChannelBackend::Host >
+   :members:
+
+.. doxygenstruct:: mscclpp::BasePortChannelDeviceHandleT< PortChannelBackend::Device >
    :members:
 
 .. doxygenunion:: mscclpp::LL16Packet
@@ -240,7 +252,12 @@ Channel Device Interfaces
 .. doxygenstruct:: mscclpp::MemoryChannelDeviceHandle
    :members:
 
-.. doxygenstruct:: mscclpp::PortChannelDeviceHandle
+.. doxygentypedef:: mscclpp::PortChannelDeviceHandle
+
+.. doxygenstruct:: mscclpp::PortChannelDeviceHandleT< PortChannelBackend::Host >
+   :members:
+
+.. doxygenstruct:: mscclpp::PortChannelDeviceHandleT< PortChannelBackend::Device >
    :members:
 
 .. doxygenstruct:: mscclpp::SwitchChannelDeviceHandle
@@ -259,6 +276,9 @@ Semaphore Device Interfaces
    :members:
 
 .. doxygenstruct:: mscclpp::MemoryDevice2DeviceSemaphoreDeviceHandle
+   :members:
+
+.. doxygenstruct:: mscclpp::PortDevice2DeviceSemaphoreDeviceHandle
    :members:
 
 FIFO Device Interfaces

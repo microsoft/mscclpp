@@ -29,9 +29,15 @@ MSCCLPP_API_CPP BasePortChannel<Backend>::BasePortChannel(SemaphoreId semaphoreI
                                                           std::shared_ptr<Proxy> proxy)
   requires(Backend == PortChannelBackend::Host)
     : semaphoreId_(semaphoreId), semaphore_(std::move(semaphore)), proxy_(std::move(proxy)) {
-  if (semaphore_ && BaseConnection::getImpl(semaphore_->connection())->isDeviceBackend()) {
+  if (!semaphore_) {
+    THROW(CONN, Error, ErrorCode::InvalidUsage, "BasePortChannel requires a non-null Host2DeviceSemaphore");
+  }
+  if (BaseConnection::getImpl(semaphore_->connection())->isDeviceBackend()) {
     THROW(CONN, Error, ErrorCode::InvalidUsage,
           "PortChannel device-mode connections do not use the host proxy; construct PortChannel without ProxyService");
+  }
+  if (!proxy_) {
+    THROW(CONN, Error, ErrorCode::InvalidUsage, "BasePortChannel requires a non-null host proxy");
   }
 }
 
@@ -42,6 +48,7 @@ MSCCLPP_API_CPP BasePortChannel<Backend>::BasePortChannel(std::shared_ptr<PortDe
   if (!semaphore_) {
     THROW(CONN, Error, ErrorCode::InvalidUsage, "BasePortChannel requires a non-null PortDevice2DeviceSemaphore");
   }
+  semaphore_->deviceHandle();  // Reject a moved-from semaphore before retaining a usable-looking channel.
 }
 
 template <PortChannelBackend Backend>
@@ -65,7 +72,9 @@ MSCCLPP_API_CPP PortChannel<Backend>::PortChannel(std::shared_ptr<PortDevice2Dev
       dst_(0),
       src_(0),
       dstMemory_(std::move(dst)),
-      srcMemory_(std::move(src)) {}
+      srcMemory_(std::move(src)) {
+  deviceHandle();  // Resolve and validate both registrations before publishing the channel.
+}
 
 template <PortChannelBackend Backend>
 MSCCLPP_API_CPP PortChannel<Backend>::PortChannel(SemaphoreId semaphoreId, const Semaphore& semaphore,
@@ -258,6 +267,9 @@ MSCCLPP_API_CPP BasePortChannelDeviceHandleT<Backend> BasePortChannel<Backend>::
   } else {
     if (!semaphore_) {
       THROW(CONN, Error, ErrorCode::InvalidUsage, "BasePortChannel::deviceHandle() requires a Host2DeviceSemaphore");
+    }
+    if (!proxy_) {
+      THROW(CONN, Error, ErrorCode::InvalidUsage, "BasePortChannel::deviceHandle() requires a non-null host proxy");
     }
     auto& conn = BaseConnection::getImpl(semaphore_->connection());
     return BasePortChannelDeviceHandleT<Backend>(semaphoreId_, semaphore_->deviceHandle(),
