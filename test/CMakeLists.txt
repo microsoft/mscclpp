@@ -46,6 +46,7 @@ target_link_libraries(test_framework PUBLIC MPI::MPI_CXX)
 
 # Public-header consumer: deliberately do not link mscclpp or inherit USE_IBVERBS.
 add_library(port_channel_api_probe OBJECT port_channel_api_probe.cu)
+target_link_libraries(port_channel_api_probe PRIVATE ${GPU_LIBRARIES})
 target_include_directories(port_channel_api_probe PRIVATE ${PROJECT_SOURCE_DIR}/include ${PROJECT_BINARY_DIR}/include)
 target_include_directories(port_channel_api_probe SYSTEM PRIVATE ${GPU_INCLUDE_DIRS})
 if(TARGET mscclpp_gpunetio_headers)
