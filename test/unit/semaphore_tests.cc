@@ -139,10 +139,11 @@ TEST(SemaphoreValidationTest, MemoryCounterMoveAndOwnership) {
   mscclpp::BaseMemoryChannel channel(owner);
   auto copy = channel;
   owner.reset();
-  channel = {};
+  mscclpp::BaseMemoryChannel empty;
+  channel = empty;
   EXPECT_TRUE(!weak.expired());
   EXPECT_EQ(mscclpp::deviceHandle(copy).semaphore_.expectedInboundToken, expected);
-  copy = {};
+  copy = empty;
   EXPECT_TRUE(weak.expired());
 }
 
