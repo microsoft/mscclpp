@@ -5,8 +5,6 @@
 #define MSCCLPP_GPUNETIO_DEVICE_HPP_
 
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 
 #include "assert_device.hpp"
 #include "device.hpp"
@@ -15,13 +13,7 @@
 #include "atomic_device.hpp"
 #endif
 
-#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS) && (!defined(__CUDA_ARCH__) || __CUDA_ARCH__ >= 900)
-#define MSCCLPP_DETAIL_GPUNETIO_DEVICE_AVAILABLE 1
-#else
-#define MSCCLPP_DETAIL_GPUNETIO_DEVICE_AVAILABLE 0
-#endif
-
-#if MSCCLPP_DETAIL_GPUNETIO_DEVICE_AVAILABLE
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
 #include <doca_gpunetio_device.h>
 
 #include "bulk_device.hpp"
@@ -30,28 +22,11 @@
 namespace mscclpp {
 
 namespace detail {
-#if defined(MSCCLPP_DEVICE_COMPILE) && !MSCCLPP_DETAIL_GPUNETIO_DEVICE_AVAILABLE
-// Unavailable execution must fail in release too; supported operations need no extra validity branch.
-[[noreturn]] MSCCLPP_HOST_DEVICE_INLINE void gpuNetIoUnavailable() {
-#if defined(__CUDA_ARCH__)
-  printf("MSCCL++ Device backend is unavailable for this build or architecture\n");
-  asm volatile("trap;" ::: "memory");
-  for (;;) {
-  }
-#elif defined(__HIP_DEVICE_COMPILE__)
-  __builtin_trap();
-#else
-  std::fprintf(stderr, "MSCCL++ Device backend is unavailable for this build or architecture\n");
-  std::abort();
-#endif
-}
-#endif
-
 struct alignas(16) GpuNetIoWqeSlot {
   uint64_t storage[8];
 };
 
-#if MSCCLPP_DETAIL_GPUNETIO_DEVICE_AVAILABLE && MSCCLPP_BULK_AVAILABLE
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS) && MSCCLPP_BULK_AVAILABLE
 template <uint32_t MaxExclusiveThreadsPerBlock>
 MSCCLPP_DEVICE_INLINE doca_gpu_dev_verbs_wqe* gpuNetIoWqeSlot(uint32_t slotIdx) {
   static_assert(MaxExclusiveThreadsPerBlock > 0 && MaxExclusiveThreadsPerBlock <= 1024);
@@ -102,10 +77,10 @@ struct GpuNetIoDeviceHandle {
                                  [[maybe_unused]] uint64_t srcOffset, [[maybe_unused]] uint64_t size,
                                  [[maybe_unused]] int slotIdx = -1) {
     static_assert(MaxExclusiveThreadsPerBlock <= 1024, "At most 1024 exclusive threads per block are supported");
-#if MSCCLPP_DETAIL_GPUNETIO_DEVICE_AVAILABLE
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
     putImpl<docaConcurrency<Mode>(), MaxExclusiveThreadsPerBlock>(dst, dstOffset, src, srcOffset, size, slotIdx);
 #else
-    gpuNetIoUnavailable();
+    MSCCLPP_ASSERT_DEVICE(false, "GPUNetIO is not enabled");
 #endif
   }
 
@@ -124,7 +99,7 @@ struct GpuNetIoDeviceHandle {
                                         [[maybe_unused]] uint64_t dstOffset, [[maybe_unused]] int64_t value,
                                         [[maybe_unused]] int slotIdx = -1) {
     static_assert(MaxExclusiveThreadsPerBlock <= 1024, "At most 1024 exclusive threads per block are supported");
-#if MSCCLPP_DETAIL_GPUNETIO_DEVICE_AVAILABLE
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
     const uint64_t addr = dst.addr + dstOffset;
     MSCCLPP_ASSERT_DEVICE(addr % sizeof(uint64_t) == 0, "accumulate address must be 8-byte aligned");
     auto* q = static_cast<doca_gpu_dev_verbs_qp*>(qp);
@@ -146,7 +121,7 @@ struct GpuNetIoDeviceHandle {
       submitDb<sharing>(q, index + 1);
     }
 #else
-    gpuNetIoUnavailable();
+    MSCCLPP_ASSERT_DEVICE(false, "GPUNetIO is not enabled");
 #endif
   }
 
@@ -173,7 +148,7 @@ struct GpuNetIoDeviceHandle {
                                                [[maybe_unused]] uint64_t accOffset, [[maybe_unused]] int64_t value,
                                                [[maybe_unused]] int slotIdx = -1) {
     static_assert(MaxExclusiveThreadsPerBlock <= 1024, "At most 1024 exclusive threads per block are supported");
-#if MSCCLPP_DETAIL_GPUNETIO_DEVICE_AVAILABLE
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
     const uint64_t accAddr = acc.addr + accOffset;
     MSCCLPP_ASSERT_DEVICE(accAddr % sizeof(uint64_t) == 0, "putWithAccumulate address must be 8-byte aligned");
     if (size == 0 || size > DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE) {
@@ -195,7 +170,7 @@ struct GpuNetIoDeviceHandle {
       submitPutWithAccumulateDb<sharing>(q, index, dstAddr, dst.key, srcAddr, src.key, size, accAddr, acc.key, value);
     }
 #else
-    gpuNetIoUnavailable();
+    MSCCLPP_ASSERT_DEVICE(false, "GPUNetIO is not enabled");
 #endif
   }
 
@@ -204,7 +179,7 @@ struct GpuNetIoDeviceHandle {
   /// @tparam Mode Caller concurrency scope supplied by the PortChannel device handle.
   template <auto Mode>
   MSCCLPP_DEVICE_INLINE void flush([[maybe_unused]] int64_t maxSpinCount) {
-#if MSCCLPP_DETAIL_GPUNETIO_DEVICE_AVAILABLE
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
     auto* q = static_cast<doca_gpu_dev_verbs_qp*>(qp);
     constexpr auto sharing = docaConcurrency<Mode>();
     const uint64_t ticket = doca_gpu_dev_verbs_atomic_read<uint64_t, sharing>(&q->sq_rsvd_index);
@@ -217,12 +192,12 @@ struct GpuNetIoDeviceHandle {
     }
     MSCCLPP_ASSERT_DEVICE(status == 0, "GPUNetIO completion queue error");
 #else
-    gpuNetIoUnavailable();
+    MSCCLPP_ASSERT_DEVICE(false, "GPUNetIO is not enabled");
 #endif
   }
 
  private:
-#if MSCCLPP_DETAIL_GPUNETIO_DEVICE_AVAILABLE
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
   template <auto Mode>
   MSCCLPP_HOST_DEVICE_INLINE static constexpr doca_gpu_dev_verbs_resource_sharing_mode docaConcurrency() {
     using Concurrency = decltype(Mode);
@@ -399,7 +374,7 @@ struct GpuNetIoDeviceHandle {
     }
 #endif
   }
-#endif  // MSCCLPP_DETAIL_GPUNETIO_DEVICE_AVAILABLE
+#endif  // defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 

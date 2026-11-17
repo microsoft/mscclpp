@@ -19,23 +19,6 @@ cmake -DFETCHCONTENT_SOURCE_DIR_GPUNETIO=/path/to/gpunetio ..
 
 The GPUNetIO license is installed to `share/licenses/mscclpp/gpunetio`.
 
-### Standalone installed-header consumers
-
-Use headers and libraries from the same GPUNetIO-enabled CUDA/InfiniBand installation. Its GPUNetIO vendor headers
-must also be installed. Set `$MSCCLPP_HOME` to that installation and explicitly define `USE_IBVERBS` when compiling
-standalone CUDA code for Device posting. For example:
-
-```bash
-nvcc -std=c++20 -arch=sm_90 -DUSE_IBVERBS -I"$MSCCLPP_HOME/include" app.cu \
-  -L"$MSCCLPP_HOME/lib" -Xlinker=-rpath -Xlinker="$MSCCLPP_HOME/lib" -lmscclpp -o app
-```
-
-`USE_IBVERBS` is a caller-provided implementation-selection flag, not detection of the library's capabilities.
-Do not use it to enable Device posting against a library built with InfiniBand off or without GPUNetIO. The flag
-cannot supply a missing library backend or vendor headers, and it does not enable non-CUDA or pre-`sm_90` execution.
-Without the flag, or on non-CUDA/unsupported-architecture compilation paths, Device posting and flush fail explicitly,
-including release builds; they do not silently succeed or fall back to a host proxy. Host handles remain available.
-
 ## Requirements
 
 - A Hopper or newer NVIDIA GPU and an RDMA NIC with a BlueFlame UAR
@@ -65,21 +48,16 @@ mscclpp::PortChannel channel(semaphore, remoteMem, localMem);
 auto deviceHandle = channel.deviceHandle();
 ```
 
-`PortChannel<PortChannelBackend::Host>` and `PortChannel<PortChannelBackend::Device>` are distinct owner types.
-Their nested `DeviceHandle` aliases and the generic `mscclpp::deviceHandle(channel)` helper select the matching
-GPU view. `PortChannelDeviceHandle` remains the Host alias. Store Host and Device GPU views in separate typed arrays;
-select the owner and kernel instantiation on the host rather than reinterpreting handle bytes.
+Host and Device owners have distinct `DeviceHandle` types; `mscclpp::deviceHandle(channel)` selects the matching
+GPU view. `PortChannelDeviceHandle` remains the Host alias.
 
-Keep the channel and application buffers alive during GPU use. Channel copies share the semaphore owner and its
-expected-signal counter; creating another semaphore creates a separate counter. `MemoryDevice2DeviceSemaphore` and
-`PortDevice2DeviceSemaphore` allocate their counters on the connection's local GPU and restore the caller's current
-GPU afterward. Both require a GPU endpoint.
+Keep the channel and application buffers alive during GPU use. Channel copies share the semaphore owner and counter;
+creating a separate semaphore creates an independent counter.
 
-Default channel owners are unassigned, and handle extraction throws `InvalidUsage` until a valid channel is assigned.
-Host construction rejects null semaphore owners or proxies. Device construction rejects null or moved-from semaphore
-owners and uninitialized or incompatible memory registrations. Extracting a handle from a moved-from semaphore also
-throws `InvalidUsage`. Raw GPU handle fields start at zero, but raw handles still require valid initialization before
-operations; zero-initialization does not make an unassigned handle usable. Host registry ID zero remains valid.
+Default owners are unassigned, and handle extraction throws `InvalidUsage` until a valid channel is assigned.
+Host construction rejects null semaphore owners or proxies. Device construction rejects null or moved-from Port
+semaphore owners and uninitialized or incompatible memory registrations. Port handle extraction also rejects a
+moved-from Port semaphore. Raw GPU handles start at zero but require valid state before use; Host registry ID0 is valid.
 
 Exclusive-mode operations automatically use internal shared-memory WQE slots for BlueFlame submission when the
 transfer fits `device_.blueFlameLimit` (default: 512 KiB) and the calling thread has a slot:

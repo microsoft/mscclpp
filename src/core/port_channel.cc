@@ -262,14 +262,12 @@ MSCCLPP_API_CPP BasePortChannelDeviceHandleT<Backend> BasePortChannel<Backend>::
       THROW(CONN, Error, ErrorCode::InvalidUsage,
             "BasePortChannel::deviceHandle() requires a PortDevice2DeviceSemaphore");
     }
+    const auto semaphoreHandle = semaphore_->deviceHandle();
     auto& conn = BaseConnection::getImpl(semaphore_->connection());
-    return BasePortChannelDeviceHandleT<Backend>(semaphore_->deviceHandle(), conn->getDeviceBackendInfo());
+    return BasePortChannelDeviceHandleT<Backend>(semaphoreHandle, conn->getDeviceBackendInfo());
   } else {
     if (!semaphore_) {
       THROW(CONN, Error, ErrorCode::InvalidUsage, "BasePortChannel::deviceHandle() requires a Host2DeviceSemaphore");
-    }
-    if (!proxy_) {
-      THROW(CONN, Error, ErrorCode::InvalidUsage, "BasePortChannel::deviceHandle() requires a non-null host proxy");
     }
     auto& conn = BaseConnection::getImpl(semaphore_->connection());
     return BasePortChannelDeviceHandleT<Backend>(semaphoreId_, semaphore_->deviceHandle(),

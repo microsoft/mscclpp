@@ -83,10 +83,6 @@ Semaphores
 Channels
 ~~~~~~~~
 
-``BasePortChannel<Backend>`` and ``PortChannel<Backend>`` default to the Host backend.
-Their ``DeviceHandle`` aliases and ``mscclpp::deviceHandle(channel)`` preserve the owner's backend type.
-Device owners use ``PortDevice2DeviceSemaphore``; Host owners use ``Host2DeviceSemaphore`` and a proxy.
-
 .. doxygenstruct:: mscclpp::BaseMemoryChannel
    :members:
 
