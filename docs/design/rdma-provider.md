@@ -1,38 +1,14 @@
-# IB-only RDMA provider foundation
+# RDMA providers
 
-**Status:** IB-only provider foundation under review. Native MRC is a separate PR.
+Internal RDMA providers isolate device resources and metadata from generic
+context, endpoint, and registered-memory code. `Connection` is the I/O abstraction.
 
-## Decision and justification
-
-Keep `Connection` for I/O. Add an internal RDMA provider for **resource creation,
-ownership, serialization, and connection construction**. Replace IB-specific
-framework ownership; do not add a second cache or I/O layer.
-
-Before this PR, provider responsibilities were spread across generic framework code:
-
-| Existing owner/caller | IB-specific responsibility |
-| --- | --- |
-| `Context::Impl` (`src/core/include/context.hpp`) | `IbCtx` cache; `Context::connect()` constructs `IBConnection`. |
-| `Endpoint::Impl` (`src/core/include/endpoint.hpp`) | QP ownership, IB settings and serialized QP metadata. |
-| `RegisteredMemory::Impl` (`src/core/include/registered_memory.hpp`) | MR owning map, borrowed MR views and serialized metadata. |
-
-Adding another provider directly repeats these branches and lifetime rules.
-Extending `Connection` cannot cover independently created endpoints/MRs or
-metadata import without a local NIC.
-
-Previously, `Context` owned the device/PD; endpoints and memory owned QPs/MRs
-without retaining it. Only connections retained `Context`. Local resources now
-explicitly keep their provider alive: a lifetime invariant, not a reproduced
-teardown-failure claim.
-
-## Ownership structure
-
-Each pair is one concrete object; existing NIC primitives remain unchanged.
+## Resources and ownership
 
 | Internal interface / IB implementation | Responsibility |
 | --- | --- |
-| `RdmaProvider` / `IbProvider` | Own `IbCtx`; provide endpoint and memory factories; remain cached per transport. |
-| `RdmaEndpoint` / `IbEndpoint` | Own a local QP or imported metadata; serialize it; construct the existing connection. |
+| `RdmaProvider` / `IbProvider` | Own `IbCtx`; provide endpoint and memory factories; cached per transport by `Context::Impl`. |
+| `RdmaEndpoint` / `IbEndpoint` | Own a local QP or imported metadata; serialize it; construct `IBConnection`. |
 | `RdmaMemory` / `IbMemory` | Own a local MR or imported metadata; serialize it. |
 
 ```{mermaid}
@@ -48,22 +24,30 @@ flowchart LR
     Q -. factory .-> Conn[IBConnection]
 ```
 
-Solid arrows denote ownership. Destroy QPs/MRs before releasing the provider.
-Imported wrappers own metadata only; providers never own wrappers (no cycle).
-User backing buffers remain non-owned.
+Solid arrows denote ownership. Endpoints and registrations can exist without a
+`Connection` and outlive their `Context`, so local wrappers retain their provider.
+QP/MR destruction precedes provider release, keeping the device and PD alive.
+Imported wrappers own metadata only and require no local NIC. Providers do not
+own wrappers, avoiding ownership cycles. User backing buffers are not owned.
+
+## Metadata and dispatch
 
 Registered-memory records contain a transport tag, IPC metadata and an owning
-`RdmaMemory` pointer, with no IB fields or header dependency. Factories bind each
-RDMA transport to its concrete memory type; IB code checks the tag before a
-`static_cast` to `IbMemory`. This adds a pointer dereference, not per-write RTTI
-or a connection/MR cache. Per-record ownership preserves imported duplicate
-transports and their order.
+`RdmaMemory` pointer, with no IB fields or header dependency. Generic serialization
+delegates to the resource's virtual `serialize()` method; the IB implementation
+uses `detail::serialize` on its concrete wire values. The raw-byte helper cannot
+serialize a polymorphic resource or its owning pointer as metadata.
+
+Per-record ownership preserves imported duplicate transports and their order.
+IB imports preserve metadata bytes, including padding, and work in IB-disabled
+builds. Factories bind transports to concrete resource types; IB code checks the
+tag before a `static_cast` to `IbMemory`, without per-write RTTI.
 
 RDMA classification and compatibility live with provider dispatch. Different IB
-device indices remain compatible; future provider families must define their own
-compatibility rather than treating all RDMA transports as interchangeable.
+device indices are compatible; classification as RDMA does not establish
+compatibility across provider families.
 
-**The data path stays unchanged:**
+## Connection data path
 
 ```{mermaid}
 flowchart LR
@@ -74,53 +58,15 @@ flowchart LR
     I --> Q[IbQp]
 ```
 
-Factories and endpoint type checks run during setup. IB operations access typed
-provider-owned MRs directly; preserve existing posting, signaling/forwarding,
-CQ polling and flush behavior.
-Do not add an unused `address()` API, a separate virtual endpoint `connect()`,
-or a new virtual write/flush layer. QP transitions remain in connection construction.
-Interfaces live in `src/core/include/`; concrete IB code stays in `ib.hpp`/`ib.cc`.
+Factories and endpoint type checks run during setup. QP transitions occur during
+connection construction. IB operations access typed provider-owned MRs directly,
+without an additional virtual provider I/O layer. `Connection` implementations
+define posting, signaling/forwarding, CQ polling and flush behavior.
 
-## Why move existing code, and what is actually new?
+Provider resource interfaces cover endpoints, registrations and metadata import
+independently of I/O. Embedding provider-specific fields in generic framework
+classes duplicates ownership and metadata handling; abstracting QP operations
+duplicates the `Connection` boundary.
 
-| Change | Justification and limit |
-| --- | --- |
-| Move `IBConnection` definitions from `connection.cc` to `ib.cc`. | Optional organization: the factory can construct a provider-local class. Separate relocation from ownership changes for review. |
-| Share validators through `BaseConnection`. | IB, CUDA IPC and Ethernet already share them. Inline helpers span both files without duplication or mandatory out-of-line calls. |
-| Replace context, endpoint and MR ownership with the three pairs. | Substantive new code, justified only if it removes direct provider ownership from generic code and supports the next provider. |
-| Add focused tests. | Verify lifetime ordering, metadata and IB behavior without test-only production APIs. |
-
-The first relocation commit changes three C++ files: **381 insertions, 372 removals,
-net nine lines**. IB method bodies and validation logic are unchanged. Those
-numbers describe only relocation, not the ownership migration.
-New wrappers add setup allocations/shared ownership and larger transport records;
-unchanged performance is not established.
-
-## Alternatives
-
-| Alternative | Tradeoff |
-| --- | --- |
-| Keep IB fields and add parallel MRC branches. | Smaller now, but duplicates ownership and metadata handling. Prefer this if the seam cannot remove that duplication. |
-| Use a tagged union or `std::variant`. | Viable, but common code carries provider payloads, destruction and build guards; lifetime still needs solving. |
-| Abstract all QP operations. | Duplicates the existing `Connection` seam and broadens the hot path. Not needed for this PR. |
-
-## Compatibility and review gates
-
-Preserve public headers/APIs, transport selection, IB mode/GID/device resolution,
-queue limits, atomics fallback, signaling, async flush/error behavior, and CUDA
-IPC/Ethernet behavior. Preserve serialized bytes, record ordering and imported
-padding, including IB metadata deserialization in IB-disabled builds. New provider
-dispatch uses `MSCCLPP_USE_IB`, mirrored from the existing CMake option. Existing
-IB implementation guards remain unchanged; `MSCCLPP_USE_MRC` still selects the
-legacy shim in this PR. Introduce no native flags, new environment variables, or
-algorithm changes.
-
-Review relocation, the independently compiling ownership/factory migration, then
-the generic-memory and routing cleanup.
-
-The migration passes standalone endpoint/MR lifetime tests (no connection retaining
-`Context`), exact imported metadata/order roundtrips with IB on/off, and
-IB-enabled/disabled and legacy-shim builds. XDR comparisons against the published
-relocation pass six host pairs (including mixed revisions), GPU/proxy/PortChannel,
-and CUDA IPC cases. This does **not** qualify shim runtime, full
-collectives/performance, or native MRC.
+Interfaces live in `src/core/include/`; concrete IB code is in `ib.hpp`/`ib.cc`.
+`BaseConnection` shares validation helpers across connection implementations.
