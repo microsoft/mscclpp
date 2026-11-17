@@ -141,16 +141,17 @@ next Dispatch, before its header is sent.
 Hybrid runtimes always use gateway aggregation, for both `RANK_LOCAL_REDUCE` and `DIRECT_SEND`. Each gateway
 reduces, in FP32, the local-domain expert outputs for the tokens it forwarded. Inputs are the preweighted BF16 rank
 partials for `RANK_LOCAL_REDUCE` and the per-route outputs, weighted on the fly, for `DIRECT_SEND`. The gateway
-returns compact rows (FP32, or BF16 when the combine input is `FP8_E4M3_STATIC`) in ordered per-QP chunks. Each
-owner reduces its own local-domain contributions in FP32, adds the returned row, and casts to BF16 once.
-**FP32 addition grouping differs** from single-domain combine.
+returns compact rows (FP32 by default, or BF16 when the combine input is `FP8_E4M3_STATIC` or `combineBf16Wire` /
+`combine_bf16_wire` is enabled) in ordered per-QP chunks. Each owner reduces its own local-domain contributions in
+FP32, adds the returned row, and casts to BF16 once. **FP32 addition grouping differs** from single-domain combine.
 
 - **Control block (block 0).** Exchanges start signals with local peers and publishes their ready epochs. One
   posting warp per QP sends chunk `c` once all of its gateway rows are reduced. The block also resets the dispatch
   counters, and its thread 0 waits for and clears `bufferReuseReady`.
-- **Worker blocks.** Reduce the gateway rows first. A row in chunk `c` waits until chunk `c - nQps` is complete,
-  which prioritizes the first chunk on each QP. Workers then wait for all gateway rows, reduce their local tokens,
-  and wait for each token's returned chunk before writing the final BF16 output.
+- **Worker blocks.** Each block splits into two 16-warp groups to overlap TMA loads with FP32 reductions. Gateway
+  tokens run first: chunk `0` launches immediately so QP `0` posts early, and later chunks pace behind one grid wave of
+  completed gateway TMA loads. Once full-wave gateway TMA loads complete, groups reduce their local tokens and write
+  the final BF16 output directly as returned chunks arrive (falling back to local FP32 scratch until arrival).
 
 Combine requires at least `worldSize` blocks. There must be **exactly one fresh Dispatch before every Combine**,
 including CUDA graph replays. No device-side guard enforces this: replaying Combine without a new Dispatch reuses

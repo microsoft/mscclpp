@@ -116,6 +116,12 @@ def parse_args() -> argparse.Namespace:
         help="MSCCL++ latency rank_major combine input format (fp8_e4m3_static requires static FP8 dispatch).",
     )
     p.add_argument(
+        "--combine-bf16-wire",
+        action="store_true",
+        help="MSCCL++ hybrid latency rank_major combine: downcast remote-domain FP32 partial sums to BF16 before IB "
+        "transfer.",
+    )
+    p.add_argument(
         "--fp8-scale",
         type=float,
         default=1.0,
@@ -222,6 +228,9 @@ def parse_args() -> argparse.Namespace:
             )
         if args.dispatch_dtype not in ("fp8_e4m3", "fp8_e4m3_static"):
             raise SystemExit("--combine-dtype fp8_e4m3_static requires static FP8 dispatch")
+    if args.combine_bf16_wire:
+        if args.backend != "mscclpp" or args.mode != "latency" or args.ep_layout != "rank_major":
+            raise SystemExit("--combine-bf16-wire requires --backend mscclpp --mode latency --ep-layout rank_major")
     if not (args.fp8_scale > 0.0 and torch.isfinite(torch.tensor(args.fp8_scale))):
         raise SystemExit("--fp8-scale must be finite and positive")
     return args

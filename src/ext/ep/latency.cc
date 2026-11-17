@@ -22,7 +22,7 @@ namespace ep {
 LatencyRuntimeContext::LatencyRuntimeContext(mscclpp::Communicator& communicator, int rank, int numRanks,
                                              int numRanksPerIpcDomain, int maxTokensPerRank, int hidden, int numExperts,
                                              int numTopk, DispatchLayout outputLayout, CombineMode combineMode,
-                                             int qpsPerPeer, int nTokensPerChunk)
+                                             int qpsPerPeer, int nTokensPerChunk, bool combineBf16Wire)
     : rank_(rank),
       numRanks_(numRanks),
       numRanksPerIpcDomain_(numRanksPerIpcDomain),
@@ -34,6 +34,7 @@ LatencyRuntimeContext::LatencyRuntimeContext(mscclpp::Communicator& communicator
       combineMode_(combineMode),
       qpsPerPeer_(qpsPerPeer),
       nTokensPerChunk_(nTokensPerChunk),
+      combineBf16Wire_(combineBf16Wire),
       symmetricBufferBytes_(0),
       workspaceBytes_(0),
       communicator_(communicator) {
@@ -221,7 +222,8 @@ void LatencyRuntimeContext::initialize() {
         .aggregateRecvBuffer_ = storage.aggregateRecvBuffer_,
         .aggregateControl_ = storage.aggregateControl_,
         .aggregateChunkReady_ = aggregateChunkReady_.get(),
-        .aggregateChunkLoadDone_ = aggregateChunkReady_.get() + maxCombineChunks};
+        .aggregateChunkLoadDone_ = aggregateChunkReady_.get() + maxCombineChunks,
+        .combineBf16Wire_ = combineBf16Wire_};
   }
   deviceContext_.devicePtr_ = static_cast<DeviceContext*>(mscclpp::detail::gpuCalloc(sizeof(DeviceContext)));
   mscclpp::gpuMemcpy<DeviceContext>(deviceContext_.devicePtr_, &deviceContext_, 1, cudaMemcpyHostToDevice);

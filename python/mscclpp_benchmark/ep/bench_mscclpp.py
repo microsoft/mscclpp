@@ -149,8 +149,8 @@ def _expected_rank_major_unit_output(topk_idx, topk_weights, config, rank, ranks
         same_domain = peers[:, lane : lane + 1] // ranks_per_domain == rank // ranks_per_domain
         local += torch.where(active & same_domain, weight, 0)
         remote += torch.where(active & ~same_domain, weight, 0)
-    # FP8-input hybrid combine transports the remote FP32 domain sum as BF16.
-    if fp8_combine:
+    # FP8-input hybrid combine or combine_bf16_wire transports the remote FP32 domain sum as BF16.
+    if fp8_combine or getattr(config, "combine_bf16_wire", False):
         remote = remote.to(torch.bfloat16).float()
     return (local + remote).to(torch.bfloat16).expand(-1, config.hidden_size)
 
@@ -207,6 +207,8 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         hybrid_options["qps_per_peer"] = args.qps_per_peer
     if args.n_tokens_per_chunk is not None:
         hybrid_options["n_tokens_per_chunk"] = args.n_tokens_per_chunk
+    if getattr(args, "combine_bf16_wire", False):
+        hybrid_options["combine_bf16_wire"] = True
     config = ep.MoECommunicatorConfig(
         comm=group,
         num_experts=args.num_experts,
@@ -343,7 +345,7 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
             f"hidden={args.hidden} num_experts={args.num_experts} top_k={args.num_topk} "
             f"num_blocks={moe.num_blocks} dispatch_dtype={args.dispatch_dtype} combine_dtype={args.combine_dtype} "
             f"ipc_domain={group.nranks_per_ipc_domain} qps_per_peer={config.qps_per_peer} "
-            f"n_tokens_per_chunk={config.n_tokens_per_chunk}",
+            f"n_tokens_per_chunk={config.n_tokens_per_chunk} combine_bf16_wire={config.combine_bf16_wire}",
             flush=True,
         )
 

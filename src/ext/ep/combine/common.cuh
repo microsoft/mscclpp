@@ -19,6 +19,11 @@ constexpr int CombineNWarps = 32;
 constexpr int CombineNThreads = CombineNWarps * WARP_SIZE;
 constexpr int CombineNStages = 8;
 constexpr int DirectSendMaxNWorkers = WARP_SIZE;
+constexpr int HybridCombineNWarpGroups = 2;
+constexpr int HybridCombineGroupWarps = CombineNWarps / HybridCombineNWarpGroups;
+constexpr int HybridCombineGroupThreads = HybridCombineGroupWarps * WARP_SIZE;
+constexpr int HybridCombineGroupBarrierBase = 1;
+static_assert(CombineNWarps % HybridCombineNWarpGroups == 0);
 
 MSCCLPP_HOST_DEVICE_INLINE size_t directSendControlBytes(int nLocalExperts) {
   return configAlign<size_t>(static_cast<size_t>(nLocalExperts + 1) * sizeof(int), 128);
@@ -46,10 +51,41 @@ struct RankMajorCombineSharedControl {
   float routeWeights[NSlots];
 };
 
+// Hybrid combine per-warp-group shared-memory control state, placed after each group's compacted stage tiles.
+template <int NSlots>
+struct alignas(16) HybridCombineGroupControl {
+  mscclpp::BulkBarrier barrier;
+  float routeWeights[NSlots];
+  uint64_t finalizedMask;
+  int nRoundRoutes;
+  int nTotalRounds;
+  bool remoteReady;
+};
+
 template <int Hidden, DispatchDataType DispatchType, int NSlots>
 MSCCLPP_HOST_DEVICE_INLINE constexpr size_t rankMajorCombineSharedBytesForSlots() {
   constexpr size_t RowsBytes = static_cast<size_t>(NSlots) * Hidden * sizeof(DispatchElementType<DispatchType>);
   return configAlign<size_t>(RowsBytes + sizeof(RankMajorCombineSharedControl<NSlots>), 128);
+}
+
+template <int Hidden, DispatchDataType DispatchType, int NSlots>
+MSCCLPP_HOST_DEVICE_INLINE constexpr size_t hybridCombineGroupSharedBytesForSlots() {
+  constexpr size_t TokensBytes = static_cast<size_t>(NSlots) * Hidden * sizeof(DispatchElementType<DispatchType>);
+  return configAlign<size_t>(TokensBytes + sizeof(HybridCombineGroupControl<NSlots>), BufferAlignmentBytes);
+}
+
+template <int Hidden, DispatchDataType DispatchType, int MaxNTopk>
+MSCCLPP_HOST_DEVICE_INLINE constexpr int hybridCombineGroupStageSlots() {
+  static_assert(MaxNTopk == 8 || MaxNTopk == MaxNumTopk);
+  constexpr size_t MaxGroupBytes = OptimizedDynamicSharedMemoryBytes / HybridCombineNWarpGroups;
+  int nSlots = MaxNTopk;
+  while (nSlots > 1 &&
+         configAlign<size_t>(static_cast<size_t>(nSlots) * Hidden * sizeof(DispatchElementType<DispatchType>) +
+                                 sizeof(HybridCombineGroupControl<MaxNTopk>),
+                             BufferAlignmentBytes) > MaxGroupBytes) {
+    --nSlots;
+  }
+  return nSlots;
 }
 
 template <int Hidden, DispatchDataType DispatchType, int MaxNTopk>
@@ -63,9 +99,17 @@ MSCCLPP_HOST_DEVICE_INLINE constexpr int rankMajorCombineStageSlots() {
   return 8;
 }
 
-template <int Hidden, CombineMode Mode, DispatchDataType DispatchType, DispatchLayout Layout, int MaxNTopk>
+template <int Hidden, CombineMode Mode, DispatchDataType DispatchType, DispatchLayout Layout, int MaxNTopk,
+          bool Hybrid = false>
 MSCCLPP_HOST_DEVICE_INLINE size_t combineSharedBytes(int nLocalExperts) {
   if constexpr (Layout == DispatchLayout::RANK_MAJOR) {
+    if constexpr (Hybrid) {
+      constexpr int StageSlots = hybridCombineGroupStageSlots<Hidden, DispatchType, MaxNTopk>();
+      constexpr size_t SharedBytes =
+          HybridCombineNWarpGroups * hybridCombineGroupSharedBytesForSlots<Hidden, DispatchType, StageSlots>();
+      static_assert(SharedBytes <= OptimizedDynamicSharedMemoryBytes);
+      return SharedBytes;
+    }
     constexpr int StageSlots = rankMajorCombineStageSlots<Hidden, DispatchType, MaxNTopk>();
     constexpr size_t SharedBytes = rankMajorCombineSharedBytesForSlots<Hidden, DispatchType, StageSlots>();
     static_assert(SharedBytes <= OptimizedDynamicSharedMemoryBytes);
@@ -273,7 +317,7 @@ MSCCLPP_DEVICE_INLINE void combineRankMajorTokens(void* output, const void* expe
 #endif  // MSCCLPP_BULK_AVAILABLE
 
 template <CombineMode Mode, int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout,
-          int MaxNTopk, typename KernelSelector>
+          int MaxNTopk, typename KernelSelector, bool Hybrid = false>
 inline void combineHiddenMode(void* output, const void* expertOutput, const int64_t* topkIndices,
                               const float* topkWeights, const int* srcInfo, const int64_t* layoutRange,
                               const Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
@@ -287,7 +331,7 @@ inline void combineHiddenMode(void* output, const void* expertOutput, const int6
   }
 
   auto combineFunc = KernelSelector::template get<Hidden, DispatchType, ScaleBlockSize, Layout, MaxNTopk>();
-  const size_t sharedBytes = combineSharedBytes<Hidden, Mode, DispatchType, Layout, MaxNTopk>(nLocalExperts);
+  const size_t sharedBytes = combineSharedBytes<Hidden, Mode, DispatchType, Layout, MaxNTopk, Hybrid>(nLocalExperts);
   EP_HOST_ASSERT(Layout != DispatchLayout::RANK_MAJOR || numBlocks > 1);
   static thread_local KernelConfigCache kernelConfig;
   const int residentBlocks = configureKernel(combineFunc, CombineNThreads, sharedBytes, context, kernelConfig);
@@ -300,17 +344,17 @@ inline void combineHiddenMode(void* output, const void* expertOutput, const int6
 }
 
 template <CombineMode Mode, int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout,
-          typename KernelSelector>
+          typename KernelSelector, bool Hybrid = false>
 inline void combineHiddenMode(void* output, const void* expertOutput, const int64_t* topkIndices,
                               const float* topkWeights, const int* srcInfo, const int64_t* layoutRange,
                               const Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
                               const DeviceContext& context, int numBlocks, cudaStream_t stream) {
   if (workload.numTopk_ <= 8) {
-    return combineHiddenMode<Mode, Hidden, DispatchType, ScaleBlockSize, Layout, 8, KernelSelector>(
+    return combineHiddenMode<Mode, Hidden, DispatchType, ScaleBlockSize, Layout, 8, KernelSelector, Hybrid>(
         output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer, dispatchRecvBuffer,
         context, numBlocks, stream);
   }
-  return combineHiddenMode<Mode, Hidden, DispatchType, ScaleBlockSize, Layout, MaxNumTopk, KernelSelector>(
+  return combineHiddenMode<Mode, Hidden, DispatchType, ScaleBlockSize, Layout, MaxNumTopk, KernelSelector, Hybrid>(
       output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer, dispatchRecvBuffer,
       context, numBlocks, stream);
 }
@@ -322,16 +366,17 @@ inline void combineHidden(void* output, const void* expertOutput, const int64_t*
   if (workload.outputLayout_ == DispatchLayout::RANK_MAJOR) {
     switch (workload.combineDataType_) {
       case DispatchDataType::BF16:
-        return combineHiddenMode<Mode, Hidden, DispatchDataType::BF16, 0, DispatchLayout::RANK_MAJOR, KernelSelector>(
-            output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
-            dispatchRecvBuffer, context, numBlocks, stream);
+        return combineHiddenMode<Mode, Hidden, DispatchDataType::BF16, 0, DispatchLayout::RANK_MAJOR, KernelSelector,
+                                 Hybrid>(output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload,
+                                         recvBuffer, dispatchRecvBuffer, context, numBlocks, stream);
       case DispatchDataType::FP8_E4M3:
       case DispatchDataType::MXFP8_E4M3:
         break;
       case DispatchDataType::FP8_E4M3_STATIC:
         return combineHiddenMode<Mode, Hidden, DispatchDataType::FP8_E4M3_STATIC, 0, DispatchLayout::RANK_MAJOR,
-                                 KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange,
-                                                 workload, recvBuffer, dispatchRecvBuffer, context, numBlocks, stream);
+                                 KernelSelector, Hybrid>(output, expertOutput, topkIndices, topkWeights, srcInfo,
+                                                         layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
+                                                         numBlocks, stream);
     }
     EP_HOST_ASSERT(false && "unsupported rank-major combine data type");
   }

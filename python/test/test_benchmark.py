@@ -159,8 +159,21 @@ def test_ep_hybrid_cli_preserves_defaults(monkeypatch):
 
     monkeypatch.setattr(sys, "argv", ["ep-bench", "--backend", "mscclpp"])
     args = parse_args()
-    assert args.qps_per_peer is None and args.n_tokens_per_chunk is None
+    assert args.qps_per_peer is None and args.n_tokens_per_chunk is None and not args.combine_bf16_wire
     assert args.routing == "random" and args.routing_sigma == 0.85
+
+
+def test_ep_combine_bf16_wire_cli(monkeypatch):
+    from mscclpp_benchmark.ep.bench import parse_args
+
+    monkeypatch.setattr(
+        sys, "argv", ["ep-bench", "--backend", "mscclpp", "--ep-layout", "rank_major", "--combine-bf16-wire"]
+    )
+    args = parse_args()
+    assert args.combine_bf16_wire
+    monkeypatch.setattr(sys, "argv", ["ep-bench", "--backend", "nccl", "--combine-bf16-wire"])
+    with pytest.raises(SystemExit, match="--combine-bf16-wire requires"):
+        parse_args()
 
 
 def test_ep_lognormal_cli(monkeypatch):
@@ -389,6 +402,25 @@ def test_ep_fp8_combine_unit_output_rounds_remote_domain(scale, combine_scale, r
     weights = torch.tensor([[2**-8, 1.00390625, 1000, 1000]], dtype=torch.float32)
     actual = _expected_rank_major_unit_output(routes, weights, config, rank, 2)
     assert torch.equal(actual, torch.full((1, 8), expected / combine_scale, dtype=torch.bfloat16))
+
+
+@pytest.mark.parametrize("combine_bf16_wire,expected", [(False, 1.0078125), (True, 1.0)])
+def test_ep_bf16_combine_wire_unit_output_rounds_remote_domain(combine_bf16_wire, expected):
+    import mscclpp.ep as ep
+    from mscclpp_benchmark.ep.bench_mscclpp import _expected_rank_major_unit_output
+
+    config = SimpleNamespace(
+        num_experts=8,
+        num_local_experts=2,
+        hidden_size=8,
+        combine_mode=ep.CombineMode.DIRECT_SEND,
+        quant=None,
+        combine_bf16_wire=combine_bf16_wire,
+    )
+    routes = torch.tensor([[0, 4, -1, 8]])
+    weights = torch.tensor([[2**-8, 1.00390625, 1000, 1000]], dtype=torch.float32)
+    actual = _expected_rank_major_unit_output(routes, weights, config, 0, 2)
+    assert torch.equal(actual, torch.full((1, 8), expected, dtype=torch.bfloat16))
 
 
 @pytest.mark.parametrize(

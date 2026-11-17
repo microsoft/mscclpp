@@ -479,8 +479,9 @@ def test_latency_hybrid_send_distribute(
 
 
 @pytest.mark.parametrize("qps_per_peer", [1, 4])
-def test_latency_hybrid_aggregate_combine_partials(ep_group, qps_per_peer):
-    """FP32 group sums, random BF16 partials, asymmetric tokens, and no intermediate BF16 rounding."""
+@pytest.mark.parametrize("combine_bf16_wire", [False, True])
+def test_latency_hybrid_aggregate_combine_partials(ep_group, qps_per_peer, combine_bf16_wire):
+    """FP32 group sums, random BF16 partials, asymmetric tokens, and optional BF16 wire rounding."""
     domain = ep_group.nranks_per_ipc_domain
     if not (ep_group.nranks == 2 * domain and domain >= 3):
         pytest.skip("Aggregate partial coverage requires two NVLink domains with at least three ranks each")
@@ -532,6 +533,7 @@ def test_latency_hybrid_aggregate_combine_partials(ep_group, qps_per_peer):
         invalid_token_expert_id=invalid_expert,
         qps_per_peer=qps_per_peer,
         n_tokens_per_chunk=8,
+        combine_bf16_wire=combine_bf16_wire,
     ) as runtime:
         stream = torch.cuda.Stream()
         with torch.cuda.stream(stream):
@@ -551,7 +553,13 @@ def test_latency_hybrid_aggregate_combine_partials(ep_group, qps_per_peer):
                 routed = (
                     (routes[:, :, None] >= 0) & (routes[:, :, None] // NUM_LOCAL_EXPERTS == peers[None, None, :])
                 ).any(dim=1)
-                return (expected_partials * routed.T[:, :, None]).sum(dim=0).to(torch.bfloat16).float()
+                masked = expected_partials * routed.T[:, :, None]
+                same_domain = (peers // domain == ep_group.my_rank // domain)[:, None, None]
+                local_sum = torch.where(same_domain, masked, 0.0).sum(dim=0)
+                remote_sum = torch.where(~same_domain, masked, 0.0).sum(dim=0)
+                if combine_bf16_wire:
+                    remote_sum = remote_sum.to(torch.bfloat16).float()
+                return (local_sum + remote_sum).to(torch.bfloat16).float()
 
             def operation():
                 result, handle = runtime.dispatch(input, routes, weights)
@@ -563,9 +571,12 @@ def test_latency_hybrid_aggregate_combine_partials(ep_group, qps_per_peer):
             def check(actual, expected, mode):
                 torch.testing.assert_close(actual.float(), expected, rtol=2**-7, atol=2**-10)
                 if mode == "full":
-                    torch.testing.assert_close(
-                        actual[:, 0].float(), torch.ones(own_tokens, device="cuda"), rtol=0, atol=0
+                    target = (
+                        torch.zeros(own_tokens, device="cuda")
+                        if combine_bf16_wire
+                        else torch.ones(own_tokens, device="cuda")
                     )
+                    torch.testing.assert_close(actual[:, 0].float(), target, rtol=0, atol=0)
 
             for mode in ("full", "local", "empty", "remote", "full"):
                 routes.copy_(routes_for(mode))
@@ -729,7 +740,8 @@ def _reference_mxfp8_quantize(bf16_input):
 @pytest.mark.parametrize("combine_mode", [CombineMode.RANK_LOCAL_REDUCE, CombineMode.DIRECT_SEND])
 @pytest.mark.parametrize("emit_local_expert_ids", [False, True])
 @pytest.mark.parametrize("hidden", [2048, 4352])
-def test_latency_hybrid_mxfp8(ep_group, combine_mode, emit_local_expert_ids, hidden):
+@pytest.mark.parametrize("combine_bf16_wire", [False, True])
+def test_latency_hybrid_mxfp8(ep_group, combine_mode, emit_local_expert_ids, hidden, combine_bf16_wire):
     """MXFP8 E4M3 payload + E8M0 block scales across NVLink and RDMA, including non-16B-aligned H=4352 and graphs."""
     num_tokens, capacity = 9, 16
     quant = QuantConfig(format=DispatchDataType.MXFP8_E4M3)
@@ -760,6 +772,7 @@ def test_latency_hybrid_mxfp8(ep_group, combine_mode, emit_local_expert_ids, hid
         topk=NUM_TOPK,
         max_tokens_per_rank=capacity,
         quant=quant,
+        combine_bf16_wire=combine_bf16_wire,
     ) as runtime:
         stream = torch.cuda.Stream()
         with torch.cuda.stream(stream):
@@ -847,6 +860,8 @@ def test_latency_hybrid_mxfp8(ep_group, combine_mode, emit_local_expert_ids, hid
                     is_local = (peer // domain) == my_domain
                     local_sum = local_sum + torch.where(is_local[:, None], contrib, 0.0)
                     remote_sum = remote_sum + torch.where(~is_local[:, None], contrib, 0.0)
+                if combine_bf16_wire and domain < ep_group.nranks:
+                    remote_sum = remote_sum.to(torch.bfloat16).float()
                 expected = (local_sum + remote_sum).to(torch.bfloat16).float()
                 torch.testing.assert_close(out.float(), expected, rtol=0, atol=0)
 
