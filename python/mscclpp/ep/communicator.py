@@ -61,7 +61,7 @@ class MoECommunicator:
                 combine_mode=self.combine_mode,
                 qps_per_peer=self._config.qps_per_peer,
                 n_tokens_per_chunk=self._config.n_tokens_per_chunk,
-                combine_bf16_wire=self._config.combine_bf16_wire,
+                combine_bf16_partial_sum=self._config.combine_bf16_partial_sum,
             )
         self._request_builder = RequestBuilder(self._config, self._runtime)
 

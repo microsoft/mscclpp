@@ -1793,7 +1793,7 @@ TEST(PortChannelOneToOneTest, PutWithAccumulateIbDeviceMode) {
 }
 
 template <int PayloadElements, bool BlueFlame>
-__global__ void kernelGpuNetIoDeferredSubmission(int* buffer, int rank, int iterations, int* errors) {
+__global__ void kernelGpuNetIoPutWithAccumulatePayload(int* buffer, int rank, int iterations, int* errors) {
   if (threadIdx.x != 0) return;
   constexpr auto Exclusive = Concurrency::Exclusive;
   auto channel = gMultiQpDevicePortChans[0];
@@ -1802,16 +1802,12 @@ __global__ void kernelGpuNetIoDeferredSubmission(int* buffer, int rank, int iter
   constexpr size_t FlagOffset = 2 * PayloadBytes;
   auto* flags = reinterpret_cast<uint64_t*>(reinterpret_cast<uint8_t*>(buffer) + FlagOffset);
   const int peer = 1 - rank;
-  int calls = 0;
   for (int iteration = 1; iteration <= iterations; ++iteration) {
-    channel.device_.putWithAccumulateAfter<Exclusive>(
-        channel.dstMemory_, rank * PayloadBytes, channel.srcMemory_, rank * PayloadBytes, PayloadBytes,
-        channel.dstMemory_, FlagOffset + rank * sizeof(uint64_t), 1, [&] {
-          ++calls;
-          for (int element = 0; element < PayloadElements; ++element) {
-            buffer[rank * PayloadElements + element] = rank * 1000000 + iteration * PayloadElements + element;
-          }
-        });
+    for (int element = 0; element < PayloadElements; ++element) {
+      buffer[rank * PayloadElements + element] = rank * 1000000 + iteration * PayloadElements + element;
+    }
+    channel.putWithAccumulate<Exclusive>(rank * PayloadBytes, rank * PayloadBytes, PayloadBytes,
+                                         FlagOffset + rank * sizeof(uint64_t), 1);
     while (mscclpp::atomicLoad<uint64_t, mscclpp::scopeSystem>(flags + peer, mscclpp::memoryOrderAcquire) <
            static_cast<uint64_t>(iteration)) {
     }
@@ -1820,17 +1816,15 @@ __global__ void kernelGpuNetIoDeferredSubmission(int* buffer, int rank, int iter
         ++*errors;
       }
     }
-    channel.device_.accumulateAfter<Exclusive>(channel.dstMemory_, FlagOffset + (2 + rank) * sizeof(uint64_t), 1,
-                                               [&] { ++calls; });
+    channel.accumulate<Exclusive>(FlagOffset + (2 + rank) * sizeof(uint64_t), 1);
     while (mscclpp::atomicLoad<uint64_t, mscclpp::scopeSystem>(flags + 2 + peer, mscclpp::memoryOrderAcquire) <
            static_cast<uint64_t>(iteration)) {
     }
   }
-  if (calls != 2 * iterations) ++*errors;
   channel.flush<Exclusive>();
 }
 
-void PortChannelOneToOneTest::testDeferredSubmission(bool inlinePayload, bool blueFlame) {
+void PortChannelOneToOneTest::testPutWithAccumulatePayload(bool inlinePayload, bool blueFlame) {
   if (gEnv->rank >= numRanksToUse) return;
   const int elements = inlinePayload ? 4 : 64;
   const int rank = communicator->bootstrap()->getRank();
@@ -1844,10 +1838,10 @@ void PortChannelOneToOneTest::testDeferredSubmission(bool inlinePayload, bool bl
   auto errors = mscclpp::GpuBuffer<int>(1);
   MSCCLPP_CUDATHROW(cudaMemset(errors.memory().get(), 0, sizeof(int)));
   communicator->bootstrap()->barrier();
-  auto kernel =
-      inlinePayload
-          ? (blueFlame ? kernelGpuNetIoDeferredSubmission<4, true> : kernelGpuNetIoDeferredSubmission<4, false>)
-          : (blueFlame ? kernelGpuNetIoDeferredSubmission<64, true> : kernelGpuNetIoDeferredSubmission<64, false>);
+  auto kernel = inlinePayload ? (blueFlame ? kernelGpuNetIoPutWithAccumulatePayload<4, true>
+                                           : kernelGpuNetIoPutWithAccumulatePayload<4, false>)
+                              : (blueFlame ? kernelGpuNetIoPutWithAccumulatePayload<64, true>
+                                           : kernelGpuNetIoPutWithAccumulatePayload<64, false>);
   kernel<<<1, 32>>>(buffers[0].get(), rank, 512, errors.memory().get());
   MSCCLPP_CUDATHROW(cudaGetLastError());
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
@@ -1859,10 +1853,10 @@ void PortChannelOneToOneTest::testDeferredSubmission(bool inlinePayload, bool bl
   for (auto& memory : remoteMems) registeredMemories.push_back(memory);
 }
 
-TEST(PortChannelOneToOneTest, DeferredSubmissionIbDeviceMode) {
+TEST(PortChannelOneToOneTest, PutWithAccumulatePayloadSizesIbDeviceMode) {
   REQUIRE_GPUNETIO;
   for (bool inlinePayload : {true, false}) {
-    for (bool blueFlame : {true, false}) testDeferredSubmission(inlinePayload, blueFlame);
+    for (bool blueFlame : {true, false}) testPutWithAccumulatePayload(inlinePayload, blueFlame);
   }
 }
 

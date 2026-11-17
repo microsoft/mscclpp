@@ -53,7 +53,7 @@ struct HybridDeviceContext {
   /// Private completed-token and TMA-load counters, reset on the caller stream during dispatch.
   int* aggregateChunkReady_ = nullptr;
   int* aggregateChunkLoadDone_ = nullptr;
-  bool combineBf16Wire_ = false;
+  bool combineBf16PartialSum_ = false;
 };
 
 /// Persistent device resources shared by every dispatch and combine algorithm.

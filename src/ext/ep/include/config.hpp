@@ -96,15 +96,15 @@ struct HybridDistributeScratch {
 };
 
 struct alignas(BufferAlignmentBytes) HybridDispatchControl {
-  uint64_t qpSignalCount[MaxQpsPerPeer];
-  uint64_t bufferReuseReady;
+  uint64_t qpSignals[MaxQpsPerPeer];
+  uint64_t recvBufferFree;
   alignas(BufferAlignmentBytes) uint32_t payloadReady[MaxNumRanks];
   InterRackDispatchHeader sendHeader;
   InterRackDispatchHeader recvHeader;
 };
 
 struct alignas(BufferAlignmentBytes) HybridAggregateControl {
-  uint64_t qpSignalCount[MaxQpsPerPeer];
+  uint64_t qpSignals[MaxQpsPerPeer];
 };
 
 using Bf16 = typename mscclpp::bf16x2::ElementType;
