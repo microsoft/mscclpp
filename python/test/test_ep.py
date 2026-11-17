@@ -90,8 +90,16 @@ def test_config_validation_at_construction(ep_group):
         topk=NUM_TOPK,
         max_tokens_per_rank=4,
     )
+    assert replace(config, topk=16).topk == 16
     with pytest.raises(ValueError, match="topk"):
-        replace(config, topk=9)
+        replace(config, topk=17)
+    with pytest.raises(ValueError, match="2 <= combine <= 128"):
+        replace(
+            config,
+            output_layout=DispatchLayout.RANK_MAJOR,
+            invalid_token_expert_id=None,
+            num_blocks=(ep_group.nranks + 2, 1),
+        )
     with pytest.raises(ValueError, match="output_layout"):
         replace(config, output_layout=DispatchLayout.TOKEN_MAJOR)
     for device in (torch.cuda.current_device(), "cuda:0"):
@@ -285,12 +293,12 @@ def test_config_resolution_at_construction(ep_group, mode):
     assert runtime.num_blocks == config.num_blocks
 
 
-def token_routes(rank, world_size, token, num_tokens):
+def token_routes(rank, world_size, token, num_tokens, num_topk=NUM_TOPK):
     if token == num_tokens - 1:
-        return [-1] * NUM_TOPK
+        return [-1] * num_topk
     num_experts = NUM_LOCAL_EXPERTS * world_size
     base = (rank * NUM_LOCAL_EXPERTS + token * 7) % num_experts
-    routes = [(base + topk * 5) % num_experts for topk in range(NUM_TOPK)]
+    routes = [(base + topk * 5) % num_experts for topk in range(num_topk)]
     if token == 1:
         routes[1] = -1
     return routes
@@ -364,6 +372,7 @@ def _run_dispatch_combine_case(
     hidden_size,
     input_mode=QuantConfig.InputMode.PREQUANTIZED,
     combine_format=DispatchDataType.BF16,
+    num_topk=NUM_TOPK,
 ):
     num_tokens, capacity, active_capacity = 5, 8, 6
     num_experts = NUM_LOCAL_EXPERTS * ep_group.nranks
@@ -378,17 +387,20 @@ def _run_dispatch_combine_case(
         combine_mode=combine_mode,
         num_experts=num_experts,
         hidden_size=hidden_size,
-        topk=NUM_TOPK,
+        topk=num_topk,
         max_tokens_per_rank=capacity,
     ) as runtime:
         stream = torch.cuda.Stream()
         with torch.cuda.stream(stream):
             routes = torch.tensor(
-                [token_routes(ep_group.my_rank, ep_group.nranks, token, num_tokens) for token in range(num_tokens)],
+                [
+                    token_routes(ep_group.my_rank, ep_group.nranks, token, num_tokens, num_topk)
+                    for token in range(num_tokens)
+                ],
                 dtype=torch.int64,
                 device="cuda",
             )
-            weights = torch.full((num_tokens, NUM_TOPK), 1.0 / NUM_TOPK, device="cuda")
+            weights = torch.full((num_tokens, num_topk), 1.0 / num_topk, device="cuda")
             output_count = None
             preparation = None
             if prepared:
@@ -406,7 +418,7 @@ def _run_dispatch_combine_case(
 
             values = (
                 (torch.arange(num_tokens, device="cuda") + ep_group.my_rank * num_tokens) % 15 + 1
-            ).float() * NUM_TOPK
+            ).float() * num_topk
             input = values[:, None].expand(-1, hidden_size).to(torch.bfloat16).contiguous()
             static_scale = 0.5 if static_fp8 else None
             quant = QuantConfig(
@@ -513,7 +525,7 @@ def _run_dispatch_combine_case(
 
             if layout == DispatchLayout.EXPERT_MAJOR:
                 if combine_mode == CombineMode.DIRECT_SEND and apply_router_weights is False:
-                    tokens = tokens / NUM_TOPK
+                    tokens = tokens / num_topk
                 expert_output = tokens.to(torch.bfloat16)
             elif mode == MoEMode.LATENCY and combine_mode == CombineMode.DIRECT_SEND:
                 valid_routes = (result.topk_ids >= 0) & (result.topk_ids < num_experts)
@@ -560,18 +572,18 @@ def _run_dispatch_combine_case(
                 rtol=0,
                 atol=1 if quantized or combine_format == DispatchDataType.FP8_E4M3_STATIC else 0,
             )
-            torch.testing.assert_close(weights, torch.full_like(weights, 1.0 / NUM_TOPK), rtol=0, atol=0)
+            torch.testing.assert_close(weights, torch.full_like(weights, 1.0 / num_topk), rtol=0, atol=0)
             if mode == MoEMode.THROUGHPUT:
                 torch.testing.assert_close(result.tokens.view(torch.uint8), dispatched_bytes, rtol=0, atol=0)
             elif static_scale is not None:
                 for source in range(ep_group.nranks):
                     expected_values = []
                     for token in range(num_tokens):
-                        source_routes = token_routes(source, ep_group.nranks, token, num_tokens)
+                        source_routes = token_routes(source, ep_group.nranks, token, num_tokens, num_topk)
                         if any(
                             expert >= 0 and expert // NUM_LOCAL_EXPERTS == ep_group.my_rank for expert in source_routes
                         ):
-                            source_value = ((token + source * num_tokens) % 15 + 1) * NUM_TOPK
+                            source_value = ((token + source * num_tokens) % 15 + 1) * num_topk
                             expected_values.append(source_value * static_scale)
                     expected_rows = (
                         torch.tensor(expected_values, device="cuda")[:, None]
@@ -588,7 +600,7 @@ def _run_dispatch_combine_case(
             for source in range(ep_group.nranks):
                 rank_row = 0
                 for token in range(num_tokens):
-                    all_routes = token_routes(source, ep_group.nranks, token, num_tokens)
+                    all_routes = token_routes(source, ep_group.nranks, token, num_tokens, num_topk)
                     local_routes = [
                         expert
                         for expert in all_routes
@@ -611,20 +623,20 @@ def _run_dispatch_combine_case(
                             [expert % NUM_LOCAL_EXPERTS if expert in local_routes else -1 for expert in all_routes]
                         )
                         expected_recv_weights.append(
-                            [1.0 / NUM_TOPK if expert in local_routes else 0.0 for expert in all_routes]
+                            [1.0 / num_topk if expert in local_routes else 0.0 for expert in all_routes]
                         )
             if counts is not None:
                 assert counts.cpu().tolist() == expected_counts
             if received_rows:
                 rows = torch.tensor(received_rows, device="cuda")
                 torch.testing.assert_close(
-                    result.topk_ids.reshape(-1, NUM_TOPK)[rows],
+                    result.topk_ids.reshape(-1, num_topk)[rows],
                     torch.tensor(expected_ids, dtype=torch.int32, device="cuda"),
                     rtol=0,
                     atol=0,
                 )
                 torch.testing.assert_close(
-                    result.weights.reshape(-1, NUM_TOPK)[rows],
+                    result.weights.reshape(-1, num_topk)[rows],
                     torch.tensor(expected_recv_weights, device="cuda"),
                     rtol=0,
                     atol=0,
@@ -657,6 +669,50 @@ def test_dispatch_combine_correctness(ep_group, apply_router_weights, hidden_siz
                 combine_format=DispatchDataType.FP8_E4M3_STATIC,
             )
             ep_group.barrier()
+
+
+@pytest.mark.nranks(8)
+@pytest.mark.parametrize("hidden_size", [1024, 9216])
+def test_dispatch_combine_topk16(ep_group, hidden_size):
+    for case in CASES:
+        _run_dispatch_combine_case(ep_group, *case, None, hidden_size, num_topk=16)
+        ep_group.barrier()
+        _, _, data_type, _, _ = case
+        if data_type == DispatchDataType.FP8_E4M3_STATIC:
+            _run_dispatch_combine_case(
+                ep_group,
+                *case,
+                None,
+                hidden_size,
+                input_mode=QuantConfig.InputMode.QUANTIZE,
+                combine_format=DispatchDataType.FP8_E4M3_STATIC,
+                num_topk=16,
+            )
+            ep_group.barrier()
+
+
+@pytest.mark.nranks(8)
+@pytest.mark.parametrize("hidden_size", [256, 512, 768, 1280, 1536, 1792, 2560, 5120, 5376])
+def test_latency_hidden_sizes(ep_group, hidden_size):
+    for layout, data_type, combine_mode in (
+        (DispatchLayout.EXPERT_MAJOR, DispatchDataType.BF16, CombineMode.DIRECT_SEND),
+        (DispatchLayout.EXPERT_MAJOR, DispatchDataType.FP8_E4M3, CombineMode.RANK_LOCAL_REDUCE),
+        (DispatchLayout.RANK_MAJOR, DispatchDataType.BF16, CombineMode.DIRECT_SEND),
+        (DispatchLayout.RANK_MAJOR, DispatchDataType.FP8_E4M3_STATIC, CombineMode.RANK_LOCAL_REDUCE),
+        (DispatchLayout.RANK_MAJOR, DispatchDataType.MXFP8_E4M3, CombineMode.DIRECT_SEND),
+    ):
+        _run_dispatch_combine_case(
+            ep_group,
+            MoEMode.LATENCY,
+            layout,
+            data_type,
+            combine_mode,
+            False,
+            None,
+            hidden_size,
+            num_topk=16,
+        )
+        ep_group.barrier()
 
 
 def test_fused_static_fp8_matches_prequantized_payload(ep_group):
