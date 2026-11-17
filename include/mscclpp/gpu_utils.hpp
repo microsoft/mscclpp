@@ -74,6 +74,9 @@ struct CudaStreamWithFlags {
   /// Destructor. This will destroy the stream if it was created.
   ~CudaStreamWithFlags();
 
+  CudaStreamWithFlags(const CudaStreamWithFlags&) = delete;
+  CudaStreamWithFlags& operator=(const CudaStreamWithFlags&) = delete;
+
   /// Set the stream with the specified flags. The current device at the time of the construction will be used. If the
   /// stream was already created, it will raise an error with ErrorCode::InvalidUsage.
   /// @param flags The flags to create the stream with.
@@ -107,6 +110,9 @@ class GpuStream {
  public:
   /// Destructor. This will return the underlying CudaStreamWithFlags to the pool, not destroy it.
   ~GpuStream();
+
+  GpuStream(const GpuStream&) = delete;
+  GpuStream& operator=(const GpuStream&) = delete;
 
   operator cudaStream_t() const { return stream_->stream_; }
 
@@ -348,14 +354,14 @@ template <class T = char>
 class GpuBuffer {
  public:
   /// Constructs a GpuBuffer with the specified number of elements.
-  /// @param nelems Number of elements to allocate. If it is zero, `data()` will return a null pointer.
+  /// @param nelems Number of elements to allocate. If it is zero, `data()` will return a null pointer and
+  /// `deviceId()` will return -1 because no device allocation is associated with the buffer.
   /// @param granularity Granularity used to size the allocation for multicast (NVLS) compatibility. Defaults to
   /// `GpuBufferGranularity::MultiCastMinimum`, which minimizes memory usage. This is ignored when the buffer is not
   /// allocated through the multicast-compatible path.
   GpuBuffer(size_t nelems, [[maybe_unused]] GpuBufferGranularity granularity = GpuBufferGranularity::MultiCastMinimum)
-      : nelems_(nelems) {
+      : nelems_(nelems), bytes_(0), deviceId_(-1) {
     if (nelems == 0) {
-      bytes_ = 0;
       return;
     }
     MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId_));
@@ -397,8 +403,8 @@ class GpuBuffer {
   /// @return A device pointer to the allocated memory.
   T* data() { return memory_.get(); }
 
-  /// Returns the device id of the allocated memory.
-  /// @return The device id.
+  /// Returns the device id of the allocated memory, or -1 if the buffer is empty.
+  /// @return The device id, or -1 if `nelems()` is zero.
   int deviceId() const { return deviceId_; }
 
  private:

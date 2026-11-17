@@ -32,7 +32,7 @@ class AllreduceAllpairPacket : public AlgorithmBuilder {
   const int nSegmentsForScratchBuffer_ = 2;
   const int maxBlockNum_ = 64;
   std::vector<Connection> conns_;
-  std::vector<std::shared_ptr<Device2DeviceSemaphore>> memorySemaphores_;
+  std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores_;
   std::vector<RegisteredMemory> registeredMemories_;
   uintptr_t flagBuffer_;
   size_t flagBufferSize_;

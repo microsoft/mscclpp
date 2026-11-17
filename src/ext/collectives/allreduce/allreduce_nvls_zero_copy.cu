@@ -101,7 +101,7 @@ void AllreduceNvls::initialize(std::shared_ptr<mscclpp::Communicator> comm) {
   nSwitchChannels_ = 32;
   this->conns_ = setupConnections(comm);
   // setup semaphores
-  std::vector<std::shared_ptr<mscclpp::Device2DeviceSemaphore>> memorySemaphores =
+  std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores =
       setupMemorySemaphores(comm, this->conns_, nSwitchChannels_);
   // setup base memory channels
   this->baseChannels_ = setupBaseMemoryChannels(this->conns_, memorySemaphores, nSwitchChannels_);

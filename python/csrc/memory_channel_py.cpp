@@ -13,7 +13,7 @@ using namespace mscclpp;
 void register_memory_channel(nb::module_& m) {
   nb::class_<BaseMemoryChannel>(m, "CppBaseMemoryChannel")
       .def(nb::init<>())
-      .def(nb::init<std::shared_ptr<Device2DeviceSemaphore>>(), nb::arg("semaphore"))
+      .def(nb::init<std::shared_ptr<MemoryDevice2DeviceSemaphore>>(), nb::arg("semaphore"))
       .def(nb::init<const Semaphore&>(), nb::arg("semaphore"))
       .def("device_handle", &BaseMemoryChannel::deviceHandle);
 
@@ -28,8 +28,8 @@ void register_memory_channel(nb::module_& m) {
       .def(nb::init<>())
       .def(
           "__init__",
-          [](MemoryChannel* memoryChannel, std::shared_ptr<Device2DeviceSemaphore> semaphore, RegisteredMemory dst,
-             RegisteredMemory src, uintptr_t packet_buffer) {
+          [](MemoryChannel* memoryChannel, std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore,
+             RegisteredMemory dst, RegisteredMemory src, uintptr_t packet_buffer) {
             new (memoryChannel) MemoryChannel(semaphore, dst, src, reinterpret_cast<void*>(packet_buffer));
           },
           nb::arg("semaphore"), nb::arg("dst"), nb::arg("src"), nb::arg("packet_buffer") = 0)

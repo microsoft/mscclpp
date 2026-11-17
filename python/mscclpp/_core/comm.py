@@ -1,10 +1,9 @@
 # Copyright (c) Microsoft Corporation.
-# Licensed under the MIT license.
+# Licensed under the MIT License.
 
 from __future__ import annotations
-from typing import Type
+from typing import Any
 
-import cupy as cp
 from mscclpp._mscclpp import (
     CppCommunicator,
     CppConnection,
@@ -21,7 +20,7 @@ from mscclpp._mscclpp import (
 )
 import numpy as np
 
-from mscclpp.utils import is_torch_tensor
+from mscclpp.utils import _get_data_ptr, is_torch_tensor
 
 __all__ = ["CommGroup"]
 
@@ -123,7 +122,7 @@ class CommGroup:
         return connections
 
     def register_tensor_with_connections(
-        self, tensor: Type[cp.ndarray] | Type[np.ndarray], connections: dict[int, CppConnection]
+        self, tensor: Any, connections: dict[int, CppConnection]
     ) -> dict[int, CppRegisteredMemory]:
         local_reg_memory = self.register_local_memory(tensor, connections)
         all_registered_memories = {}
@@ -155,9 +154,7 @@ class CommGroup:
             future_semaphores[rank] = self.communicator.build_semaphore(connections[rank], rank)
         return {rank: future.get() for rank, future in future_semaphores.items()}
 
-    def make_memory_channels(
-        self, tensor: cp.ndarray, connections: dict[int, CppConnection]
-    ) -> dict[int, CppMemoryChannel]:
+    def make_memory_channels(self, tensor: Any, connections: dict[int, CppConnection]) -> dict[int, CppMemoryChannel]:
         semaphores = self.make_semaphores(connections)
         registered_memories = self.register_tensor_with_connections(tensor, connections)
         channels = {}
@@ -169,14 +166,14 @@ class CommGroup:
 
     def make_memory_channels_with_scratch(
         self,
-        tensor: cp.ndarray,
+        tensor: Any,
         registeredScratchBuffer: CppRegisteredMemory,
         connections: dict[int, CppConnection],
     ) -> dict[int, CppMemoryChannel]:
         semaphores = self.make_semaphores(connections)
         registered_memories = self._register_memory_with_connections(registeredScratchBuffer, connections)
         channels = {}
-        tensor_data_ptr = tensor.data_ptr() if is_torch_tensor(tensor) else tensor.data.ptr
+        tensor_data_ptr = _get_data_ptr(tensor)
         tensor_size = (
             tensor.numel() * tensor.element_size() if is_torch_tensor(tensor) else tensor.size * tensor.itemsize
         )
@@ -189,7 +186,7 @@ class CommGroup:
         return channels
 
     def make_port_channels(
-        self, proxy_service: CppProxyService, tensor: cp.ndarray, connections: dict[int, CppConnection]
+        self, proxy_service: CppProxyService, tensor: Any, connections: dict[int, CppConnection]
     ) -> dict[int, CppPortChannel]:
         semaphores = self.make_semaphores(connections)
         registered_memories = self.register_tensor_with_connections(tensor, connections)
@@ -207,18 +204,14 @@ class CommGroup:
     def make_port_channels_with_scratch(
         self,
         proxy_service: CppProxyService,
-        tensor: cp.ndarray,
+        tensor: Any,
         registeredScratchBuffer: CppRegisteredMemory,
         connections: dict[int, CppConnection],
     ) -> dict[int, CppPortChannel]:
         transport_flags = CppTransportFlags()
         for rank in connections:
             transport_flags |= connections[rank].transport()
-        data_ptr = (
-            tensor.data.ptr
-            if isinstance(tensor, cp.ndarray)
-            else tensor.data_ptr() if is_torch_tensor(tensor) else tensor.ctypes.data
-        )
+        data_ptr = _get_data_ptr(tensor)
         tensor_size = (
             tensor.numel() * tensor.element_size() if is_torch_tensor(tensor) else tensor.size * tensor.itemsize
         )
@@ -253,7 +246,7 @@ class CommGroup:
         return channels
 
     def register_memory_with_proxy(
-        self, proxy_service: CppProxyService, tensor: cp.ndarray, connections: dict[int, CppConnection]
+        self, proxy_service: CppProxyService, tensor: Any, connections: dict[int, CppConnection]
     ) -> dict[int, int]:
         registered_memories = self.register_tensor_with_connections(tensor, connections)
         memory_ids = {}
@@ -261,15 +254,11 @@ class CommGroup:
             memory_ids[rank] = proxy_service.add_memory(registered_memories[rank])
         return memory_ids
 
-    def register_local_memory(self, tensor: cp.ndarray, connections: dict[int, CppConnection]) -> CppRegisteredMemory:
+    def register_local_memory(self, tensor: Any, connections: dict[int, CppConnection]) -> CppRegisteredMemory:
         transport_flags = CppTransportFlags()
         for rank in connections:
             transport_flags |= connections[rank].transport()
-        data_ptr = (
-            tensor.data.ptr
-            if isinstance(tensor, cp.ndarray)
-            else tensor.data_ptr() if is_torch_tensor(tensor) else tensor.ctypes.data
-        )
+        data_ptr = _get_data_ptr(tensor)
         tensor_size = (
             tensor.numel() * tensor.element_size() if is_torch_tensor(tensor) else tensor.size * tensor.itemsize
         )

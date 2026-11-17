@@ -121,7 +121,7 @@ struct ExecutionContext {
   std::vector<mscclpp::RegisteredMemory> localRegisteredMemories;
 
   std::vector<mscclpp::BaseMemoryChannel> memoryChannels;
-  std::vector<mscclpp::BasePortChannel> portChannels;
+  std::vector<mscclpp::BasePortChannel<>> portChannels;
   std::vector<mscclpp::SwitchChannel> nvlsChannels;
   std::unordered_map<DeviceExecutionPlanKey, std::vector<DeviceExecutionPlan>> deviceExecutionPlans;
   std::unordered_map<DeviceExecutionPlanKey, std::shared_ptr<char>> deviceExecutionPlansBuffers;
@@ -366,7 +366,7 @@ struct Executor::Impl {
     const auto channelTypes = {ChannelType::MEMORY, ChannelType::PORT};
     std::vector<std::shared_future<Semaphore>> futureMemorySemaphores;
     std::vector<std::shared_future<Semaphore>> futureProxySemaphores;
-    std::vector<std::shared_ptr<Device2DeviceSemaphore>> memorySemaphores;
+    std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores;
     std::vector<mscclpp::SemaphoreId> proxySemaphores;
     int connIdx = 0;
     auto processChannelInfos = [&](std::vector<ChannelInfo>& channelInfos) {
@@ -395,7 +395,7 @@ struct Executor::Impl {
     }
 
     for (auto sem : futureMemorySemaphores) {
-      memorySemaphores.push_back(std::make_shared<Device2DeviceSemaphore>(sem.get()));
+      memorySemaphores.push_back(std::make_shared<MemoryDevice2DeviceSemaphore>(sem.get()));
     }
     for (auto sem : futureProxySemaphores) {
       proxySemaphores.push_back(context.proxyService->addSemaphore(sem.get()));

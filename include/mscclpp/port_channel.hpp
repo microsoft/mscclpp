@@ -4,8 +4,6 @@
 #ifndef MSCCLPP_PORT_CHANNEL_HPP_
 #define MSCCLPP_PORT_CHANNEL_HPP_
 
-#include <variant>
-
 #include "core.hpp"
 #include "port_channel_device.hpp"
 #include "proxy.hpp"
@@ -13,7 +11,9 @@
 
 namespace mscclpp {
 
+template <PortChannelBackend Backend = PortChannelBackend::Host>
 struct BasePortChannel;
+template <PortChannelBackend Backend = PortChannelBackend::Host>
 struct PortChannel;
 
 /// Base class for proxy services. Proxy services are used to proxy data between devices.
@@ -68,14 +68,14 @@ class ProxyService : public BaseProxyService {
   /// Get a base port channel by semaphore ID.
   /// @param id The ID of the semaphore.
   /// @return The base port channel.
-  BasePortChannel basePortChannel(SemaphoreId id);
+  BasePortChannel<> basePortChannel(SemaphoreId id);
 
   /// Get a port channel by semaphore ID and memory regions.
   /// @param id The ID of the semaphore.
   /// @param dst The destination memory region.
   /// @param src The source memory region.
   /// @return The port channel.
-  PortChannel portChannel(SemaphoreId id, MemoryId dst, MemoryId src);
+  PortChannel<> portChannel(SemaphoreId id, MemoryId dst, MemoryId src);
 
   /// Start the proxy service.
   /// @param blocking Whether to block until the proxy thread has started (default: false).
@@ -99,44 +99,43 @@ class ProxyService : public BaseProxyService {
 };
 
 /// Port channel without specifying source/destination memory regions.
+template <PortChannelBackend Backend>
 struct BasePortChannel {
- private:
+ protected:
+  using SemaphoreType =
+      std::conditional_t<Backend == PortChannelBackend::Host, Host2DeviceSemaphore, PortDevice2DeviceSemaphore>;
+
   SemaphoreId semaphoreId_;
-  std::variant<std::shared_ptr<Host2DeviceSemaphore>, std::shared_ptr<Device2DeviceSemaphore>> semaphore_;
+
+  std::shared_ptr<SemaphoreType> semaphore_;
+
   std::shared_ptr<Proxy> proxy_;
 
-  friend struct PortChannel;
-
  public:
-  /// Constructor. Handle extraction throws InvalidUsage until a channel is assigned.
-  BasePortChannel() noexcept : semaphoreId_(0) {}
+  /// Constructor.
+  BasePortChannel() = default;
 
-  /// Constructor for a host-proxy channel.
-  /// @param semaphoreId The ID of the semaphore.
-  /// @param semaphore The non-null semaphore used to synchronize the communication.
-  /// @param proxy The non-null proxy used for communication.
-  /// @throws Error with ErrorCode::InvalidUsage for null state or a device-mode connection.
-  BasePortChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore,
-                  std::shared_ptr<Proxy> proxy);
-
-  /// Constructor for a channel in device mode (PortChannelBackend::Device).
-  /// @param semaphore The non-null semaphore of a PortChannel device-mode connection.
-  /// @throws Error with ErrorCode::InvalidUsage for a null semaphore, non-device-mode connection, or invalid remote
-  /// token.
-  explicit BasePortChannel(std::shared_ptr<Device2DeviceSemaphore> semaphore);
-
-  /// Construct a Device channel from a raw semaphore, without a proxy.
-  /// Creates an internal owner; channel copies share its expected counter.
-  /// @throws Error with ErrorCode::InvalidUsage unless the connection is in Device mode.
-  explicit BasePortChannel(const Semaphore& semaphore);
-
-  /// Constructor for a host-proxy channel.
+  /// Constructor.
   /// @param semaphoreId The ID of the semaphore.
   /// @param semaphore The semaphore used to synchronize the communication.
-  /// @param proxy The non-null proxy used for communication.
-  BasePortChannel(SemaphoreId semaphoreId, const Semaphore& semaphore, std::shared_ptr<Proxy> proxy);
+  /// @param proxy The proxy used for communication.
+  BasePortChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore,
+                  std::shared_ptr<Proxy> proxy)
+    requires(Backend == PortChannelBackend::Host);
 
-  /// Copy constructor. Shares the semaphore and proxy ownership.
+  /// Constructor for a channel in device mode (PortChannelBackend::Device).
+  /// @param semaphore The semaphore of a PortChannel device-mode connection.
+  explicit BasePortChannel(std::shared_ptr<PortDevice2DeviceSemaphore> semaphore)
+    requires(Backend == PortChannelBackend::Device);
+
+  /// Constructor.
+  /// @param semaphoreId The ID of the semaphore.
+  /// @param semaphore The semaphore used to synchronize the communication.
+  /// @param proxy The proxy used for communication.
+  BasePortChannel(SemaphoreId semaphoreId, const Semaphore& semaphore, std::shared_ptr<Proxy> proxy)
+    requires(Backend == PortChannelBackend::Host);
+
+  /// Copy constructor.
   /// @param other The other BasePortChannel to copy from.
   BasePortChannel(const BasePortChannel& other) = default;
 
@@ -144,20 +143,23 @@ struct BasePortChannel {
   /// @param other The other BasePortChannel to assign from.
   BasePortChannel& operator=(const BasePortChannel& other) = default;
 
-  /// Host-proxy device view, retained for the generic deviceHandle helper.
-  using DeviceHandle = BasePortChannelDeviceHandle;
+  /// Device-side handle for BasePortChannel.
+  using DeviceHandle = BasePortChannelDeviceHandleT<Backend>;
 
-  /// Returns a Host-proxy view, valid while this channel remains alive.
-  /// @throws Error with ErrorCode::InvalidUsage for uninitialized or Device-mode state.
+  /// Returns the device-side handle.
+  /// User should make sure the BasePortChannel is not released when using the returned handle.
+  /// @return The device-side handle.
   DeviceHandle deviceHandle() const;
-
-  /// Returns a direct GPU-posting view, valid while this channel remains alive.
-  /// @throws Error with ErrorCode::InvalidUsage for uninitialized or Host-mode state.
-  BasePortChannelDeviceHandleT<PortChannelBackend::Device> deviceBackendHandle() const;
 };
 
+BasePortChannel(SemaphoreId, std::shared_ptr<Host2DeviceSemaphore>,
+                std::shared_ptr<Proxy>) -> BasePortChannel<PortChannelBackend::Host>;
+BasePortChannel(SemaphoreId, const Semaphore&, std::shared_ptr<Proxy>) -> BasePortChannel<PortChannelBackend::Host>;
+BasePortChannel(std::shared_ptr<PortDevice2DeviceSemaphore>) -> BasePortChannel<PortChannelBackend::Device>;
+
 /// Port channel.
-struct PortChannel : public BasePortChannel {
+template <PortChannelBackend Backend>
+struct PortChannel : public BasePortChannel<Backend> {
  private:
   MemoryId dst_;
   MemoryId src_;
@@ -165,38 +167,37 @@ struct PortChannel : public BasePortChannel {
   RegisteredMemory srcMemory_;
 
  public:
-  /// Constructor. Handle extraction throws InvalidUsage until a channel is assigned.
-  PortChannel() noexcept : dst_(0), src_(0) {}
+  /// Constructor.
+  PortChannel() = default;
 
-  /// Constructor for a host-proxy channel.
+  /// Constructor.
   /// @param semaphoreId The ID of the semaphore.
-  /// @param semaphore The non-null semaphore.
-  /// @param proxy The non-null proxy.
+  /// @param semaphore The semaphore.
+  /// @param proxy The proxy.
   /// @param dst The destination memory region.
   /// @param src The source memory region.
   PortChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore, std::shared_ptr<Proxy> proxy,
-              MemoryId dst, MemoryId src);
+              MemoryId dst, MemoryId src)
+    requires(Backend == PortChannelBackend::Host);
 
   /// Constructor for a channel in device mode (PortChannelBackend::Device).
-  /// @param semaphore The non-null semaphore of a PortChannel device-mode connection.
+  /// @param semaphore The semaphore of a PortChannel device-mode connection.
   /// @param dst The destination registered memory.
   /// @param src The source registered memory.
-  PortChannel(std::shared_ptr<Device2DeviceSemaphore> semaphore, RegisteredMemory dst, RegisteredMemory src);
+  PortChannel(std::shared_ptr<PortDevice2DeviceSemaphore> semaphore, RegisteredMemory dst, RegisteredMemory src)
+    requires(Backend == PortChannelBackend::Device);
 
-  /// Construct a bound Device channel from the raw semaphore and registered regions, without a proxy.
-  /// Registered memory retains metadata, not ownership of application buffers.
-  PortChannel(const Semaphore& semaphore, RegisteredMemory dst, RegisteredMemory src);
-
-  /// Constructor for a host-proxy channel.
+  /// Constructor.
   /// @param semaphoreId The ID of the semaphore.
   /// @param semaphore The semaphore.
-  /// @param proxy The non-null proxy.
+  /// @param proxy The proxy.
   /// @param dst The destination memory region.
   /// @param src The source memory region.
   PortChannel(SemaphoreId semaphoreId, const Semaphore& semaphore, std::shared_ptr<Proxy> proxy, MemoryId dst,
-              MemoryId src);
+              MemoryId src)
+    requires(Backend == PortChannelBackend::Host);
 
-  /// Copy constructor. Shares semaphore ownership and retains registered memories.
+  /// Copy constructor.
   /// @param other The other PortChannel to copy from.
   PortChannel(const PortChannel& other) = default;
 
@@ -204,23 +205,27 @@ struct PortChannel : public BasePortChannel {
   /// @param other The other PortChannel to assign from.
   PortChannel& operator=(const PortChannel& other) = default;
 
-  /// Host-proxy device view, retained for the generic deviceHandle helper.
-  using DeviceHandle = PortChannelDeviceHandle;
+  /// Device-side handle for PortChannel.
+  using DeviceHandle = PortChannelDeviceHandleT<Backend>;
 
-  /// Returns a Host-proxy view. Keep this channel and its application buffers alive during GPU use.
-  /// @throws Error with ErrorCode::InvalidUsage for uninitialized or Device-mode state.
+  /// Returns the device-side handle.
+  /// User should make sure the PortChannel is not released when using the returned handle.
+  /// @return The device-side handle.
   DeviceHandle deviceHandle() const;
-
-  /// Returns a direct GPU-posting view. Keep this channel and its application buffers alive during GPU use.
-  /// @throws Error with ErrorCode::InvalidUsage for uninitialized or Host-mode state.
-  PortChannelDeviceHandleT<PortChannelBackend::Device> deviceBackendHandle() const;
 };
 
+PortChannel(SemaphoreId, std::shared_ptr<Host2DeviceSemaphore>, std::shared_ptr<Proxy>, MemoryId,
+            MemoryId) -> PortChannel<PortChannelBackend::Host>;
+PortChannel(SemaphoreId, const Semaphore&, std::shared_ptr<Proxy>, MemoryId,
+            MemoryId) -> PortChannel<PortChannelBackend::Host>;
+PortChannel(std::shared_ptr<PortDevice2DeviceSemaphore>, RegisteredMemory,
+            RegisteredMemory) -> PortChannel<PortChannelBackend::Device>;
+
 /// @deprecated Use BasePortChannel instead.
-[[deprecated("Use BasePortChannel instead.")]] typedef BasePortChannel BaseProxyChannel;
+[[deprecated("Use BasePortChannel instead.")]] typedef BasePortChannel<> BaseProxyChannel;
 
 /// @deprecated Use PortChannel instead.
-[[deprecated("Use PortChannel instead.")]] typedef PortChannel ProxyChannel;
+[[deprecated("Use PortChannel instead.")]] typedef PortChannel<> ProxyChannel;
 
 }  // namespace mscclpp
 

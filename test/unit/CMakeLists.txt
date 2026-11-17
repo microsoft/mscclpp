@@ -17,7 +17,6 @@ target_sources(unit_tests PRIVATE
     gpu_data_types_tests.cu
     local_channel_tests.cu
     proxy_service_tests.cu
-    semaphore_tests.cc
     gpu_ipc_mem_tests.cc
     bulk_tests.cu
 )

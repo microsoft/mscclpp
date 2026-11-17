@@ -105,7 +105,7 @@ std::vector<mscclpp::RegisteredMemory> setupRemoteMemories(std::shared_ptr<msccl
 
 std::vector<mscclpp::MemoryChannel> setupMemoryChannels(
     const std::vector<mscclpp::Connection>& connections,
-    const std::vector<std::shared_ptr<mscclpp::Device2DeviceSemaphore>>& memorySemaphores,
+    const std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>>& memorySemaphores,
     const std::vector<mscclpp::RegisteredMemory>& remoteMemories, mscclpp::RegisteredMemory localMemory,
     int nChannelsPerConnection) {
   std::vector<mscclpp::MemoryChannel> channels;
@@ -132,14 +132,15 @@ std::vector<mscclpp::Connection> setupConnections(std::shared_ptr<mscclpp::Commu
   return connections;
 }
 
-std::vector<std::shared_ptr<mscclpp::Device2DeviceSemaphore>> setupMemorySemaphores(
+std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> setupMemorySemaphores(
     std::shared_ptr<mscclpp::Communicator> comm, const std::vector<mscclpp::Connection>& connections,
     int nChannelsPerConnection) {
-  std::vector<std::shared_ptr<mscclpp::Device2DeviceSemaphore>> memorySemaphores;
+  std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores;
   for (int idx = 0; idx < nChannelsPerConnection; ++idx) {
     for (size_t cid = 0; cid < connections.size(); ++cid) {
       if (connections[cid].transport() == mscclpp::Transport::CudaIpc) {
-        memorySemaphores.emplace_back(std::make_shared<mscclpp::Device2DeviceSemaphore>(*(comm), connections[cid]));
+        memorySemaphores.emplace_back(
+            std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*(comm), connections[cid]));
       }
     }
   }
@@ -204,7 +205,8 @@ std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SwitchChannel>> setupNvlsChannelD
 
 std::vector<mscclpp::BaseMemoryChannel> setupBaseMemoryChannels(
     const std::vector<mscclpp::Connection>& connections,
-    const std::vector<std::shared_ptr<mscclpp::Device2DeviceSemaphore>>& memorySemaphores, int nChannelsPerConnection) {
+    const std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>>& memorySemaphores,
+    int nChannelsPerConnection) {
   std::vector<mscclpp::BaseMemoryChannel> channels;
   size_t nConnections = connections.size();
   for (int idx = 0; idx < nChannelsPerConnection; ++idx) {

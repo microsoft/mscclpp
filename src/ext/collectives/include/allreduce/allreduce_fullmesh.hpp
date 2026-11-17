@@ -26,8 +26,8 @@ class AllreduceFullmesh : public mscclpp::AlgorithmBuilder {
   std::shared_ptr<Communicator> comm_;
   int nChannelsPerConnection_;
   std::vector<Connection> conns_;
-  std::vector<std::shared_ptr<Device2DeviceSemaphore>> outputSemaphores_;
-  std::vector<std::shared_ptr<Device2DeviceSemaphore>> inputScratchSemaphores_;
+  std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> outputSemaphores_;
+  std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> inputScratchSemaphores_;
   std::vector<RegisteredMemory> remoteScratchMemories_;
   RegisteredMemory localScratchMemory_;
   bool symmetricMemory_ = false;

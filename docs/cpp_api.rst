@@ -68,7 +68,7 @@ Semaphores
 .. doxygenclass:: mscclpp::Host2HostSemaphore
    :members:
 
-.. doxygenclass:: mscclpp::Device2DeviceSemaphore
+.. doxygenclass:: mscclpp::MemoryDevice2DeviceSemaphore
    :members:
 
 .. doxygenclass:: mscclpp::Semaphore
@@ -230,12 +230,7 @@ Channel Device Interfaces
 .. doxygenstruct:: mscclpp::BaseMemoryChannelDeviceHandle
    :members:
 
-.. doxygentypedef:: mscclpp::BasePortChannelDeviceHandle
-
-.. doxygenstruct:: mscclpp::BasePortChannelDeviceHandleT< PortChannelBackend::Host >
-   :members:
-
-.. doxygenstruct:: mscclpp::BasePortChannelDeviceHandleT< PortChannelBackend::Device >
+.. doxygenstruct:: mscclpp::BasePortChannelDeviceHandle
    :members:
 
 .. doxygenunion:: mscclpp::LL16Packet
@@ -245,12 +240,7 @@ Channel Device Interfaces
 .. doxygenstruct:: mscclpp::MemoryChannelDeviceHandle
    :members:
 
-.. doxygentypedef:: mscclpp::PortChannelDeviceHandle
-
-.. doxygenstruct:: mscclpp::PortChannelDeviceHandleT< PortChannelBackend::Host >
-   :members:
-
-.. doxygenstruct:: mscclpp::PortChannelDeviceHandleT< PortChannelBackend::Device >
+.. doxygenstruct:: mscclpp::PortChannelDeviceHandle
    :members:
 
 .. doxygenstruct:: mscclpp::SwitchChannelDeviceHandle

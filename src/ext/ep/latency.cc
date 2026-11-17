@@ -94,7 +94,7 @@ void LatencyRuntimeContext::initialize() {
     if (!isMappedPeer(r)) continue;
     peerBufferMemories_[r] = remoteFutures[r].get();
     peerMappedBufferBases_[r] = peerBufferMemories_[r].data();
-    auto semaphore = std::make_shared<mscclpp::Device2DeviceSemaphore>(communicator_, connectionFutures[r].get());
+    auto semaphore = std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(communicator_, connectionFutures[r].get());
     baseMemoryChannels_.emplace_back(semaphore);
     baseMemoryChannelHandles[r] = baseMemoryChannels_.back().deviceHandle();
   }

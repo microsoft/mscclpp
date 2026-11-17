@@ -34,18 +34,18 @@ void register_semaphore(nb::module_& m) {
       .def("wait", &Host2HostSemaphore::wait, nb::call_guard<nb::gil_scoped_release>(),
            nb::arg("max_spin_count") = 10000000);
 
-  nb::class_<Device2DeviceSemaphore> memoryDevice2DeviceSemaphore(m, "CppMemoryDevice2DeviceSemaphore");
+  nb::class_<MemoryDevice2DeviceSemaphore> memoryDevice2DeviceSemaphore(m, "CppMemoryDevice2DeviceSemaphore");
   memoryDevice2DeviceSemaphore.def(nb::init<const Semaphore&>(), nb::arg("semaphore"))
       .def(nb::init<Communicator&, const Connection&>(), nb::arg("communicator"), nb::arg("connection"))
-      .def("connection", &Device2DeviceSemaphore::connection)
-      .def("device_handle", &Device2DeviceSemaphore::deviceHandle);
+      .def("connection", &MemoryDevice2DeviceSemaphore::connection)
+      .def("device_handle", &MemoryDevice2DeviceSemaphore::deviceHandle);
 
-  nb::class_<Device2DeviceSemaphore::DeviceHandle>(memoryDevice2DeviceSemaphore, "DeviceHandle")
+  nb::class_<MemoryDevice2DeviceSemaphore::DeviceHandle>(memoryDevice2DeviceSemaphore, "DeviceHandle")
       .def(nb::init<>())
-      .def_rw("inbound_token", &Device2DeviceSemaphore::DeviceHandle::inboundToken)
-      .def_rw("remote_inbound_token", &Device2DeviceSemaphore::DeviceHandle::remoteInboundToken)
-      .def_rw("expected_inbound_token", &Device2DeviceSemaphore::DeviceHandle::expectedInboundToken)
-      .def_prop_ro("raw", [](const Device2DeviceSemaphore::DeviceHandle& self) -> nb::bytes {
+      .def_rw("inbound_token", &MemoryDevice2DeviceSemaphore::DeviceHandle::inboundToken)
+      .def_rw("remote_inbound_token", &MemoryDevice2DeviceSemaphore::DeviceHandle::remoteInboundToken)
+      .def_rw("expected_inbound_token", &MemoryDevice2DeviceSemaphore::DeviceHandle::expectedInboundToken)
+      .def_prop_ro("raw", [](const MemoryDevice2DeviceSemaphore::DeviceHandle& self) -> nb::bytes {
         return nb::bytes(reinterpret_cast<const char*>(&self), sizeof(self));
       });
 }

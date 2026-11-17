@@ -141,7 +141,7 @@ void AllreduceNvlsWarpPipeline::initialize(std::shared_ptr<Communicator> comm) {
   int nBaseChannels = std::max(64, 8 * nRanksPerIpcDomain);
   this->conns_ = setupConnections(comm);
   // setup semaphores
-  std::vector<std::shared_ptr<Device2DeviceSemaphore>> memorySemaphores =
+  std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores =
       setupMemorySemaphores(comm, this->conns_, nBaseChannels);
   // setup base memory channels
   this->baseChannels_ = setupBaseMemoryChannels(this->conns_, memorySemaphores, nBaseChannels);

@@ -93,7 +93,7 @@ void ThroughputRuntimeContext::initialize() {
     }
     peerMappedBufferBases_[peer] = peer == rank_ ? symmetricBuffer_.get() : peerBufferMemories_[peer].data();
     if (peer != rank_) {
-      auto semaphore = std::make_shared<mscclpp::Device2DeviceSemaphore>(communicator_, connections[peer].get());
+      auto semaphore = std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(communicator_, connections[peer].get());
       baseMemoryChannels_.emplace_back(semaphore);
       baseMemoryChannelHandles[peer] = baseMemoryChannels_.back().deviceHandle();
     }

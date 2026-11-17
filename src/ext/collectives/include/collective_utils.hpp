@@ -48,13 +48,12 @@ std::vector<RegisteredMemory> setupRemoteMemories(std::shared_ptr<Communicator> 
 
 std::vector<MemoryChannel> setupMemoryChannels(
     const std::vector<Connection>& connections,
-    const std::vector<std::shared_ptr<Device2DeviceSemaphore>>& memorySemaphores,
+    const std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>>& memorySemaphores,
     const std::vector<RegisteredMemory>& remoteMemories, RegisteredMemory localMemory, int nChannelsPerConnection);
 
 std::vector<Connection> setupConnections(std::shared_ptr<Communicator> comm);
-std::vector<std::shared_ptr<Device2DeviceSemaphore>> setupMemorySemaphores(std::shared_ptr<Communicator> comm,
-                                                                           const std::vector<Connection>& connections,
-                                                                           int nChannelsPerConnection);
+std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> setupMemorySemaphores(
+    std::shared_ptr<Communicator> comm, const std::vector<Connection>& connections, int nChannelsPerConnection);
 
 std::shared_ptr<DeviceHandle<MemoryChannel>> setupMemoryChannelDeviceHandles(
     const std::vector<MemoryChannel>& memoryChannels);
@@ -71,7 +70,7 @@ std::shared_ptr<DeviceHandle<SwitchChannel>> setupNvlsChannelDeviceHandles(
 
 std::vector<BaseMemoryChannel> setupBaseMemoryChannels(
     const std::vector<Connection>& connections,
-    const std::vector<std::shared_ptr<Device2DeviceSemaphore>>& memorySemaphores, int nChannelsPerConnection);
+    const std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>>& memorySemaphores, int nChannelsPerConnection);
 
 std::shared_ptr<DeviceHandle<BaseMemoryChannel>> setupBaseMemoryChannelDeviceHandles(
     const std::vector<BaseMemoryChannel>& baseMemoryChannels);
@@ -90,11 +89,11 @@ class AlgorithmCtx {
   std::vector<RegisteredMemory> registeredMemories;
   std::vector<MemoryChannel> memoryChannels;
   std::vector<SwitchChannel> switchChannels;
-  std::vector<PortChannel> portChannels;
+  std::vector<PortChannel<>> portChannels;
   std::shared_ptr<DeviceHandle<MemoryChannel>> memoryChannelDeviceHandles;
   std::shared_ptr<DeviceHandle<SwitchChannel>> switchChannelDeviceHandles;
-  std::shared_ptr<DeviceHandle<PortChannel>> portChannelDeviceHandles;
-  std::vector<std::shared_ptr<Device2DeviceSemaphore>> memorySemaphores;
+  std::shared_ptr<DeviceHandle<PortChannel<>>> portChannelDeviceHandles;
+  std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores;
   std::vector<std::shared_ptr<Host2DeviceSemaphore>> hostSemaphores;
   std::shared_ptr<void*> remoteMemoryHandles;
   std::unordered_map<std::string, std::shared_ptr<void>> extras;

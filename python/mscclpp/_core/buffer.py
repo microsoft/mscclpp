@@ -2,36 +2,279 @@
 # Licensed under the MIT License.
 
 
-from typing import Union, Tuple
+from contextlib import contextmanager
+import math
+import operator
+import sys
 
-import cupy as cp
 import numpy as np
+from mscclpp import gpu
 from mscclpp._mscclpp import CppRawGpuBuffer, CppGpuBufferGranularity
+from mscclpp._mscclpp import CppDataType as DataType
+
+try:
+    import torch
+
+    _use_torch = True
+except ImportError:
+    _use_torch = False
 
 __all__ = ["GpuBuffer", "GpuBufferGranularity"]
 
 GpuBufferGranularity = CppGpuBufferGranularity
 
 
-class GpuBuffer(cp.ndarray):
-    def __new__(
-        cls,
-        shape: Union[int, Tuple[int]],
-        dtype: cp.dtype = float,
-        strides: Tuple[int] = None,
+def _resolve_dtype(dtype) -> tuple[DataType, np.dtype]:
+    if isinstance(dtype, DataType):
+        name = dtype.name
+        storage = "uint16" if name == "bfloat16" else "uint8" if name.startswith("float8_") else name
+        return dtype, np.dtype(storage)
+    storage = np.dtype(dtype)
+    data_type = getattr(DataType, storage.name, None)
+    if data_type is None or not storage.isnative:
+        raise ValueError(f"NumPy dtype {storage} has no supported mscclpp.DataType.")
+    return data_type, storage
+
+
+class _ExternalGpuAllocation:
+    def __init__(self, ptr: int, nbytes: int, owner: object):
+        self._ptr = ptr
+        self._nbytes = nbytes
+        self._owner = owner
+        self._device_id = None
+
+    def data(self) -> int:
+        return self._ptr
+
+    def bytes(self) -> int:
+        return self._nbytes
+
+    def device_id(self) -> int:
+        if self._device_id is None:
+            if self._ptr == 0:
+                self._device_id = gpu.current_device()
+            else:
+                (attributes,) = gpu.pointer_get_attributes(self._ptr)
+                self._device_id = int(attributes.device)
+        return self._device_id
+
+
+class GpuBuffer:
+    """Native-owned, contiguous GPU storage with explicit host transfers.
+
+    Unlike an array library, this class does not perform arithmetic or implicit
+    device-to-host copies. One-dimensional unit-step slices share the allocation.
+    Transfers are synchronous and must be performed outside GPU graph capture.
+    """
+
+    def __init__(
+        self,
+        shape: int | tuple[int, ...],
+        dtype=DataType.float32,
+        strides: tuple[int, ...] | None = None,
         order: str = "C",
         granularity: CppGpuBufferGranularity = CppGpuBufferGranularity.MultiCastMinimum,
     ):
-        # Check if `shape` is valid
-        if isinstance(shape, int):
+        self._set_layout(shape, dtype, strides, order)
+        self._allocation = CppRawGpuBuffer(max(1, self.nbytes), granularity)
+        self._offset = 0
+
+    def _set_layout(self, shape, dtype, strides, order):
+        if isinstance(shape, (int, np.integer)):
             shape = (shape,)
         try:
-            shape = tuple(shape)
-        except TypeError:
-            raise ValueError("Shape must be a tuple-like or an integer.")
-        if any(s <= 0 for s in shape):
-            raise ValueError("Shape must be positive.")
-        # Create the buffer
-        buffer = CppRawGpuBuffer(np.prod(shape) * np.dtype(dtype).itemsize, granularity)
-        memptr = cp.cuda.MemoryPointer(cp.cuda.UnownedMemory(buffer.data(), buffer.bytes(), buffer), 0)
-        return cp.ndarray(shape, dtype=dtype, strides=strides, order=order, memptr=memptr)
+            self._shape = tuple(operator.index(s) for s in shape)
+        except TypeError as exc:
+            raise ValueError("Shape must be an integer or a sequence of integers.") from exc
+        if any(s < 0 for s in self.shape):
+            raise ValueError("Shape dimensions must be non-negative.")
+        self._data_type, self._dtype = _resolve_dtype(dtype)
+        if order not in ("C", "F"):
+            raise ValueError("Order must be 'C' or 'F'.")
+        self._order = order
+        self._size = math.prod(self.shape)
+        if self.nbytes > sys.maxsize:
+            raise OverflowError("Buffer size exceeds the addressable range.")
+        dims = range(self.ndim - 1, -1, -1) if order == "C" else range(self.ndim)
+        contiguous_strides = [0] * self.ndim
+        stride = self.itemsize
+        for dim in dims:
+            contiguous_strides[dim] = stride
+            stride *= max(1, self.shape[dim])
+        self._strides = tuple(contiguous_strides)
+        if strides is not None and tuple(strides) != self.strides:
+            raise ValueError("GpuBuffer supports only contiguous strides.")
+
+    @classmethod
+    def from_ptr(cls, ptr: int, nbytes: int, owner: object, dtype=np.uint8) -> "GpuBuffer":
+        """Wrap existing GPU memory as a one-dimensional buffer without allocating or copying.
+
+        ``ptr`` must point to at least ``nbytes`` bytes of valid GPU storage.
+        ``owner`` must keep that storage alive; this buffer and its slices retain it.
+        The wrapper never frees the pointer itself. The byte size must be a multiple
+        of the dtype's item size. Transfers query the pointer's device, not the current
+        device at construction. Null-backed empty storage uses the current device
+        on its first device lookup and caches that choice.
+        """
+        ptr = operator.index(ptr)
+        nbytes = operator.index(nbytes)
+        if nbytes < 0:
+            raise ValueError("Buffer byte size must be non-negative.")
+        address_limit = 2 * (sys.maxsize + 1)
+        if not 0 <= ptr < address_limit or ptr + nbytes > address_limit or (ptr == 0 and nbytes):
+            raise ValueError("Invalid GPU memory pointer or address range.")
+        if owner is None:
+            raise ValueError("An owner is required to keep GPU memory alive.")
+        data_type, storage = _resolve_dtype(dtype)
+        if nbytes % storage.itemsize:
+            raise ValueError("Buffer byte size must be a multiple of the dtype item size.")
+        result = cls.__new__(cls)
+        result._set_layout(nbytes // storage.itemsize, data_type, None, "C")
+        result._allocation = _ExternalGpuAllocation(ptr, nbytes, owner)
+        result._offset = 0
+        return result
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        return self._shape
+
+    @property
+    def dtype(self) -> DataType:
+        return self._data_type
+
+    @property
+    def ndim(self) -> int:
+        return len(self.shape)
+
+    @property
+    def size(self) -> int:
+        return self._size
+
+    @property
+    def itemsize(self) -> int:
+        return self._dtype.itemsize
+
+    @property
+    def nbytes(self) -> int:
+        return self.size * self.itemsize
+
+    @property
+    def strides(self) -> tuple[int, ...]:
+        return self._strides
+
+    @property
+    def data(self) -> "GpuBuffer":
+        """Pointer interface compatible with ``buffer.data.ptr`` consumers."""
+        return self
+
+    @property
+    def ptr(self) -> int:
+        return self._allocation.data() + self._offset
+
+    @property
+    def allocation_size(self) -> int:
+        """Total native allocation size, for binding an unsliced buffer to NVLS."""
+        return self._allocation.bytes()
+
+    @property
+    def device_id(self) -> int:
+        return self._allocation.device_id()
+
+    def __getitem__(self, key: slice) -> "GpuBuffer":
+        if self.ndim != 1 or not isinstance(key, slice):
+            raise TypeError("GpuBuffer supports only one-dimensional slices; use to_numpy() for host indexing.")
+        start, stop, step = key.indices(self.size)
+        if step != 1:
+            raise ValueError("GpuBuffer slices must have unit step.")
+        view = object.__new__(type(self))
+        view._allocation = self._allocation
+        view._offset = self._offset + start * self.itemsize
+        view._shape = (max(0, stop - start),)
+        view._size = view._shape[0]
+        view._dtype = self._dtype
+        view._data_type = self.dtype
+        view._order = self._order
+        view._strides = (self.itemsize,)
+        return view
+
+    def __array__(self, dtype=None, copy=None):
+        raise TypeError("GpuBuffer does not convert implicitly to host memory; use to_numpy().")
+
+    @contextmanager
+    def _on_device(self):
+        previous = gpu.current_device()
+        if previous != self.device_id:
+            gpu.set_device(self.device_id)
+        try:
+            yield
+        finally:
+            if previous != self.device_id:
+                gpu.set_device(previous)
+
+    def _copy(self, dst: int, src: int, direction: str) -> None:
+        if self.nbytes == 0:
+            return
+        with self._on_device():
+            stream = 0
+            if _use_torch and torch.cuda.is_initialized():
+                stream = torch.cuda.current_stream(self.device_id).cuda_stream
+            (capture_status,) = gpu.stream_is_capturing(stream)
+            if int(capture_status) != 0:
+                raise RuntimeError("Host transfers are not supported during GPU graph capture.")
+            gpu.memcpy_async(dst, src, self.nbytes, direction, stream)
+            gpu.stream_synchronize(stream)
+
+    def to_numpy(self) -> np.ndarray:
+        """Copy to NumPy; BF16/FP8 return raw uint16/uint8 bits without numeric conversion."""
+        result = np.empty(self.shape, dtype=self._dtype, order=self._order)
+        self._copy(result.ctypes.data, self.ptr, "DeviceToHost")
+        return result
+
+    def to_torch(self) -> "torch.Tensor":
+        """Return a zero-copy PyTorch view retaining this buffer's allocation or external owner.
+
+        Shape, dtype, device, and slice offsets are preserved. No synchronization is
+        performed: callers must order accesses on different GPU streams explicitly.
+        PyTorch is required only when this method is called.
+        """
+        if not _use_torch:
+            raise RuntimeError("PyTorch is not available.")
+        from mscclpp._mscclpp import cpp_gpu_buffer_to_dlpack
+
+        dtype = getattr(torch, self.dtype.name, None)
+        if not isinstance(dtype, torch.dtype):
+            raise ValueError(f"Unsupported PyTorch dtype: {self.dtype}")
+        capsule = cpp_gpu_buffer_to_dlpack(
+            self.ptr,
+            str(dtype),
+            self.shape,
+            tuple(stride // self.itemsize for stride in self.strides),
+            self.device_id,
+            self._allocation,
+        )
+        return torch.utils.dlpack.from_dlpack(capsule)
+
+    def copy_from_numpy(self, values) -> None:
+        """Upload matching NumPy storage; BF16/FP8 require pre-encoded uint16/uint8 bits."""
+        array = np.asarray(values, order=self._order)
+        if array.shape != self.shape or array.dtype != self._dtype:
+            raise ValueError("Source shape and dtype must match the GPU buffer's NumPy storage.")
+        self._copy(self.ptr, array.ctypes.data, "HostToDevice")
+
+    @classmethod
+    def from_numpy(cls, values, dtype=None) -> "GpuBuffer":
+        """Upload host values, inferring a supported dtype when omitted.
+
+        Explicit BF16/FP8 dtypes require pre-encoded uint16/uint8 arrays.
+        Other explicit dtypes perform the usual NumPy numeric conversion.
+        """
+        array = np.asarray(values)
+        data_type, storage = _resolve_dtype(array.dtype if dtype is None else dtype)
+        if data_type.name != storage.name:
+            if array.dtype != storage:
+                raise ValueError(f"{data_type} requires pre-encoded NumPy {storage} storage.")
+        else:
+            array = np.asarray(array, dtype=storage)
+        result = cls(array.shape, dtype=data_type, order="F" if np.isfortran(array) else "C")
+        result.copy_from_numpy(array)
+        return result

@@ -58,12 +58,10 @@ class BaseConnection {
   virtual bool isDeviceBackend() const { return false; }
 
   /// Create the device backend handle for a PortChannel on this connection.
-  virtual detail::GpuNetIoDeviceHandle getDeviceBackendInfo() const { return {}; }
+  virtual DeviceBackendHandle getDeviceBackendInfo() const { return {}; }
 
   /// Create the device memory handle for a RegisteredMemory on this connection.
-  virtual detail::GpuNetIoMemoryDeviceHandle getDeviceMemoryInfo(const RegisteredMemory& /*memory*/) const {
-    return {};
-  }
+  virtual DeviceMemoryHandle getDeviceMemoryInfo(const RegisteredMemory& /*memory*/) const { return {}; }
 
   /// Request a flush. Subclasses that support async flush (e.g. IBConnection) override this
   /// to be a no-op and rely on progressFlush() to drive completion via the proxy thread.

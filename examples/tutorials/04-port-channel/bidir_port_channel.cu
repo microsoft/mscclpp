@@ -45,8 +45,7 @@ int wait_process(int pid) {
   return -1;
 }
 
-template <class Handle>
-__global__ void bidirPutKernel(Handle* devHandle, size_t copyBytes, int myRank) {
+__global__ void bidirPutKernel(mscclpp::PortChannelDeviceHandle* devHandle, size_t copyBytes, int myRank) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid == 0) {
     devHandle->signal();
@@ -59,9 +58,7 @@ __global__ void bidirPutKernel(Handle* devHandle, size_t copyBytes, int myRank) 
   }
 }
 
-template <mscclpp::PortChannelBackend Backend>
-void workerBackend(int rank, int gpuId, const std::string& ipPort, mscclpp::Transport transport) {
-  constexpr bool deviceMode = Backend == mscclpp::PortChannelBackend::Device;
+void worker(int rank, int gpuId, const std::string& ipPort, mscclpp::Transport transport) {
   MSCCLPP_CUDATHROW(cudaSetDevice(gpuId));
   const int myRank = rank;
   const int remoteRank = myRank == 0 ? 1 : 0;
@@ -75,9 +72,7 @@ void workerBackend(int rank, int gpuId, const std::string& ipPort, mscclpp::Tran
   auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(myRank, nRanks);
   bootstrap->initialize(ipPort);
   mscclpp::Communicator comm(bootstrap);
-  mscclpp::EndpointConfig config{transport, {mscclpp::DeviceType::GPU, gpuId}};
-  if (deviceMode) config.ib.mode = mscclpp::EndpointConfig::Ib::Mode::Device;
-  auto conn = comm.connect(config, remoteRank).get();
+  auto conn = comm.connect({transport, {mscclpp::DeviceType::GPU, gpuId}}, remoteRank).get();
   auto sema = comm.buildSemaphore(conn, remoteRank).get();
 
   mscclpp::GpuBuffer buffer(bufferBytes);
@@ -87,25 +82,13 @@ void workerBackend(int rank, int gpuId, const std::string& ipPort, mscclpp::Tran
   auto remoteRegMemFuture = comm.recvMemory(remoteRank);
   mscclpp::RegisteredMemory remoteRegMem = remoteRegMemFuture.get();
 
-  std::unique_ptr<mscclpp::ProxyService> proxyService;
-  mscclpp::PortChannel portChan;
-  if (deviceMode) {
-    portChan = mscclpp::PortChannel(sema, remoteRegMem, localRegMem);
-  } else {
-    proxyService = std::make_unique<mscclpp::ProxyService>();
-    mscclpp::SemaphoreId semaId = proxyService->addSemaphore(sema);
-    mscclpp::MemoryId localMemId = proxyService->addMemory(localRegMem);
-    mscclpp::MemoryId remoteMemId = proxyService->addMemory(remoteRegMem);
-    portChan = proxyService->portChannel(semaId, remoteMemId, localMemId);
-  }
+  mscclpp::ProxyService proxyService;
+  mscclpp::SemaphoreId semaId = proxyService.addSemaphore(sema);
+  mscclpp::MemoryId localMemId = proxyService.addMemory(localRegMem);
+  mscclpp::MemoryId remoteMemId = proxyService.addMemory(remoteRegMem);
+  mscclpp::PortChannel portChan = proxyService.portChannel(semaId, remoteMemId, localMemId);
 
-  auto portChanHandle = [&] {
-    if constexpr (deviceMode)
-      return portChan.deviceBackendHandle();
-    else
-      return portChan.deviceHandle();
-  }();
-  using Handle = decltype(portChanHandle);
+  auto portChanHandle = portChan.deviceHandle();
 
   void* devHandle;
   MSCCLPP_CUDATHROW(cudaMalloc(&devHandle, sizeof(portChanHandle)));
@@ -117,7 +100,8 @@ void workerBackend(int rank, int gpuId, const std::string& ipPort, mscclpp::Tran
   std::function<void(size_t)> kernels[1];
 
   kernels[0] = [&](size_t copyBytes) {
-    bidirPutKernel<Handle><<<1, 1, 0, stream>>>(static_cast<Handle*>(devHandle), copyBytes, myRank);
+    bidirPutKernel<<<1, 1, 0, stream>>>(reinterpret_cast<mscclpp::PortChannelDeviceHandle*>(devHandle), copyBytes,
+                                        myRank);
   };
 
   cudaEvent_t start, end;
@@ -134,7 +118,7 @@ void workerBackend(int rank, int gpuId, const std::string& ipPort, mscclpp::Tran
       cudaGraph_t graph;
       cudaGraphExec_t graphExec;
 
-      if (proxyService) proxyService->startProxy();
+      proxyService.startProxy();
 
       MSCCLPP_CUDATHROW(cudaGraphCreate(&graph, 0));
       MSCCLPP_CUDATHROW(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
@@ -146,11 +130,11 @@ void workerBackend(int rank, int gpuId, const std::string& ipPort, mscclpp::Tran
       MSCCLPP_CUDATHROW(cudaStreamEndCapture(stream, &graph));
       MSCCLPP_CUDATHROW(cudaGraphInstantiate(&graphExec, graph, NULL, NULL, 0));
 
-      if (proxyService) proxyService->stopProxy();
+      proxyService.stopProxy();
 
       // Synchronize before timing
       MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-      if (proxyService) proxyService->startProxy();
+      proxyService.startProxy();
       bootstrap->barrier();
 
       if (myRank == 0) {
@@ -172,7 +156,7 @@ void workerBackend(int rank, int gpuId, const std::string& ipPort, mscclpp::Tran
             gbps, " GB/s");
       }
       MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
-      if (proxyService) proxyService->stopProxy();
+      proxyService.stopProxy();
 
       MSCCLPP_CUDATHROW(cudaGraphExecDestroy(graphExec));
       MSCCLPP_CUDATHROW(cudaGraphDestroy(graph));
@@ -180,13 +164,6 @@ void workerBackend(int rank, int gpuId, const std::string& ipPort, mscclpp::Tran
   }
 
   bootstrap->barrier();
-}
-
-void worker(int rank, int gpuId, const std::string& ipPort, mscclpp::Transport transport, bool deviceMode = false) {
-  if (deviceMode)
-    workerBackend<mscclpp::PortChannelBackend::Device>(rank, gpuId, ipPort, transport);
-  else
-    workerBackend<mscclpp::PortChannelBackend::Host>(rank, gpuId, ipPort, transport);
 }
 
 mscclpp::Transport parseTransport(const std::string& transportStr) {
@@ -223,21 +200,16 @@ int main(int argc, char** argv) {
     }
     log("Succeed!");
     return 0;
-  } else if (argc == 5 || argc == 6) {
+  } else if (argc == 5) {
     std::string ipPort = argv[1];
     int rank = std::atoi(argv[2]);
     int gpuId = std::atoi(argv[3]);
     mscclpp::Transport transport = parseTransport(argv[4]);
-    const bool deviceMode = argc == 6;
-    if (deviceMode && (std::string(argv[5]) != "device" || !mscclpp::AllIBTransports.has(transport))) {
-      log("Error: optional device mode requires an IB transport and the argument 'device'.");
-      return -1;
-    }
-    worker(rank, gpuId, ipPort, transport, deviceMode);
+    worker(rank, gpuId, ipPort, transport);
     log("Rank ", rank, ": Succeed!");
     return 0;
   } else {
-    std::cerr << "Usage: " << argv[0] << " [<ip_port> <rank> <gpu_id> <transport> [device]]" << std::endl;
+    std::cerr << "Usage: " << argv[0] << " [<ip_port> <rank> <gpu_id> <transport>]" << std::endl;
     return -1;
   }
 }

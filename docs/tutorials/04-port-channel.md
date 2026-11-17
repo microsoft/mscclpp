@@ -173,42 +173,6 @@ auto conn = comm.connect(epConfig, remoteRank).get();
 
 See all available InfiniBand-specific parameters in {cpp:struct}`mscclpp::EndpointConfig::Ib`.
 
-## Device-backed PortChannel
-
-On a supported CUDA GPU and RDMA NIC, a Device-backed channel does not need a `ProxyService`.
-Select Device mode when creating the connection, then follow the raw-semaphore construction used
-by the Memory Channel tutorial:
-
-```cpp
-mscclpp::EndpointConfig cfg;
-cfg.transport = mscclpp::Transport::IB0;
-cfg.ib.mode = mscclpp::EndpointConfig::Ib::Mode::Device;
-auto conn = comm.connect(cfg, remoteRank).get();
-auto sema = comm.buildSemaphore(conn, remoteRank).get();
-// Exchange registered regions as above.
-mscclpp::PortChannel portChan(sema, remoteRegMem, localRegMem);
-auto handle = portChan.deviceBackendHandle(); // PortChannelDeviceHandleT<PortChannelBackend::Device>.
-```
-
-The example shares the kernel body through `template <class Handle> bidirPutKernel(Handle*, ...)` and launches
-distinct Host and Device instantiations. It chooses the typed extraction on the host; GPU operations do not dispatch
-on a backend tag. A kernel declared with the normal `PortChannelDeviceHandle` name remains Host-only.
-There is no Device proxy to start or stop. Host connections still require the existing `ProxyService` setup;
-the raw constructor above rejects a Host connection. Mismatched handle extraction throws `InvalidUsage`.
-
-The example accepts an optional final `device` argument for IB transports:
-
-```bash
-# Node 0
-./bidir_port_channel 192.168.0.1:50000 0 0 IB0 device
-# Node 1
-./bidir_port_channel 192.168.0.1:50000 1 0 IB0 device
-```
-
-Both endpoints must satisfy the [Device-backend requirements](../guide/gpunetio.md#requirements). See that guide
-for concurrency, per-kernel scratch capacity, and endpoint-specific tuning. These commands illustrate expected
-usage; Device mode is not a fallback for an unavailable RDMA configuration.
-
 ## Summary and Next Steps
 
 In this tutorial, we learned how to use `PortChannel` for bidirectional data transfer between two GPUs using a `ProxyService`.

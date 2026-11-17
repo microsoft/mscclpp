@@ -36,7 +36,7 @@ steps:
     name: PyTests
     displayName: Run pytests
     remoteScript: |
-      mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -x MSCCLPP_DISABLE_IB_TESTS=1 -np 8 python3 -m pytest ./python/test/test_mscclpp.py -x
+      mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -x MSCCLPP_DISABLE_IB_TESTS=1 -np 8 python3 -m pytest ./python/test -x
 
 - template: run-remote-task.yml
   parameters:
@@ -87,7 +87,7 @@ steps:
     name: PyTestsWithIbBuildDisableIb
     displayName: Run pytests (IB build, IB tests disabled)
     remoteScript: |
-      mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -x MSCCLPP_DISABLE_IB_TESTS=1 -np 8 python3 -m pytest ./python/test/test_mscclpp.py -x
+      mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -x MSCCLPP_DISABLE_IB_TESTS=1 -np 8 python3 -m pytest ./python/test -x
 
 - template: stop.yml
   parameters:

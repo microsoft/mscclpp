@@ -26,7 +26,7 @@ class AllreduceRsAgZeroCopy : public mscclpp::AlgorithmBuilder {
   std::shared_ptr<Communicator> comm_;
   int nChannelsPerConnection_;
   std::vector<Connection> conns_;
-  std::vector<std::shared_ptr<Device2DeviceSemaphore>> semaphores_;
+  std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> semaphores_;
 
   std::vector<BaseMemoryChannel> baseChannels_;
   std::shared_ptr<DeviceHandle<BaseMemoryChannel>> baseMemoryChannelHandles_;

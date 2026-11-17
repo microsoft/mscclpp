@@ -396,16 +396,6 @@ struct EndpointConfig {
       Device         // GPU-initiated RDMA: PortChannel device operations post work requests directly from the GPU
     };
 
-    /// GPUNetIO-specific tuning, used only by Device-mode IB endpoints.
-    struct GpuNetIo {
-      /// Default maximum payload size submitted through BlueFlame.
-      static constexpr uint32_t DefaultBlueFlameLimit = 512 * 1024;
-      /// Maximum BlueFlame payload bytes. Zero disables BlueFlame.
-      uint32_t blueFlameLimit;
-      /// Constructor.
-      explicit GpuNetIo(uint32_t limit = DefaultBlueFlameLimit) : blueFlameLimit(limit) {}
-    };
-
     static constexpr int DefaultPort = -1;
     static constexpr int DefaultGidIndex = -1;
     static constexpr int DefaultMaxCqSize = 1024;
@@ -432,8 +422,6 @@ struct EndpointConfig {
     int maxWrPerSend;
     /// IB mode for signaling. When set to Default, uses the MSCCLPP_IBV_MODE environment variable.
     Mode mode;
-    /// Device-mode implementation tuning. Ignored by Host and HostNoAtomic.
-    GpuNetIo gpuNetIo;
 
     /// Constructor.
     /// @param deviceIndex Device index.
@@ -456,8 +444,7 @@ struct EndpointConfig {
           maxSendWr(maxSendWr),
           maxRecvWr(maxRecvWr),
           maxWrPerSend(maxWrPerSend),
-          mode(mode),
-          gpuNetIo() {}
+          mode(mode) {}
   };
 
   /// Communication transport type (e.g., CudaIpc, IB0-IB7, Ethernet).
@@ -638,7 +625,6 @@ class RegisteredMemory {
   friend class BaseConnection;
   friend class SemaphoreStub;
   friend class Semaphore;
-  friend struct PortChannel;
 };
 
 /// Connection between two processes.
@@ -760,8 +746,6 @@ class SemaphoreStub {
 
 /// Semaphore used by channels for synchronization.
 class Semaphore {
-  friend struct BasePortChannel;
-
  public:
   /// Constructor.
   Semaphore() = default;

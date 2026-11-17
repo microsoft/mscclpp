@@ -289,16 +289,9 @@ FetchContent_Declare(json
 )
 FetchContent_MakeAvailable(json)
 
-set(MSCCLPP_HAS_GPUNETIO 0)
 if(MSCCLPP_USE_IB AND MSCCLPP_USE_CUDA AND NOT MSCCLPP_USE_ROCM)
-    set(MSCCLPP_HAS_GPUNETIO 1)
     include(GpuNetIo)
 endif()
-configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/include/mscclpp/config.hpp.in"
-    "${CMAKE_CURRENT_BINARY_DIR}/include/mscclpp/config.hpp"
-    @ONLY
-)
 
 if("${INSTALL_PREFIX}" STREQUAL "")
     set(INSTALL_PREFIX "./")

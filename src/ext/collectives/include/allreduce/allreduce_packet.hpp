@@ -33,7 +33,7 @@ class AllreducePacket : public AlgorithmBuilder {
   std::vector<Connection> conns_;
   uintptr_t flagBuffer_;
   size_t flagBufferSize_;
-  std::vector<std::shared_ptr<Device2DeviceSemaphore>> memorySemaphores_;
+  std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores_;
   std::vector<RegisteredMemory> registeredMemories_;
 };
 }  // namespace collective

@@ -47,7 +47,7 @@ PERF_TEST(SemaphorePerfTest, SignalPingPong) {
   connectMesh(/*useIpc=*/true, /*useIb=*/false, /*useEthernet=*/false);
 
   int peerRank = (gEnv->rank == 0) ? 1 : 0;
-  auto d2dSemaphore = std::make_shared<mscclpp::Device2DeviceSemaphore>(*communicator, connections[peerRank]);
+  auto d2dSemaphore = std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*communicator, connections[peerRank]);
 
   auto devHandle = d2dSemaphore->deviceHandle();
   MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gSemaphorePerfTestHandle, &devHandle, sizeof(devHandle)));

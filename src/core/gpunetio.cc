@@ -238,18 +238,18 @@ void GpuNetIoConnection::accumulate(RegisteredMemory, uint64_t, int64_t) {
 
 void GpuNetIoConnection::flush(int64_t) { THROW(CONN, Error, ErrorCode::InvalidUsage, kGpuNetIoHostOpError); }
 
-detail::GpuNetIoDeviceHandle GpuNetIoConnection::getDeviceBackendInfo() const {
+DeviceBackendHandle GpuNetIoConnection::getDeviceBackendInfo() const {
   const auto& fetchInfo = getImpl(atomicFetchMem_).getTransportInfo(transport_);
 
-  detail::GpuNetIoDeviceHandle handle = {};
+  DeviceBackendHandle handle = {};
   handle.qp = qp_->deviceQp();
   handle.atomicFetchAddr = fetchInfo.ibMrInfo.addr;
   handle.atomicFetchKey = htobe32(fetchInfo.ibMr->getLkey());
-  handle.blueFlameLimit = localEndpoint_.config().ib.gpuNetIo.blueFlameLimit;
+  handle.blueFlameLimit = DeviceBackendHandle::kDefaultBlueFlameLimit;
   return handle;
 }
 
-detail::GpuNetIoMemoryDeviceHandle GpuNetIoConnection::getDeviceMemoryInfo(const RegisteredMemory& memory) const {
+DeviceMemoryHandle GpuNetIoConnection::getDeviceMemoryInfo(const RegisteredMemory& memory) const {
   const auto& impl = getImpl(memory);
   if (impl.transports.has(transport_)) {
     const auto& info = impl.getTransportInfo(transport_);

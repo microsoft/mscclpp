@@ -29,7 +29,7 @@ class AllreduceRsAgPipeline : public mscclpp::AlgorithmBuilder {
   std::shared_ptr<Communicator> comm_;
   int nChannelsPerConnection_;
   std::vector<Connection> conns_;
-  std::vector<std::shared_ptr<Device2DeviceSemaphore>> scratchSemaphores_;
+  std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> scratchSemaphores_;
   std::vector<RegisteredMemory> remoteScratchMemories_;
   RegisteredMemory localScratchMemory_;
 

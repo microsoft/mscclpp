@@ -16,7 +16,7 @@ SRC = bidir_port_channel.cu
 all: $(TARGET)
 
 $(TARGET): $(SRC)
-	$(COMPILER) -std=c++20 $(ARCH_FLAG) -o $@ $< -lmscclpp
+	$(COMPILER) $(ARCH_FLAG) -o $@ $< -lmscclpp
 
 clean:
 	rm -f $(TARGET)

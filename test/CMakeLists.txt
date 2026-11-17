@@ -44,17 +44,8 @@ add_library(test_framework STATIC framework.cc)
 target_include_directories(test_framework PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${TEST_INC_COMMON})
 target_link_libraries(test_framework PUBLIC MPI::MPI_CXX)
 
-# Compile the public tutorial API without inheriting the library's USE_IBVERBS definition.
-add_library(port_channel_api_probe OBJECT port_channel_api_probe.cu)
-target_include_directories(port_channel_api_probe PRIVATE ${PROJECT_SOURCE_DIR}/include ${PROJECT_BINARY_DIR}/include)
-target_include_directories(port_channel_api_probe SYSTEM PRIVATE ${GPU_INCLUDE_DIRS})
-if(TARGET mscclpp_gpunetio_headers)
-    target_link_libraries(port_channel_api_probe PRIVATE mscclpp_gpunetio_headers)
-endif()
-
 # Unit tests
 add_executable(unit_tests)
-add_dependencies(unit_tests port_channel_api_probe)
 target_link_libraries(unit_tests ${TEST_LIBS_COMMON} test_framework)
 target_include_directories(unit_tests ${TEST_INC_COMMON} ${TEST_INC_INTERNAL})
 add_subdirectory(unit)

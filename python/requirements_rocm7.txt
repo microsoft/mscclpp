@@ -1,5 +1,5 @@
 mpi4py
-cupy
+cupy>=14,<15
 prettytable
 netifaces
 pytest

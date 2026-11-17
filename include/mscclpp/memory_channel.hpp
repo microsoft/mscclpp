@@ -15,7 +15,7 @@ namespace mscclpp {
 /// Memory channel without specifying source/destination memory regions.
 struct BaseMemoryChannel {
  protected:
-  std::shared_ptr<Device2DeviceSemaphore> semaphore_;
+  std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore_;
 
  public:
   /// Constructor.
@@ -23,7 +23,7 @@ struct BaseMemoryChannel {
 
   /// Constructor.
   /// @param semaphore Semaphore used to synchronize the communication.
-  BaseMemoryChannel(std::shared_ptr<Device2DeviceSemaphore> semaphore);
+  BaseMemoryChannel(std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore);
 
   /// Constructor.
   /// @param semaphore Semaphore used to synchronize the communication.
@@ -61,7 +61,7 @@ struct MemoryChannel : public BaseMemoryChannel {
   /// @param src Registered memory of the source.
   /// @param packetBuffer A buffer used to store packets. @p packetBuffer is optional and if it is nullptr,
   /// unpackPacket() and unpackPackets() methods are not available.
-  MemoryChannel(std::shared_ptr<Device2DeviceSemaphore> semaphore, RegisteredMemory dst, RegisteredMemory src,
+  MemoryChannel(std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore, RegisteredMemory dst, RegisteredMemory src,
                 void* packetBuffer = nullptr);
 
   /// Constructor.

@@ -13,7 +13,7 @@ _REDUCESCATTER_COLLECTIVE = "reducescatter"
 _mscclpp_module = None
 
 from mscclpp_benchmark.dsl import DEFAULT_DSL_TBG, DEFAULT_DSL_TPB, compile_dsl_algorithms
-from mscclpp_benchmark.gpu import current_device, device_name, set_device
+from mscclpp.gpu import current_device, device_name, set_device
 from mscclpp_benchmark.tuning_config import HardwareProfile, TunedConfig, TunedConfigStore, normalize_sku
 
 
@@ -373,7 +373,7 @@ def _dtype_size(dtype: Any) -> int:
         return 2
     if dtype_name in {"float32", "int32", "uint32"}:
         return 4
-    if dtype_name in {"uint8", "float8_e4m3b15", "float8_e4m3fn", "float8_e4m3fnuz"}:
+    if dtype_name in {"uint8", "float8_e4m3b15", "float8_e4m3fn", "float8_e4m3fnuz", "float8_e5m2", "float8_e5m2fnuz"}:
         return 1
     raise ValueError(f"Unknown data type size for {dtype}")
 
@@ -386,6 +386,8 @@ def _dtype_name(dtype: Any) -> str:
 
 
 def _dtype_to_mscclpp(dtype: Any) -> Any:
+    if isinstance(dtype, _mscclpp().DataType):
+        return dtype
     dtype_name = _dtype_name(dtype)
     mapping = {
         "float16": _mscclpp().DataType.float16,

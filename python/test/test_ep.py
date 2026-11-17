@@ -8,7 +8,6 @@ from dataclasses import replace
 import inspect
 import importlib.util
 
-import cupy as cp
 from mpi4py import MPI
 import pytest
 
@@ -27,6 +26,7 @@ from mscclpp.ep import (
     MoEMode,
     QuantConfig,
 )
+from mscclpp.gpu import current_device
 
 NUM_TOPK = 8
 HIDDEN = 4096
@@ -37,7 +37,7 @@ NUM_LOCAL_EXPERTS = 16
 def ep_group():
     if not torch.cuda.is_available():
         pytest.skip("EP requires CUDA")
-    torch.cuda.set_device(cp.cuda.runtime.getDevice())
+    torch.cuda.set_device(current_device())
     if torch.cuda.get_device_capability()[0] < 9:
         pytest.skip("EP requires SM90 or newer")
     group = CommGroup(mpi_comm=MPI.COMM_WORLD)

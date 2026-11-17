@@ -50,7 +50,10 @@ void register_core(nb::module_& m) {
       .value("float8_e5m2", DataType::FLOAT8_E5M2)
       .value("float8_e5m2fnuz", DataType::FLOAT8_E5M2FNUZ)
       .value("uint8", DataType::UINT8)
-      .value("float8_e4m3b15", DataType::FLOAT8_E4M3B15);
+      .value("float8_e4m3b15", DataType::FLOAT8_E4M3B15)
+      .def_prop_ro(
+          "name", [](DataType self) { return nb::cast<std::string>(nb::cast(self).attr("__name__")); },
+          "The data type name, such as 'float32' or 'bfloat16'.");
 
   nb::class_<Bootstrap>(m, "CppBootstrap")
       .def("get_rank", &Bootstrap::getRank)
@@ -160,10 +163,6 @@ void register_core(nb::module_& m) {
       .value("HostNoAtomic", EndpointConfig::Ib::Mode::HostNoAtomic)
       .value("Device", EndpointConfig::Ib::Mode::Device);
 
-  nb::class_<EndpointConfig::Ib::GpuNetIo>(m, "CppEndpointConfigIbGpuNetIo")
-      .def(nb::init<>())
-      .def_rw("blue_flame_limit", &EndpointConfig::Ib::GpuNetIo::blueFlameLimit);
-
   nb::class_<EndpointConfig::Ib>(m, "CppEndpointConfigIb")
       .def(nb::init<>())
       .def(nb::init<int, int, int, int, int, int, int, int, EndpointConfig::Ib::Mode>(), nb::arg("device_index") = -1,
@@ -183,8 +182,7 @@ void register_core(nb::module_& m) {
       .def_rw("max_send_wr", &EndpointConfig::Ib::maxSendWr)
       .def_rw("max_recv_wr", &EndpointConfig::Ib::maxRecvWr)
       .def_rw("max_wr_per_send", &EndpointConfig::Ib::maxWrPerSend)
-      .def_rw("mode", &EndpointConfig::Ib::mode)
-      .def_rw("gpunetio", &EndpointConfig::Ib::gpuNetIo);
+      .def_rw("mode", &EndpointConfig::Ib::mode);
 
   nb::class_<RegisteredMemory>(m, "CppRegisteredMemory")
       .def(nb::init<>())

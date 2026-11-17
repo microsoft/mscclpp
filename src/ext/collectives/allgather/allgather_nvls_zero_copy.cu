@@ -92,7 +92,7 @@ void AllgatherNvls::initialize(std::shared_ptr<mscclpp::Communicator> comm) {
   computeCapabilityMajor_ = deviceProp.major;
   nSwitchChannels_ = 32;
   this->conns_ = setupConnections(comm);
-  std::vector<std::shared_ptr<mscclpp::Device2DeviceSemaphore>> memorySemaphores =
+  std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores =
       setupMemorySemaphores(comm, this->conns_, nSwitchChannels_);
   this->baseChannels_ = setupBaseMemoryChannels(this->conns_, memorySemaphores, nSwitchChannels_);
   this->memoryChannelsDeviceHandle_ = setupBaseMemoryChannelDeviceHandles(this->baseChannels_);

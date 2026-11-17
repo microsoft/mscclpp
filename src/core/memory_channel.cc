@@ -8,14 +8,14 @@
 
 namespace mscclpp {
 
-MSCCLPP_API_CPP BaseMemoryChannel::BaseMemoryChannel(std::shared_ptr<Device2DeviceSemaphore> semaphore)
+MSCCLPP_API_CPP BaseMemoryChannel::BaseMemoryChannel(std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore)
     : semaphore_(semaphore) {}
 
 MSCCLPP_API_CPP BaseMemoryChannel::BaseMemoryChannel(const Semaphore& semaphore)
-    : BaseMemoryChannel(std::make_shared<Device2DeviceSemaphore>(semaphore)) {}
+    : BaseMemoryChannel(std::make_shared<MemoryDevice2DeviceSemaphore>(semaphore)) {}
 
-MSCCLPP_API_CPP MemoryChannel::MemoryChannel(std::shared_ptr<Device2DeviceSemaphore> semaphore, RegisteredMemory dst,
-                                             RegisteredMemory src, void* packetBuffer)
+MSCCLPP_API_CPP MemoryChannel::MemoryChannel(std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore,
+                                             RegisteredMemory dst, RegisteredMemory src, void* packetBuffer)
     : BaseMemoryChannel(semaphore), dst_(dst), src_(src), packetBuffer_(packetBuffer) {
   if (!dst.transports().has(Transport::CudaIpc)) {
     throw Error("MemoryChannel: dst must be registered with CudaIpc", ErrorCode::InvalidUsage);
@@ -24,7 +24,7 @@ MSCCLPP_API_CPP MemoryChannel::MemoryChannel(std::shared_ptr<Device2DeviceSemaph
 
 MSCCLPP_API_CPP MemoryChannel::MemoryChannel(const Semaphore& semaphore, RegisteredMemory dst, RegisteredMemory src,
                                              void* packetBuffer)
-    : MemoryChannel(std::make_shared<Device2DeviceSemaphore>(semaphore), dst, src, packetBuffer) {}
+    : MemoryChannel(std::make_shared<MemoryDevice2DeviceSemaphore>(semaphore), dst, src, packetBuffer) {}
 
 MSCCLPP_API_CPP BaseMemoryChannel::DeviceHandle BaseMemoryChannel::deviceHandle() const {
   return BaseMemoryChannel::DeviceHandle(semaphore_->deviceHandle());
