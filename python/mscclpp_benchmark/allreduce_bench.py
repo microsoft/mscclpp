@@ -13,6 +13,7 @@ from mscclpp_benchmark.mscclpp_op import (
     MscclppAllReduce6,
 )
 from mscclpp_benchmark.nccl_op import NcclAllReduce, NcclCommunicator, get_unique_id
+from mscclpp_benchmark.arrays import array_module, to_array, copy_to
 from mpi4py import MPI
 from mscclpp import ProxyService, is_nvls_supported, CommGroup, GpuBuffer
 from mscclpp.gpu import (
@@ -93,20 +94,21 @@ def human_readable_size(size, decimal_places=1):
 
 
 def check_correctness(memory, func, niter=100):
+    xp = array_module()
     ac = True
     for p in range(niter):
-        memory.copy_from_numpy(np.full(memory.shape, p * MPI.COMM_WORLD.size + MPI.COMM_WORLD.rank, dtype=data_type))
+        copy_to(memory, xp.full(memory.shape, p * MPI.COMM_WORLD.size + MPI.COMM_WORLD.rank, dtype=data_type))
         device_synchronize()
         output_memory = func(None)
         device_synchronize()
-        output = output_memory.to_numpy()
-        expected = np.zeros(memory.shape, dtype=data_type)
+        output = to_array(output_memory)
+        expected = xp.zeros(memory.shape, dtype=data_type)
         for i in range(MPI.COMM_WORLD.size):
-            expected += np.ones(memory.shape).astype(data_type) * (p * MPI.COMM_WORLD.size + i)
+            expected += xp.ones(memory.shape).astype(data_type) * (p * MPI.COMM_WORLD.size + i)
 
-        is_close = np.isclose(output, expected, rtol=1.0e-2, atol=2)
+        is_close = xp.isclose(output, expected, rtol=1.0e-2, atol=2)
         icf = is_close == 0
-        all_close = np.all(is_close)
+        all_close = bool(xp.all(is_close))
         ac = ac and all_close
         if not all_close:
             print(

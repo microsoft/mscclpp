@@ -18,22 +18,14 @@ from mscclpp._mscclpp import is_hip as _is_hip
 from mscclpp.ext import AlgorithmCollectionBuilder
 from mscclpp.utils import get_device_arch
 from mscclpp.gpu import device_synchronize
+from mscclpp_benchmark.arrays import array_module, to_array, copy_to
 from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups, mpi_group
 
 # FP8 E4M3 (hardware) requires SM >= 89 (Ada / Hopper) on NVIDIA GPUs.
 # On AMD/ROCm (e.g. MI300X), FP8 is supported natively — no skip needed.
 _gcn_arch_name = ""
 if _is_hip:
-    from hip import hip
-
-    _error, _props = hip.hipGetDeviceProperties(0)
-    if _error != hip.hipError_t.hipSuccess:
-        raise RuntimeError(f"hipGetDeviceProperties failed with error {int(_error)}")
-
-    _gcn_arch_name = _props.gcnArchName
-    if isinstance(_gcn_arch_name, bytes):
-        _gcn_arch_name = _gcn_arch_name.decode()
-    _gcn_arch_name = _gcn_arch_name.split(":", maxsplit=1)[0]
+    _gcn_arch_name = get_device_arch().split(":", maxsplit=1)[0]
 _is_cdna4 = _gcn_arch_name.startswith("gfx95")
 _skip_fp8 = not _is_hip and int(get_device_arch().removeprefix("sm_")) < 89
 pytestmark = pytest.mark.skipif(_skip_fp8, reason="FP8 accum tests require SM >= 89 on CUDA")
@@ -44,46 +36,48 @@ pytestmark = pytest.mark.skipif(_skip_fp8, reason="FP8 accum tests require SM >=
 
 
 def e4m3fn_to_float(uint8_array):
-    """Decode a NumPy uint8 array of E4M3FN bit patterns to float32."""
+    """Decode uint8 E4M3FN storage on the input array's backend."""
+    xp = array_module(uint8_array)
     bits = uint8_array.astype(np.int32)
     sign = (bits >> 7) & 1
     exp = (bits >> 3) & 0xF
     mant = bits & 0x7
 
     # Normal: (-1)^s * 2^(exp-7) * (1 + mant/8)
-    normal_val = np.ldexp(np.float32(1.0) + mant.astype(np.float32) / np.float32(8.0), (exp - 7).astype(np.int32))
+    normal_val = xp.ldexp(np.float32(1.0) + mant.astype(np.float32) / np.float32(8.0), (exp - 7).astype(np.int32))
     # Subnormal (exp==0): (-1)^s * 2^(-6) * (mant/8)
-    subnormal_val = np.ldexp(mant.astype(np.float32) / np.float32(8.0), np.int32(-6))
+    subnormal_val = xp.ldexp(mant.astype(np.float32) / np.float32(8.0), np.int32(-6))
 
-    result = np.where(exp == 0, subnormal_val, normal_val)
-    result = np.where(sign == 1, -result, result)
+    result = xp.where(exp == 0, subnormal_val, normal_val)
+    result = xp.where(sign == 1, -result, result)
     # Zero
-    result = np.where((exp == 0) & (mant == 0), np.float32(0.0), result)
+    result = xp.where((exp == 0) & (mant == 0), np.float32(0.0), result)
     # NaN: exp==15 & mant==7
     nan_mask = (exp == 15) & (mant == 7)
-    result = np.where(nan_mask, np.float32(float("nan")), result)
+    result = xp.where(nan_mask, np.float32(float("nan")), result)
     return result
 
 
 def float_to_e4m3fn(f32_array, chunk_size=65536):
-    """Encode a NumPy float32 array to uint8 E4M3FN bit patterns.
+    """Encode a float32 array to uint8 E4M3FN on its array backend.
 
     Uses a lookup-table approach: precompute all 128 positive E4M3FN values,
     then find nearest match per element via chunked broadcast comparison.
     """
+    xp = array_module(f32_array)
     # Build lookup table of all 128 positive E4M3FN values (0x00..0x7F)
-    all_bytes = np.arange(128, dtype=np.uint8)
+    all_bytes = xp.arange(128, dtype=np.uint8)
     all_floats = e4m3fn_to_float(all_bytes)  # (128,) float32
     # Mark NaN entries as inf so they're never selected as nearest
-    all_floats = np.where(np.isnan(all_floats), np.float32(float("inf")), all_floats)
+    all_floats = xp.where(xp.isnan(all_floats), np.float32(float("inf")), all_floats)
 
     # Clamp input and extract sign
     clamped = f32_array.astype(np.float32)
-    clamped = np.clip(clamped, -448.0, 448.0)
+    clamped = xp.clip(clamped, -448.0, 448.0)
     signs = (clamped < 0).astype(np.uint8)
-    absval = np.abs(clamped)
+    absval = xp.abs(clamped)
 
-    result = np.zeros(absval.shape, dtype=np.uint8)
+    result = xp.zeros(absval.shape, dtype=np.uint8)
     n = absval.size
     absval_flat = absval.ravel()
     result_flat = result.ravel()
@@ -92,14 +86,14 @@ def float_to_e4m3fn(f32_array, chunk_size=65536):
         end = min(start + chunk_size, n)
         chunk = absval_flat[start:end]
         # (chunk_size, 128) difference matrix
-        diffs = np.abs(chunk[:, None] - all_floats[None, :])
-        result_flat[start:end] = np.argmin(diffs, axis=1).astype(np.uint8)
+        diffs = xp.abs(chunk[:, None] - all_floats[None, :])
+        result_flat[start:end] = xp.argmin(diffs, axis=1).astype(np.uint8)
 
     # Combine with sign bit
     result = result_flat.reshape(absval.shape)
     result = result | (signs << 7)
     # Handle exact zero
-    result = np.where(absval == 0, np.uint8(0), result)
+    result = xp.where(absval == 0, np.uint8(0), result)
     return result
 
 
@@ -109,41 +103,43 @@ def float_to_e4m3fn(f32_array, chunk_size=65536):
 
 
 def e4m3fnuz_to_float(uint8_array):
-    """Decode a NumPy uint8 array of E4M3FNUZ bit patterns to float32."""
+    """Decode uint8 E4M3FNUZ storage on the input array's backend."""
+    xp = array_module(uint8_array)
     bits = uint8_array.astype(np.int32)
     sign = (bits >> 7) & 1
     exp = (bits >> 3) & 0xF
     mant = bits & 0x7
 
     # Normal: (-1)^s * 2^(exp-8) * (1 + mant/8)
-    normal_val = np.ldexp(np.float32(1.0) + mant.astype(np.float32) / np.float32(8.0), (exp - 8).astype(np.int32))
+    normal_val = xp.ldexp(np.float32(1.0) + mant.astype(np.float32) / np.float32(8.0), (exp - 8).astype(np.int32))
     # Subnormal (exp==0): (-1)^s * 2^(-7) * (mant/8)
-    subnormal_val = np.ldexp(mant.astype(np.float32) / np.float32(8.0), np.int32(-7))
+    subnormal_val = xp.ldexp(mant.astype(np.float32) / np.float32(8.0), np.int32(-7))
 
-    result = np.where(exp == 0, subnormal_val, normal_val)
-    result = np.where(sign == 1, -result, result)
+    result = xp.where(exp == 0, subnormal_val, normal_val)
+    result = xp.where(sign == 1, -result, result)
     # Zero is only 0x00; the 0x80 encoding is reserved for NaN under fnuz.
-    result = np.where(uint8_array.astype(np.int32) == 0, np.float32(0.0), result)
+    result = xp.where(uint8_array.astype(np.int32) == 0, np.float32(0.0), result)
     nan_mask = uint8_array.astype(np.int32) == 0x80
-    result = np.where(nan_mask, np.float32(float("nan")), result)
+    result = xp.where(nan_mask, np.float32(float("nan")), result)
     return result
 
 
 def float_to_e4m3fnuz(f32_array, chunk_size=65536):
-    """Encode a NumPy float32 array to uint8 E4M3FNUZ bit patterns.
+    """Encode a float32 array to uint8 E4M3FNUZ on its array backend.
 
     Same lookup-table approach as float_to_e4m3fn but using the fnuz table.
     """
-    all_bytes = np.arange(128, dtype=np.uint8)
+    xp = array_module(f32_array)
+    all_bytes = xp.arange(128, dtype=np.uint8)
     all_floats = e4m3fnuz_to_float(all_bytes)
-    all_floats = np.where(np.isnan(all_floats), np.float32(float("inf")), all_floats)
+    all_floats = xp.where(xp.isnan(all_floats), np.float32(float("inf")), all_floats)
 
     clamped = f32_array.astype(np.float32)
-    clamped = np.clip(clamped, -240.0, 240.0)
+    clamped = xp.clip(clamped, -240.0, 240.0)
     signs = (clamped < 0).astype(np.uint8)
-    absval = np.abs(clamped)
+    absval = xp.abs(clamped)
 
-    result = np.zeros(absval.shape, dtype=np.uint8)
+    result = xp.zeros(absval.shape, dtype=np.uint8)
     n = absval.size
     absval_flat = absval.ravel()
     result_flat = result.ravel()
@@ -151,14 +147,14 @@ def float_to_e4m3fnuz(f32_array, chunk_size=65536):
     for start in range(0, n, chunk_size):
         end = min(start + chunk_size, n)
         chunk = absval_flat[start:end]
-        diffs = np.abs(chunk[:, None] - all_floats[None, :])
-        result_flat[start:end] = np.argmin(diffs, axis=1).astype(np.uint8)
+        diffs = xp.abs(chunk[:, None] - all_floats[None, :])
+        result_flat[start:end] = xp.argmin(diffs, axis=1).astype(np.uint8)
 
     result = result_flat.reshape(absval.shape)
     result = result | (signs << 7)
     # 0x80 is NaN under fnuz (no negative zero). Collapse any encoding that
     # landed on 0x80 (small negatives quantised to zero magnitude) to 0x00.
-    result = np.where(result == 0x80, np.uint8(0), result)
+    result = xp.where(result == 0x80, np.uint8(0), result)
     return result
 
 
@@ -180,39 +176,41 @@ else:
 
 
 def e4m3b15_to_float(uint8_array):
-    """Decode a NumPy uint8 array of E4M3B15 bit patterns to float32."""
+    """Decode uint8 E4M3B15 storage on the input array's backend."""
+    xp = array_module(uint8_array)
     bits = uint8_array.astype(np.int32)
     sign = (bits >> 7) & 1
     exp = (bits >> 3) & 0xF
     mant = bits & 0x7
 
     # Normal: (-1)^s * 2^(exp-15) * (1 + mant/8)
-    normal_val = np.ldexp(np.float32(1.0) + mant.astype(np.float32) / np.float32(8.0), (exp - 15).astype(np.int32))
+    normal_val = xp.ldexp(np.float32(1.0) + mant.astype(np.float32) / np.float32(8.0), (exp - 15).astype(np.int32))
     # Subnormal (exp==0): (-1)^s * 2^(-14) * (mant/8)
-    subnormal_val = np.ldexp(mant.astype(np.float32) / np.float32(8.0), np.int32(-14))
+    subnormal_val = xp.ldexp(mant.astype(np.float32) / np.float32(8.0), np.int32(-14))
 
-    result = np.where(exp == 0, subnormal_val, normal_val)
-    result = np.where(sign == 1, -result, result)
+    result = xp.where(exp == 0, subnormal_val, normal_val)
+    result = xp.where(sign == 1, -result, result)
     return result
 
 
 def float_to_e4m3b15(f32_array, chunk_size=65536):
-    """Encode a NumPy float32 array to uint8 E4M3B15 bit patterns.
+    """Encode a float32 array to uint8 E4M3B15 on its array backend.
 
     Same lookup-table approach as float_to_e4m3fn.
     Saturates to ±1.875 (0x7f/0xff), matching the device float32 → e4m3b15 path.
     """
+    xp = array_module(f32_array)
     # Build lookup table of all 128 positive E4M3B15 values (0x00..0x7F)
-    all_bytes = np.arange(128, dtype=np.uint8)
+    all_bytes = xp.arange(128, dtype=np.uint8)
     all_floats = e4m3b15_to_float(all_bytes)  # (128,) float32
 
     # Clamp input and extract sign.
     values = f32_array.astype(np.float32)
-    signs = np.signbit(values).astype(np.uint8)
-    absval = np.abs(values)
-    absval = np.clip(absval, np.float32(0.0), np.float32(1.875))
+    signs = xp.signbit(values).astype(np.uint8)
+    absval = xp.abs(values)
+    absval = xp.clip(absval, np.float32(0.0), np.float32(1.875))
 
-    result = np.zeros(absval.shape, dtype=np.uint8)
+    result = xp.zeros(absval.shape, dtype=np.uint8)
     n = absval.size
     absval_flat = absval.ravel()
     result_flat = result.ravel()
@@ -221,8 +219,8 @@ def float_to_e4m3b15(f32_array, chunk_size=65536):
         end = min(start + chunk_size, n)
         chunk = absval_flat[start:end]
         # (chunk_size, 128) difference matrix
-        diffs = np.abs(chunk[:, None] - all_floats[None, :])
-        result_flat[start:end] = np.argmin(diffs, axis=1).astype(np.uint8)
+        diffs = xp.abs(chunk[:, None] - all_floats[None, :])
+        result_flat[start:end] = xp.argmin(diffs, axis=1).astype(np.uint8)
 
     # Combine with sign bit
     result = result_flat.reshape(absval.shape)
@@ -251,7 +249,7 @@ def setup_algorithms(mpi_group):
 
 
 def run_allreduce(algo, comm_group, buffer, dtype, accum_dtype=None, nblocks=0, nthreads_per_block=0):
-    """Run allreduce in-place on the default stream and return a copy; input writes must be synchronized."""
+    """Run allreduce in-place and return storage values; input writes must be synchronized."""
     ret = algo.execute(
         comm=comm_group.communicator,
         input_buffer=buffer.data.ptr,
@@ -268,7 +266,7 @@ def run_allreduce(algo, comm_group, buffer, dtype, accum_dtype=None, nblocks=0, 
     )
     device_synchronize()
     assert ret == 0, f"Allreduce failed with error code {ret}"
-    return buffer.to_numpy()
+    return to_array(buffer)
 
 
 # ---------------------------------------------------------------------------
@@ -291,6 +289,7 @@ def run_allreduce(algo, comm_group, buffer, dtype, accum_dtype=None, nblocks=0, 
 def test_fp8_e4m3_accum(mpi_group: MpiGroup, algo_name: str, size: int):
     """Verify that FP8 E4M3 allreduce with higher-precision accumulation is at
     least as accurate as native FP8 accumulation, across all algorithm variants."""
+    xp = array_module()
     rank = mpi_group.comm.rank
     world_size = mpi_group.comm.size
 
@@ -324,12 +323,12 @@ def test_fp8_e4m3_accum(mpi_group: MpiGroup, algo_name: str, size: int):
     for accum_label, accum_dtype in accum_configs:
         # Generate deterministic per-rank data (use numpy to avoid hipRAND issues on ROCm)
         rng = np.random.RandomState(42 + rank)
-        src_f32 = np.asarray(rng.randn(size).astype(np.float32))
-        src_f32 = np.clip(src_f32, -240.0, 240.0)
+        src_f32 = xp.asarray(rng.randn(size).astype(np.float32))
+        src_f32 = xp.clip(src_f32, -240.0, 240.0)
         src_fp8 = float_to_e4m3_native(src_f32)
 
         # Copy into symmetric buffer
-        buf.copy_from_numpy(src_fp8)
+        copy_to(buf, src_fp8)
         device_synchronize()
 
         # Run allreduce
@@ -345,18 +344,18 @@ def test_fp8_e4m3_accum(mpi_group: MpiGroup, algo_name: str, size: int):
         result_f32 = e4m3_native_to_float(result)
 
         # Compute float32 reference: sum all ranks' quantized FP8 inputs in float32
-        ref_f32 = np.zeros(size, dtype=np.float32)
+        ref_f32 = xp.zeros(size, dtype=np.float32)
         for r in range(world_size):
             rng_r = np.random.RandomState(42 + r)
-            rank_data = np.asarray(rng_r.randn(size).astype(np.float32))
-            rank_data = np.clip(rank_data, -240.0, 240.0)
+            rank_data = xp.asarray(rng_r.randn(size).astype(np.float32))
+            rank_data = xp.clip(rank_data, -240.0, 240.0)
             rank_data_fp8 = float_to_e4m3_native(rank_data)
             ref_f32 += e4m3_native_to_float(rank_data_fp8)
 
         # Compute errors (only on valid, non-NaN entries)
-        valid = ~np.isnan(result_f32) & ~np.isnan(ref_f32)
-        abs_err = np.abs(result_f32[valid] - ref_f32[valid])
-        mean_abs_err = float(np.mean(abs_err)) if abs_err.size > 0 else 0.0
+        valid = ~xp.isnan(result_f32) & ~xp.isnan(ref_f32)
+        abs_err = xp.abs(result_f32[valid] - ref_f32[valid])
+        mean_abs_err = float(xp.mean(abs_err)) if abs_err.size > 0 else 0.0
         errors[accum_label] = mean_abs_err
 
         # Reset between runs
@@ -391,6 +390,7 @@ def test_fp8_e4m3_accum(mpi_group: MpiGroup, algo_name: str, size: int):
 def test_fp8_e4m3b15_accum(mpi_group: MpiGroup, algo_name: str, size: int):
     """Verify that FP8 E4M3B15 allreduce with higher-precision accumulation is at
     least as accurate as native E4M3B15 accumulation."""
+    xp = array_module()
     rank = mpi_group.comm.rank
     world_size = mpi_group.comm.size
 
@@ -422,10 +422,10 @@ def test_fp8_e4m3b15_accum(mpi_group: MpiGroup, algo_name: str, size: int):
         # Generate deterministic per-rank random uint8 values covering the full e4m3b15 range.
         # All 256 bit patterns are valid (no NaN in this format).
         rng = np.random.RandomState(42 + rank)
-        src_uint8 = np.asarray(rng.randint(0, 256, (size,)).astype(np.uint8))
+        src_uint8 = xp.asarray(rng.randint(0, 256, (size,)).astype(np.uint8))
 
         # Copy into symmetric buffer
-        buf.copy_from_numpy(src_uint8)
+        copy_to(buf, src_uint8)
         device_synchronize()
 
         # Run allreduce
@@ -443,18 +443,18 @@ def test_fp8_e4m3b15_accum(mpi_group: MpiGroup, algo_name: str, size: int):
         result_f32 = e4m3b15_to_float(result)
 
         # Compute float32 reference
-        ref_f32 = np.zeros(size, dtype=np.float32)
+        ref_f32 = xp.zeros(size, dtype=np.float32)
         for r in range(world_size):
             rng_r = np.random.RandomState(42 + r)
-            bits_r = np.asarray(rng_r.randint(0, 256, (size,)).astype(np.uint8))
+            bits_r = xp.asarray(rng_r.randint(0, 256, (size,)).astype(np.uint8))
             ref_f32 += e4m3b15_to_float(bits_r)
 
         # Clamp reference to e4m3b15 representable range (float source saturates at ±1.875)
-        ref_f32 = np.clip(ref_f32, -1.875, 1.875)
+        ref_f32 = xp.clip(ref_f32, -1.875, 1.875)
 
         # Compute errors
-        abs_err = np.abs(result_f32 - ref_f32)
-        mean_abs_err = float(np.mean(abs_err))
+        abs_err = xp.abs(result_f32 - ref_f32)
+        mean_abs_err = float(xp.mean(abs_err))
         errors[accum_label] = mean_abs_err
 
         algo.reset()
