@@ -38,7 +38,11 @@ template <class T>
 concept HasSeparateExtraction = requires(T t) { t.deviceBackendHandle(); };
 static_assert(!ExposesPortState<mscclpp::PortChannelDeviceHandle>);
 static_assert(!ExposesPortDescriptors<mscclpp::PortChannelDeviceHandle>);
-static_assert(!HasSeparateExtraction<mscclpp::PortChannel>);
+static_assert(HasSeparateExtraction<mscclpp::PortChannel>);
+using DevicePortHandle = mscclpp::PortChannelDeviceHandleT<mscclpp::PortChannelBackend::Device>;
+static_assert(!ExposesPortState<DevicePortHandle>);
+static_assert(!ExposesPortDescriptors<DevicePortHandle>);
+static_assert(std::is_same_v<decltype(std::declval<mscclpp::PortChannel>().deviceBackendHandle()), DevicePortHandle>);
 
 namespace {
 using Access = mscclpp::detail::PortChannelHandleAccess;
@@ -133,19 +137,20 @@ TEST(DeviceSemaphoreTest, ExtractionModesAndRemoteValidation) {
   EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::PortChannel invalid(owner, semaphore.remoteMemory(), {}); },
                                   "initialized registered regions"));
   mscclpp::BasePortChannel channel(owner);
-  auto first = channel.deviceHandle();
-  EXPECT_TRUE(Access::isDevice(first));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { channel.deviceHandle(); }, "deviceBackendHandle"));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::deviceHandle(channel); }, "deviceBackendHandle"));
+  auto first = channel.deviceBackendHandle();
   EXPECT_EQ(Access::receive(first).expectedInboundToken, memoryHandle.expectedInboundToken);
   EXPECT_EQ(Access::device(first).remoteSignal.addr, uint64_t{0x2000});
   EXPECT_EQ(Access::device(first).remoteSignal.key, 23u);
   connectionImpl->remoteToken = {0x3000, 29};
-  auto second = channel.deviceHandle();
+  auto second = channel.deviceBackendHandle();
   EXPECT_EQ(Access::device(second).remoteSignal.addr, uint64_t{0x3000});
   EXPECT_EQ(Access::device(second).remoteSignal.key, 29u);
   connectionImpl->remoteToken.addr = 0;
-  EXPECT_TRUE(rejectsInvalidUsage([&] { channel.deviceHandle(); }, "not addressable"));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { channel.deviceBackendHandle(); }, "not addressable"));
   connectionImpl->deviceMode = false;
-  EXPECT_TRUE(rejectsInvalidUsage([&] { channel.deviceHandle(); }, "Device-mode connection"));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { channel.deviceBackendHandle(); }, "Device-mode connection"));
 }
 
 TEST(DeviceSemaphoreTest, SharedOwnershipAndCounter) {
@@ -167,8 +172,8 @@ TEST(DeviceSemaphoreTest, SharedOwnershipAndCounter) {
   memoryChannel = emptyMemory;
   memoryCopy = emptyMemory;
   EXPECT_FALSE(weakOwner.expired());
-  EXPECT_EQ(Access::receive(portCopy.deviceHandle()).expectedInboundToken, expected);
-  EXPECT_EQ(Access::receive(baseCopy.deviceHandle()).expectedInboundToken, expected);
+  EXPECT_EQ(Access::receive(portCopy.deviceBackendHandle()).expectedInboundToken, expected);
+  EXPECT_EQ(Access::receive(baseCopy.deviceBackendHandle()).expectedInboundToken, expected);
   uint64_t actual = 0;
   mscclpp::gpuMemcpy(&actual, expected, 1, cudaMemcpyDeviceToHost);
   EXPECT_EQ(actual, generation);
@@ -181,13 +186,15 @@ TEST(DeviceSemaphoreTest, SharedOwnershipAndCounter) {
 TEST(DeviceSemaphoreTest, RawConstructorAndCopies) {
   connectionImpl->deviceMode = true;
   mscclpp::PortChannel original(semaphore, semaphore.remoteMemory(), semaphore.localMemory());
+  EXPECT_TRUE(rejectsInvalidUsage([&] { original.deviceHandle(); }, "deviceBackendHandle"));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::deviceHandle(original); }, "deviceBackendHandle"));
   auto copy = original;
-  const auto expected = Access::receive(original.deviceHandle()).expectedInboundToken;
+  const auto expected = Access::receive(original.deviceBackendHandle()).expectedInboundToken;
   original = {};
-  EXPECT_EQ(Access::receive(mscclpp::deviceHandle(copy)).expectedInboundToken, expected);
+  EXPECT_EQ(Access::receive(copy.deviceBackendHandle()).expectedInboundToken, expected);
   // Separate construction intentionally creates a separate logical counter, just like MemoryChannel(raw, ...).
   mscclpp::PortChannel independent(semaphore, semaphore.remoteMemory(), semaphore.localMemory());
-  EXPECT_NE(Access::receive(independent.deviceHandle()).expectedInboundToken, expected);
+  EXPECT_NE(Access::receive(independent.deviceBackendHandle()).expectedInboundToken, expected);
 }
 
 TEST(DeviceSemaphoreTest, MoveRetainsCounter) {
@@ -202,7 +209,7 @@ TEST(DeviceSemaphoreTest, MoveRetainsCounter) {
   auto movedFrom = std::make_shared<mscclpp::Device2DeviceSemaphore>(std::move(original));
   EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::BasePortChannel invalid(movedFrom); }, "initialized semaphore"));
   auto owner = std::make_shared<mscclpp::Device2DeviceSemaphore>(std::move(assigned));
-  EXPECT_EQ(Access::receive(mscclpp::BasePortChannel(owner).deviceHandle()).expectedInboundToken, expected);
+  EXPECT_EQ(Access::receive(mscclpp::BasePortChannel(owner).deviceBackendHandle()).expectedInboundToken, expected);
 }
 
 TEST(DeviceSemaphoreTest, CpuEndpointRejected) {
@@ -221,8 +228,9 @@ TEST(DeviceSemaphoreTest, AllocatesOnEndpointGpuAndRestoresCaller) {
     int current = -1;
     MSCCLPP_CUDATHROW(cudaGetDevice(&current));
     EXPECT_EQ(current, 1);
-    auto expected = deviceMode ? Access::receive(mscclpp::BasePortChannel(owner).deviceHandle()).expectedInboundToken
-                               : owner->deviceHandle().expectedInboundToken;
+    auto expected = deviceMode
+                        ? Access::receive(mscclpp::BasePortChannel(owner).deviceBackendHandle()).expectedInboundToken
+                        : owner->deviceHandle().expectedInboundToken;
     int allocatedDevice = -1;
     MSCCLPP_CUTHROW(cuPointerGetAttribute(&allocatedDevice, CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL,
                                           reinterpret_cast<CUdeviceptr>(expected)));
@@ -237,7 +245,7 @@ TEST(DeviceSemaphoreTest, EndpointTuning) {
     auto raw = makeSemaphore({mscclpp::DeviceType::GPU, 0}, limit);
     connectionImpl->deviceMode = true;
     mscclpp::BasePortChannel channel(raw);
-    EXPECT_EQ(Access::device(channel.deviceHandle()).backend.blueFlameLimit, limit);
+    EXPECT_EQ(Access::device(channel.deviceBackendHandle()).backend.blueFlameLimit, limit);
     mscclpp::EndpointConfig config;
     config.ib.gpuNetIo.blueFlameLimit = limit;
     auto endpoint = context->createEndpoint(config);

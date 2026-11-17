@@ -45,7 +45,8 @@ int wait_process(int pid) {
   return -1;
 }
 
-__global__ void bidirPutKernel(mscclpp::PortChannelDeviceHandle* devHandle, size_t copyBytes, int myRank) {
+template <class Handle>
+__global__ void bidirPutKernel(Handle* devHandle, size_t copyBytes, int myRank) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid == 0) {
     devHandle->signal();
@@ -58,7 +59,9 @@ __global__ void bidirPutKernel(mscclpp::PortChannelDeviceHandle* devHandle, size
   }
 }
 
-void worker(int rank, int gpuId, const std::string& ipPort, mscclpp::Transport transport, bool deviceMode = false) {
+template <mscclpp::PortChannelBackend Backend>
+void workerBackend(int rank, int gpuId, const std::string& ipPort, mscclpp::Transport transport) {
+  constexpr bool deviceMode = Backend == mscclpp::PortChannelBackend::Device;
   MSCCLPP_CUDATHROW(cudaSetDevice(gpuId));
   const int myRank = rank;
   const int remoteRank = myRank == 0 ? 1 : 0;
@@ -96,7 +99,13 @@ void worker(int rank, int gpuId, const std::string& ipPort, mscclpp::Transport t
     portChan = proxyService->portChannel(semaId, remoteMemId, localMemId);
   }
 
-  auto portChanHandle = portChan.deviceHandle();
+  auto portChanHandle = [&] {
+    if constexpr (deviceMode)
+      return portChan.deviceBackendHandle();
+    else
+      return portChan.deviceHandle();
+  }();
+  using Handle = decltype(portChanHandle);
 
   void* devHandle;
   MSCCLPP_CUDATHROW(cudaMalloc(&devHandle, sizeof(portChanHandle)));
@@ -108,8 +117,7 @@ void worker(int rank, int gpuId, const std::string& ipPort, mscclpp::Transport t
   std::function<void(size_t)> kernels[1];
 
   kernels[0] = [&](size_t copyBytes) {
-    bidirPutKernel<<<1, 1, 0, stream>>>(reinterpret_cast<mscclpp::PortChannelDeviceHandle*>(devHandle), copyBytes,
-                                        myRank);
+    bidirPutKernel<Handle><<<1, 1, 0, stream>>>(static_cast<Handle*>(devHandle), copyBytes, myRank);
   };
 
   cudaEvent_t start, end;
@@ -172,6 +180,13 @@ void worker(int rank, int gpuId, const std::string& ipPort, mscclpp::Transport t
   }
 
   bootstrap->barrier();
+}
+
+void worker(int rank, int gpuId, const std::string& ipPort, mscclpp::Transport transport, bool deviceMode = false) {
+  if (deviceMode)
+    workerBackend<mscclpp::PortChannelBackend::Device>(rank, gpuId, ipPort, transport);
+  else
+    workerBackend<mscclpp::PortChannelBackend::Host>(rank, gpuId, ipPort, transport);
 }
 
 mscclpp::Transport parseTransport(const std::string& transportStr) {

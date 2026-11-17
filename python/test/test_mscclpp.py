@@ -52,10 +52,12 @@ def test_env(mpi_group: MpiGroup):
 
 
 @parametrize_mpi_groups(1)
-def test_unified_port_channel_interface(mpi_group: MpiGroup):
+def test_typed_port_channel_interface(mpi_group: MpiGroup):
     from mscclpp._mscclpp import (
         CppBasePortChannel,
         CppBasePortChannelDeviceHandle,
+        CppDeviceBasePortChannelDeviceHandle,
+        CppDevicePortChannelDeviceHandle,
         CppPortChannel,
         CppPortChannelDeviceHandle,
         Error,
@@ -68,10 +70,29 @@ def test_unified_port_channel_interface(mpi_group: MpiGroup):
     for channel in (CppBasePortChannel(), CppPortChannel()):
         with pytest.raises(Error, match="initialized"):
             channel.device_handle()
+        with pytest.raises(Error, match="initialized"):
+            channel.device_backend_handle()
+
+    for handle in (CppDeviceBasePortChannelDeviceHandle(), CppDevicePortChannelDeviceHandle()):
+        assert len(handle.raw) > 0
+        assert not hasattr(handle, "semaphore_id_")
+        assert not hasattr(handle, "device_")
+        assert not hasattr(handle, "dstMemory_")
 
     base = CppBasePortChannelDeviceHandle()
     base.semaphore_id_ = 3
     assert base.semaphore_id_ == 3
+    for first_field in ("src_", "dst_"):
+        zero = CppPortChannelDeviceHandle()
+        zero.semaphore_id_ = 0
+        before = zero.raw
+        for field in ("src_", "dst_"):
+            with pytest.raises(Error, match="unassigned Host bound regions"):
+                getattr(zero, field)
+            assert zero.raw == before  # Inspection must not initialize bound IDs.
+        setattr(zero, first_field, 0)  # Either writable field setup may initialize legitimate ID0 bounds.
+        assert (zero.src_, zero.dst_) == (0, 0)
+
     bound = CppPortChannelDeviceHandle()
     bound.semaphore_id_ = 7
     bound.dst_ = 11

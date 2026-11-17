@@ -144,12 +144,16 @@ struct BasePortChannel {
   /// @param other The other BasePortChannel to assign from.
   BasePortChannel& operator=(const BasePortChannel& other) = default;
 
-  /// Unified device-side handle for BasePortChannel.
+  /// Host-proxy device view, retained for the generic deviceHandle helper.
   using DeviceHandle = BasePortChannelDeviceHandle;
 
-  /// Returns the unified Host or Device handle, valid while this channel remains alive.
-  /// @throws Error with ErrorCode::InvalidUsage for uninitialized or incompatible connection state.
+  /// Returns a Host-proxy view, valid while this channel remains alive.
+  /// @throws Error with ErrorCode::InvalidUsage for uninitialized or Device-mode state.
   DeviceHandle deviceHandle() const;
+
+  /// Returns a direct GPU-posting view, valid while this channel remains alive.
+  /// @throws Error with ErrorCode::InvalidUsage for uninitialized or Host-mode state.
+  BasePortChannelDeviceHandleT<PortChannelBackend::Device> deviceBackendHandle() const;
 };
 
 /// Port channel.
@@ -200,13 +204,16 @@ struct PortChannel : public BasePortChannel {
   /// @param other The other PortChannel to assign from.
   PortChannel& operator=(const PortChannel& other) = default;
 
-  /// Unified device-side handle for PortChannel.
+  /// Host-proxy device view, retained for the generic deviceHandle helper.
   using DeviceHandle = PortChannelDeviceHandle;
 
-  /// Returns the same normal handle type for Host and Device channels.
-  /// Keep this channel and its application buffers alive while using the handle.
-  /// @throws Error with ErrorCode::InvalidUsage for uninitialized or incompatible connection state.
+  /// Returns a Host-proxy view. Keep this channel and its application buffers alive during GPU use.
+  /// @throws Error with ErrorCode::InvalidUsage for uninitialized or Device-mode state.
   DeviceHandle deviceHandle() const;
+
+  /// Returns a direct GPU-posting view. Keep this channel and its application buffers alive during GPU use.
+  /// @throws Error with ErrorCode::InvalidUsage for uninitialized or Host-mode state.
+  PortChannelDeviceHandleT<PortChannelBackend::Device> deviceBackendHandle() const;
 };
 
 /// @deprecated Use BasePortChannel instead.

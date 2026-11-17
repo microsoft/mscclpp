@@ -21,74 +21,72 @@ using MemoryId = uint32_t;
 
 struct BasePortChannel;
 struct PortChannel;
-struct PortChannelDeviceHandle;
 namespace detail {
 struct PortChannelHandleAccess;
 }
 
-/// Device-side PortChannel without bound source/destination regions.
-/// The same trivially copyable type services Host and Device channels.
-struct BasePortChannelDeviceHandle {
+/// Backend is the only handle specialization axis. Concurrency and scratch are operation policies.
+template <PortChannelBackend Backend = PortChannelBackend::Host>
+struct BasePortChannelDeviceHandleT;
+template <PortChannelBackend Backend = PortChannelBackend::Host>
+struct PortChannelDeviceHandleT;
+
+/// Host-proxy device view without bound memory regions.
+template <>
+struct BasePortChannelDeviceHandleT<PortChannelBackend::Host> {
  public:
   /// Scope of concurrent callers on the underlying queue pair.
   enum class Concurrency : uint8_t { Exclusive = 0, Block = 1, Device = 2 };
-  /// Default internal scratch capacity per CTA; zero disables scratch submission.
+  /// Default scratch capacity per CTA (unused by Host operations).
   static constexpr uint32_t kDefaultSmemSlots = detail::kPortChannelDefaultSmemSlots;
 
-  /// Constructor. Operations on an unassigned handle fail explicitly.
-  MSCCLPP_HOST_DEVICE_INLINE constexpr BasePortChannelDeviceHandle() : kind_(Kind::Invalid), receive_{}, state_() {}
-
+  /// Default view. Operations fail explicitly until valid state is assigned.
+  MSCCLPP_HOST_DEVICE_INLINE constexpr BasePortChannelDeviceHandleT() : receive_{}, host_{} {}
   /// Construct a Host-proxy handle. Prefer extraction from a host channel.
-  MSCCLPP_HOST_DEVICE_INLINE constexpr BasePortChannelDeviceHandle(SemaphoreId id,
-                                                                   Host2DeviceSemaphoreDeviceHandle receive,
-                                                                   FifoDeviceHandle fifo, uint64_t* flushDone)
-      : kind_(Kind::Host), receive_(receive), state_(HostState{id, fifo, flushDone}) {}
+  MSCCLPP_HOST_DEVICE_INLINE constexpr BasePortChannelDeviceHandleT(SemaphoreId id,
+                                                                    Host2DeviceSemaphoreDeviceHandle receive,
+                                                                    FifoDeviceHandle fifo, uint64_t* flushDone)
+      : receive_(receive), host_{id, fifo, flushDone} {}
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
-  /// Put between ProxyService memory IDs. Only Host-backed handles accept IDs.
-  /// Host posting supports Concurrency::Device only; incompatible modes trap even in release builds.
+  /// Put between ProxyService memory IDs. Only Concurrency::Device is supported.
   template <Concurrency Mode = Concurrency::Device, uint32_t SmemSlots = kDefaultSmemSlots>
   MSCCLPP_DEVICE_INLINE void put(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset, uint64_t size) {
-    requireHost<Mode, SmemSlots>();
-    state_.host.fifo.push({TriggerPut, dst, dstOffset, src, srcOffset, size, state_.host.id});
+    validate<Mode, SmemSlots>();
+    host_.fifo.push({TriggerPut, dst, dstOffset, src, srcOffset, size, host_.id});
   }
-  /// Put between Host memory IDs at the same offset.
+  /// Put between ProxyService memory IDs at the same offset.
   template <Concurrency Mode = Concurrency::Device, uint32_t SmemSlots = kDefaultSmemSlots>
   MSCCLPP_DEVICE_INLINE void put(MemoryId dst, MemoryId src, uint64_t offset, uint64_t size) {
     put<Mode, SmemSlots>(dst, offset, src, offset, size);
   }
-  /// Signal the remote peer. Scratch capacity is selected per operation, not by handle type.
+  /// Signal the remote peer through the proxy.
   template <Concurrency Mode = Concurrency::Device, uint32_t SmemSlots = kDefaultSmemSlots>
-  MSCCLPP_DEVICE_INLINE void signal(int slotIdx = -1) {
+  MSCCLPP_DEVICE_INLINE void signal() {
     validate<Mode, SmemSlots>();
-    if (kind_ == Kind::Host) {
-      state_.host.fifo.push({TriggerSignal, 0, 0, 0, 0, 0, state_.host.id});
-    } else {
-      state_.device.backend.template accumulate<Mode, SmemSlots>(state_.device.remoteSignal, 0, 1, slotIdx);
-    }
+    host_.fifo.push({TriggerSignal, 0, 0, 0, 0, 0, host_.id});
   }
-  /// Put between Host memory IDs and signal in FIFO order.
+  /// Put and signal in FIFO order.
   template <Concurrency Mode = Concurrency::Device, uint32_t SmemSlots = kDefaultSmemSlots>
   MSCCLPP_DEVICE_INLINE void putWithSignal(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset,
                                            uint64_t size) {
-    requireHost<Mode, SmemSlots>();
-    state_.host.fifo.push({TriggerPutWithSignal, dst, dstOffset, src, srcOffset, size, state_.host.id});
+    validate<Mode, SmemSlots>();
+    host_.fifo.push({TriggerPutWithSignal, dst, dstOffset, src, srcOffset, size, host_.id});
   }
-  /// Put and signal between Host memory IDs at the same offset.
+  /// Put and signal at a common offset.
   template <Concurrency Mode = Concurrency::Device, uint32_t SmemSlots = kDefaultSmemSlots>
   MSCCLPP_DEVICE_INLINE void putWithSignal(MemoryId dst, MemoryId src, uint64_t offset, uint64_t size) {
     putWithSignal<Mode, SmemSlots>(dst, offset, src, offset, size);
   }
-  /// Put, signal and flush between Host memory IDs with a single FIFO trigger.
+  /// Put, signal and wait for local completion with one FIFO trigger.
   template <Concurrency Mode = Concurrency::Device, uint32_t SmemSlots = kDefaultSmemSlots>
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset,
                                                    uint64_t size, int64_t maxSpinCount = 1000000) {
-    requireHost<Mode, SmemSlots>();
-    auto pos =
-        state_.host.fifo.push({TriggerPutWithSignalAndFlush, dst, dstOffset, src, srcOffset, size, state_.host.id});
+    validate<Mode, SmemSlots>();
+    auto pos = host_.fifo.push({TriggerPutWithSignalAndFlush, dst, dstOffset, src, srcOffset, size, host_.id});
     waitFlush(pos, maxSpinCount);
   }
-  /// Put, signal and flush between Host memory IDs at the same offset.
+  /// Put, signal and flush at a common offset.
   template <Concurrency Mode = Concurrency::Device, uint32_t SmemSlots = kDefaultSmemSlots>
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(MemoryId dst, MemoryId src, uint64_t offset, uint64_t size,
                                                    int64_t maxSpinCount = 1000000) {
@@ -98,20 +96,16 @@ struct BasePortChannelDeviceHandle {
   template <Concurrency Mode = Concurrency::Device, uint32_t SmemSlots = kDefaultSmemSlots>
   MSCCLPP_DEVICE_INLINE void flush(int64_t maxSpinCount = 1000000) {
     validate<Mode, SmemSlots>();
-    if (kind_ == Kind::Host) {
-      auto pos = state_.host.fifo.push({TriggerFlush, 0, 0, 0, 0, 0, state_.host.id});
-      waitFlush(pos, maxSpinCount);
-    } else {
-      state_.device.backend.template flush<Mode>(maxSpinCount);
-    }
+    auto pos = host_.fifo.push({TriggerFlush, 0, 0, 0, 0, 0, host_.id});
+    waitFlush(pos, maxSpinCount);
   }
-  /// Atomically add to a Host-registered destination. See Connection::accumulate for transport support.
+  /// Add to a Host-registered destination. See Connection::accumulate for transport support.
   template <Concurrency Mode = Concurrency::Device, uint32_t SmemSlots = kDefaultSmemSlots>
   MSCCLPP_DEVICE_INLINE void accumulate(MemoryId dst, uint64_t offset, int64_t value) {
-    requireHost<Mode, SmemSlots>();
+    validate<Mode, SmemSlots>();
     uint64_t operand = static_cast<uint64_t>(value);
-    state_.host.fifo.push({TriggerAccumulate, dst, offset, 0, operand >> TriggerBitsSize,
-                           static_cast<uint32_t>(operand), state_.host.id});
+    host_.fifo.push(
+        {TriggerAccumulate, dst, offset, 0, operand >> TriggerBitsSize, static_cast<uint32_t>(operand), host_.id});
   }
   /// Poll the shared receive counter, consuming one expected signal when available.
   MSCCLPP_DEVICE_INLINE bool poll() {
@@ -126,127 +120,202 @@ struct BasePortChannelDeviceHandle {
 #endif
 
  private:
-  enum class Kind : uint8_t { Invalid, Host, Device };
   struct HostState {
     SemaphoreId id;
     FifoDeviceHandle fifo;
     uint64_t* flushDone;
   };
+  Host2DeviceSemaphoreDeviceHandle receive_;
+  HostState host_;
+#if defined(MSCCLPP_DEVICE_COMPILE)
+  template <Concurrency Mode, uint32_t SmemSlots>
+  MSCCLPP_DEVICE_INLINE void validate() const {
+    static_assert(Mode == Concurrency::Device, "Host channels only support Concurrency::Device");
+    static_assert(SmemSlots <= 1024, "At most 1024 shared-memory slots per CTA are supported");
+    detail::portChannelRequire(host_.fifo.head != nullptr, "unassigned channel handle");
+  }
+  MSCCLPP_DEVICE_INLINE void requireReceive() const {
+    detail::portChannelRequire(receive_.inboundToken && receive_.expectedInboundToken,
+                               "unassigned channel receive state");
+  }
+  MSCCLPP_DEVICE_INLINE void waitFlush(uint64_t pos, [[maybe_unused]] int64_t maxSpinCount) {
+    detail::portChannelRequire(host_.flushDone != nullptr, "missing Host flush state");
+    POLL_MAYBE_JAILBREAK((atomicLoad<uint64_t, scopeSystem>(host_.flushDone, memoryOrderAcquire) <= pos), maxSpinCount);
+  }
+#endif
+  friend struct BasePortChannel;
+  friend struct PortChannel;
+  friend struct detail::PortChannelHandleAccess;
+};
+
+/// Legacy Host-proxy view without bound memory regions.
+using BasePortChannelDeviceHandle = BasePortChannelDeviceHandleT<PortChannelBackend::Host>;
+
+/// Direct GPU-posting device view. No ProxyService memory-ID operations are available.
+template <>
+struct BasePortChannelDeviceHandleT<PortChannelBackend::Device> {
+ public:
+  /// Scope of concurrent callers on the underlying queue pair.
+  using Concurrency = BasePortChannelDeviceHandle::Concurrency;
+  /// Default scratch capacity per CTA. Select capacity with each operation's second template argument.
+  static constexpr uint32_t kDefaultSmemSlots = detail::kPortChannelDefaultSmemSlots;
+  /// Default view. Operations fail explicitly until valid state is assigned.
+  MSCCLPP_HOST_DEVICE_INLINE constexpr BasePortChannelDeviceHandleT() : receive_{}, device_{} {}
+#if defined(MSCCLPP_DEVICE_COMPILE)
+  /// Signal the remote peer. slotIdx=-1 selects the linear CTA thread index for scratch.
+  template <Concurrency Mode = Concurrency::Device, uint32_t SmemSlots = kDefaultSmemSlots>
+  MSCCLPP_DEVICE_INLINE void signal(int slotIdx = -1) {
+    validate<Mode, SmemSlots>();
+    device_.backend.template accumulate<Mode, SmemSlots>(device_.remoteSignal, 0, 1, slotIdx);
+  }
+  /// Wait for local completion of operations posted so far on this connection.
+  template <Concurrency Mode = Concurrency::Device, uint32_t SmemSlots = kDefaultSmemSlots>
+  MSCCLPP_DEVICE_INLINE void flush(int64_t maxSpinCount = 1000000) {
+    validate<Mode, SmemSlots>();
+    device_.backend.template flush<Mode>(maxSpinCount);
+  }
+  /// Poll the shared receive counter, consuming one expected signal when available.
+  MSCCLPP_DEVICE_INLINE bool poll() {
+    requireReceive();
+    return receive_.poll();
+  }
+  /// Wait for a remote signal.
+  MSCCLPP_DEVICE_INLINE void wait(int64_t maxSpinCount = 10000000) {
+    requireReceive();
+    receive_.wait(maxSpinCount);
+  }
+#endif
+ private:
   struct DeviceState {
     detail::GpuNetIoDeviceHandle backend;
     detail::GpuNetIoMemoryDeviceHandle remoteSignal;
   };
-  union State {
-    HostState host;
-    DeviceState device;
-    MSCCLPP_HOST_DEVICE_INLINE constexpr State() : host{} {}
-    MSCCLPP_HOST_DEVICE_INLINE constexpr explicit State(HostState value) : host(value) {}
-    MSCCLPP_HOST_DEVICE_INLINE constexpr explicit State(DeviceState value) : device(value) {}
-  };
-  Kind kind_;
   Host2DeviceSemaphoreDeviceHandle receive_;
-  State state_;
-
-  MSCCLPP_HOST_DEVICE_INLINE constexpr BasePortChannelDeviceHandle(Host2DeviceSemaphoreDeviceHandle receive,
-                                                                   detail::GpuNetIoDeviceHandle backend,
-                                                                   detail::GpuNetIoMemoryDeviceHandle remoteSignal)
-      : kind_(Kind::Device), receive_(receive), state_(DeviceState{backend, remoteSignal}) {}
-
+  DeviceState device_;
+  MSCCLPP_HOST_DEVICE_INLINE constexpr BasePortChannelDeviceHandleT(Host2DeviceSemaphoreDeviceHandle receive,
+                                                                    detail::GpuNetIoDeviceHandle backend,
+                                                                    detail::GpuNetIoMemoryDeviceHandle remoteSignal)
+      : receive_(receive), device_{backend, remoteSignal} {}
 #if defined(MSCCLPP_DEVICE_COMPILE)
   template <Concurrency Mode, uint32_t SmemSlots>
   MSCCLPP_DEVICE_INLINE void validate() const {
     static_assert(SmemSlots <= 1024, "At most 1024 shared-memory slots per CTA are supported");
     static_assert(Mode == Concurrency::Exclusive || Mode == Concurrency::Block || Mode == Concurrency::Device);
-    requireValid();
-    if (kind_ == Kind::Host) {
-      detail::portChannelRequire(Mode == Concurrency::Device, "Host channels only support Concurrency::Device");
-    }
-  }
-  template <Concurrency Mode, uint32_t SmemSlots>
-  MSCCLPP_DEVICE_INLINE void requireHost() const {
-    validate<Mode, SmemSlots>();
-    detail::portChannelRequire(kind_ == Kind::Host, "memory IDs require a Host-proxy channel");
-  }
-  MSCCLPP_DEVICE_INLINE void requireValid() const {
-    detail::portChannelRequire(kind_ == Kind::Host || kind_ == Kind::Device, "unassigned channel handle");
-#if !MSCCLPP_DETAIL_GPUNETIO_DEVICE_AVAILABLE
-    detail::portChannelRequire(kind_ != Kind::Device, "Device backend is not available for this build/architecture");
-#endif
+    requireReceive();
+    detail::portChannelRequire(device_.backend.qp != nullptr, "unassigned Device posting state");
   }
   MSCCLPP_DEVICE_INLINE void requireReceive() const {
-    requireValid();
+#if !MSCCLPP_DETAIL_GPUNETIO_DEVICE_AVAILABLE
+    detail::portChannelRequire(false, "Device backend is not available for this build/architecture");
+#endif
     detail::portChannelRequire(receive_.inboundToken && receive_.expectedInboundToken,
                                "unassigned channel receive state");
-  }
-  MSCCLPP_DEVICE_INLINE void waitFlush(uint64_t pos, [[maybe_unused]] int64_t maxSpinCount) {
-    detail::portChannelRequire(state_.host.flushDone != nullptr, "missing Host flush state");
-    POLL_MAYBE_JAILBREAK((atomicLoad<uint64_t, scopeSystem>(state_.host.flushDone, memoryOrderAcquire) <= pos),
-                         maxSpinCount);
-  }
-  template <Concurrency Mode, uint32_t SmemSlots>
-  MSCCLPP_DEVICE_INLINE void putDevice(const detail::GpuNetIoMemoryDeviceHandle& dst, uint64_t dstOffset,
-                                       const detail::GpuNetIoMemoryDeviceHandle& src, uint64_t srcOffset, uint64_t size,
-                                       int slotIdx) {
-    validate<Mode, SmemSlots>();
-    state_.device.backend.template put<Mode, SmemSlots>(dst, dstOffset, src, srcOffset, size, slotIdx);
-  }
-  template <Concurrency Mode, uint32_t SmemSlots>
-  MSCCLPP_DEVICE_INLINE void putWithSignalDevice(const detail::GpuNetIoMemoryDeviceHandle& dst, uint64_t dstOffset,
-                                                 const detail::GpuNetIoMemoryDeviceHandle& src, uint64_t srcOffset,
-                                                 uint64_t size, int slotIdx) {
-    validate<Mode, SmemSlots>();
-    state_.device.backend.template putWithAccumulate<Mode, SmemSlots>(dst, dstOffset, src, srcOffset, size,
-                                                                      state_.device.remoteSignal, 0, 1, slotIdx);
   }
 #endif
   friend struct BasePortChannel;
   friend struct PortChannel;
-  friend struct PortChannelDeviceHandle;
+  friend struct PortChannelDeviceHandleT<PortChannelBackend::Device>;
   friend struct detail::PortChannelHandleAccess;
 };
 
-/// Bound PortChannel device handle. The same normal kernel parameter type supports both backends.
-struct PortChannelDeviceHandle : public BasePortChannelDeviceHandle {
+/// Bound Host-proxy device view. Normal names continue to select this backend.
+template <>
+struct PortChannelDeviceHandleT<PortChannelBackend::Host> : public BasePortChannelDeviceHandle {
  public:
-  /// Constructor. Operations on an unassigned handle fail explicitly.
-  MSCCLPP_HOST_DEVICE_INLINE constexpr PortChannelDeviceHandle()
-      : BasePortChannelDeviceHandle(), boundKind_(Kind::Invalid), bound_() {}
-  /// Construct a bound Host-proxy handle. Prefer host-channel extraction.
-  MSCCLPP_HOST_DEVICE_INLINE constexpr PortChannelDeviceHandle(SemaphoreId id, Host2DeviceSemaphoreDeviceHandle receive,
-                                                               FifoDeviceHandle fifo, MemoryId dst, MemoryId src,
-                                                               uint64_t* flushDone)
-      : BasePortChannelDeviceHandle(id, receive, fifo, flushDone),
-        boundKind_(Kind::Host),
-        bound_(HostBound{dst, src}) {}
-
+  /// Default view. Operations fail explicitly until valid state is assigned.
+  MSCCLPP_HOST_DEVICE_INLINE constexpr PortChannelDeviceHandleT()
+      : BasePortChannelDeviceHandle(), boundsInitialized_(false), bound_{} {}
+  /// Construct a bound Host-proxy view. Prefer host-channel extraction.
+  MSCCLPP_HOST_DEVICE_INLINE constexpr PortChannelDeviceHandleT(SemaphoreId id,
+                                                                Host2DeviceSemaphoreDeviceHandle receive,
+                                                                FifoDeviceHandle fifo, MemoryId dst, MemoryId src,
+                                                                uint64_t* flushDone)
+      : BasePortChannelDeviceHandle(id, receive, fifo, flushDone), boundsInitialized_(true), bound_{dst, src} {}
 #if defined(MSCCLPP_DEVICE_COMPILE)
-  /// Put between the bound regions. slotIdx=-1 uses the linear CTA thread index for internal scratch.
+  /// Put between the bound ProxyService memory regions.
   template <Concurrency Mode = Concurrency::Device, uint32_t SmemSlots = kDefaultSmemSlots>
-  MSCCLPP_DEVICE_INLINE void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, int slotIdx = -1) {
-    validateBound<Mode, SmemSlots>();
-    if (kind_ == Kind::Host) {
-      BasePortChannelDeviceHandle::put<Mode, SmemSlots>(bound_.host.dst, dstOffset, bound_.host.src, srcOffset, size);
-    } else {
-      putDevice<Mode, SmemSlots>(bound_.device.dst, dstOffset, bound_.device.src, srcOffset, size, slotIdx);
-    }
+  MSCCLPP_DEVICE_INLINE void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
+    requireBounds();
+    BasePortChannelDeviceHandle::put<Mode, SmemSlots>(bound_.dst, dstOffset, bound_.src, srcOffset, size);
   }
-  /// Put at the same offset in both bound regions.
   template <Concurrency Mode = Concurrency::Device, uint32_t SmemSlots = kDefaultSmemSlots>
   MSCCLPP_DEVICE_INLINE void put(uint64_t offset, uint64_t size) {
     put<Mode, SmemSlots>(offset, offset, size);
   }
-  /// Put and signal the remote peer.
+  /// Put between bound regions and signal the remote peer.
+  template <Concurrency Mode = Concurrency::Device, uint32_t SmemSlots = kDefaultSmemSlots>
+  MSCCLPP_DEVICE_INLINE void putWithSignal(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
+    requireBounds();
+    BasePortChannelDeviceHandle::putWithSignal<Mode, SmemSlots>(bound_.dst, dstOffset, bound_.src, srcOffset, size);
+  }
+  template <Concurrency Mode = Concurrency::Device, uint32_t SmemSlots = kDefaultSmemSlots>
+  MSCCLPP_DEVICE_INLINE void putWithSignal(uint64_t offset, uint64_t size) {
+    putWithSignal<Mode, SmemSlots>(offset, offset, size);
+  }
+  /// Put, signal and wait for local completion.
+  template <Concurrency Mode = Concurrency::Device, uint32_t SmemSlots = kDefaultSmemSlots>
+  MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
+                                                   int64_t maxSpinCount = 1000000) {
+    requireBounds();
+    BasePortChannelDeviceHandle::putWithSignalAndFlush<Mode, SmemSlots>(bound_.dst, dstOffset, bound_.src, srcOffset,
+                                                                        size, maxSpinCount);
+  }
+  template <Concurrency Mode = Concurrency::Device, uint32_t SmemSlots = kDefaultSmemSlots>
+  MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(uint64_t offset, uint64_t size) {
+    putWithSignalAndFlush<Mode, SmemSlots>(offset, offset, size);
+  }
+  /// Add to the bound destination region.
+  template <Concurrency Mode = Concurrency::Device, uint32_t SmemSlots = kDefaultSmemSlots>
+  MSCCLPP_DEVICE_INLINE void accumulate(uint64_t offset, int64_t value) {
+    requireBounds();
+    BasePortChannelDeviceHandle::accumulate<Mode, SmemSlots>(bound_.dst, offset, value);
+  }
+#endif
+ private:
+  struct HostBound {
+    MemoryId dst;
+    MemoryId src;
+  };
+  // Base-subobject assignment must not initialize bound IDs; zero is a valid registry ID.
+  bool boundsInitialized_;
+  HostBound bound_;
+  MSCCLPP_HOST_DEVICE_INLINE void requireBounds() const {
+    detail::portChannelRequire(boundsInitialized_, "unassigned Host bound regions");
+  }
+  MSCCLPP_HOST_DEVICE_INLINE constexpr PortChannelDeviceHandleT(BasePortChannelDeviceHandle base, HostBound bound)
+      : BasePortChannelDeviceHandle(base), boundsInitialized_(true), bound_(bound) {}
+  friend struct PortChannel;
+  friend struct detail::PortChannelHandleAccess;
+};
+
+/// Legacy bound Host-proxy device view.
+using PortChannelDeviceHandle = PortChannelDeviceHandleT<PortChannelBackend::Host>;
+
+/// Bound direct GPU-posting view. Descriptors remain private to channel extraction.
+template <>
+struct PortChannelDeviceHandleT<PortChannelBackend::Device>
+    : public BasePortChannelDeviceHandleT<PortChannelBackend::Device> {
+ public:
+  /// Default view. Operations fail explicitly until valid state is assigned.
+  MSCCLPP_HOST_DEVICE_INLINE constexpr PortChannelDeviceHandleT() : BasePortChannelDeviceHandleT(), bound_{} {}
+#if defined(MSCCLPP_DEVICE_COMPILE)
+  /// Put between bound registered regions. slotIdx=-1 selects the linear CTA thread index for scratch.
+  template <Concurrency Mode = Concurrency::Device, uint32_t SmemSlots = kDefaultSmemSlots>
+  MSCCLPP_DEVICE_INLINE void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, int slotIdx = -1) {
+    validate<Mode, SmemSlots>();
+    device_.backend.template put<Mode, SmemSlots>(bound_.dst, dstOffset, bound_.src, srcOffset, size, slotIdx);
+  }
+  template <Concurrency Mode = Concurrency::Device, uint32_t SmemSlots = kDefaultSmemSlots>
+  MSCCLPP_DEVICE_INLINE void put(uint64_t offset, uint64_t size) {
+    put<Mode, SmemSlots>(offset, offset, size);
+  }
+  /// Put between bound regions and signal the remote peer.
   template <Concurrency Mode = Concurrency::Device, uint32_t SmemSlots = kDefaultSmemSlots>
   MSCCLPP_DEVICE_INLINE void putWithSignal(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, int slotIdx = -1) {
-    validateBound<Mode, SmemSlots>();
-    if (kind_ == Kind::Host) {
-      BasePortChannelDeviceHandle::putWithSignal<Mode, SmemSlots>(bound_.host.dst, dstOffset, bound_.host.src,
-                                                                  srcOffset, size);
-    } else {
-      putWithSignalDevice<Mode, SmemSlots>(bound_.device.dst, dstOffset, bound_.device.src, srcOffset, size, slotIdx);
-    }
+    validate<Mode, SmemSlots>();
+    device_.backend.template putWithAccumulate<Mode, SmemSlots>(bound_.dst, dstOffset, bound_.src, srcOffset, size,
+                                                                device_.remoteSignal, 0, 1, slotIdx);
   }
-  /// Put and signal at the same offset in both regions.
   template <Concurrency Mode = Concurrency::Device, uint32_t SmemSlots = kDefaultSmemSlots>
   MSCCLPP_DEVICE_INLINE void putWithSignal(uint64_t offset, uint64_t size) {
     putWithSignal<Mode, SmemSlots>(offset, offset, size);
@@ -255,16 +324,9 @@ struct PortChannelDeviceHandle : public BasePortChannelDeviceHandle {
   template <Concurrency Mode = Concurrency::Device, uint32_t SmemSlots = kDefaultSmemSlots>
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
                                                    int64_t maxSpinCount = 1000000, int slotIdx = -1) {
-    validateBound<Mode, SmemSlots>();
-    if (kind_ == Kind::Host) {
-      BasePortChannelDeviceHandle::putWithSignalAndFlush<Mode, SmemSlots>(bound_.host.dst, dstOffset, bound_.host.src,
-                                                                          srcOffset, size, maxSpinCount);
-    } else {
-      putWithSignalDevice<Mode, SmemSlots>(bound_.device.dst, dstOffset, bound_.device.src, srcOffset, size, slotIdx);
-      flush<Mode, SmemSlots>(maxSpinCount);
-    }
+    putWithSignal<Mode, SmemSlots>(dstOffset, srcOffset, size, slotIdx);
+    flush<Mode, SmemSlots>(maxSpinCount);
   }
-  /// Put, signal and flush at a common offset.
   template <Concurrency Mode = Concurrency::Device, uint32_t SmemSlots = kDefaultSmemSlots>
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(uint64_t offset, uint64_t size) {
     putWithSignalAndFlush<Mode, SmemSlots>(offset, offset, size);
@@ -272,66 +334,41 @@ struct PortChannelDeviceHandle : public BasePortChannelDeviceHandle {
   /// Atomically add to the bound destination region.
   template <Concurrency Mode = Concurrency::Device, uint32_t SmemSlots = kDefaultSmemSlots>
   MSCCLPP_DEVICE_INLINE void accumulate(uint64_t offset, int64_t value, int slotIdx = -1) {
-    validateBound<Mode, SmemSlots>();
-    if (kind_ == Kind::Host) {
-      BasePortChannelDeviceHandle::accumulate<Mode, SmemSlots>(bound_.host.dst, offset, value);
-    } else {
-      state_.device.backend.template accumulate<Mode, SmemSlots>(bound_.device.dst, offset, value, slotIdx);
-    }
+    validate<Mode, SmemSlots>();
+    device_.backend.template accumulate<Mode, SmemSlots>(bound_.dst, offset, value, slotIdx);
   }
-  /// Device backend only: post a put followed by an atomic add. Observing the add publishes the put.
+  /// Post a put followed by an atomic add. Observing the add publishes the put.
   template <Concurrency Mode = Concurrency::Device, uint32_t SmemSlots = kDefaultSmemSlots>
   MSCCLPP_DEVICE_INLINE void putWithAccumulate(uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
                                                uint64_t accOffset, int64_t value, int slotIdx = -1) {
-    validateBound<Mode, SmemSlots>();
-    detail::portChannelRequire(kind_ == Kind::Device, "putWithAccumulate requires a Device channel");
-    state_.device.backend.template putWithAccumulate<Mode, SmemSlots>(
-        bound_.device.dst, dstOffset, bound_.device.src, srcOffset, size, bound_.device.dst, accOffset, value, slotIdx);
+    validate<Mode, SmemSlots>();
+    device_.backend.template putWithAccumulate<Mode, SmemSlots>(bound_.dst, dstOffset, bound_.src, srcOffset, size,
+                                                                bound_.dst, accOffset, value, slotIdx);
   }
 #endif
-
  private:
-  struct HostBound {
-    MemoryId dst;
-    MemoryId src;
-  };
   struct DeviceBound {
     detail::GpuNetIoMemoryDeviceHandle dst;
     detail::GpuNetIoMemoryDeviceHandle src;
   };
-  union Bound {
-    HostBound host;
-    DeviceBound device;
-    MSCCLPP_HOST_DEVICE_INLINE constexpr Bound() : host{} {}
-    MSCCLPP_HOST_DEVICE_INLINE constexpr explicit Bound(HostBound value) : host(value) {}
-    MSCCLPP_HOST_DEVICE_INLINE constexpr explicit Bound(DeviceBound value) : device(value) {}
-  };
-  // Base-subobject assignment cannot change which derived union member is active.
-  Kind boundKind_;
-  Bound bound_;
-  MSCCLPP_HOST_DEVICE_INLINE constexpr bool hasMatchingBounds() const {
-    return (boundKind_ == Kind::Host || boundKind_ == Kind::Device) && boundKind_ == kind_;
-  }
-  MSCCLPP_HOST_DEVICE_INLINE void requireBoundMode() const {
-    detail::portChannelRequire(hasMatchingBounds(), "channel base/bound mode mismatch");
-  }
+  DeviceBound bound_;
 #if defined(MSCCLPP_DEVICE_COMPILE)
   template <Concurrency Mode, uint32_t SmemSlots>
-  MSCCLPP_DEVICE_INLINE void validateBound() const {
-    requireBoundMode();
-    validate<Mode, SmemSlots>();
+  MSCCLPP_DEVICE_INLINE void validate() const {
+    BasePortChannelDeviceHandleT::template validate<Mode, SmemSlots>();
+    detail::portChannelRequire(bound_.dst.addr != 0 && bound_.src.addr != 0, "unassigned Device bound regions");
   }
 #endif
-  MSCCLPP_HOST_DEVICE_INLINE constexpr PortChannelDeviceHandle(BasePortChannelDeviceHandle base, HostBound bound)
-      : BasePortChannelDeviceHandle(base), boundKind_(Kind::Host), bound_(bound) {}
-  MSCCLPP_HOST_DEVICE_INLINE constexpr PortChannelDeviceHandle(BasePortChannelDeviceHandle base, DeviceBound bound)
-      : BasePortChannelDeviceHandle(base), boundKind_(Kind::Device), bound_(bound) {}
+  MSCCLPP_HOST_DEVICE_INLINE constexpr PortChannelDeviceHandleT(BasePortChannelDeviceHandleT base, DeviceBound bound)
+      : BasePortChannelDeviceHandleT(base), bound_(bound) {}
   friend struct PortChannel;
   friend struct detail::PortChannelHandleAccess;
 };
 
 static_assert(std::is_trivially_copyable_v<BasePortChannelDeviceHandle>);
 static_assert(std::is_trivially_copyable_v<PortChannelDeviceHandle>);
+static_assert(std::is_trivially_copyable_v<BasePortChannelDeviceHandleT<PortChannelBackend::Device>>);
+static_assert(std::is_trivially_copyable_v<PortChannelDeviceHandleT<PortChannelBackend::Device>>);
 
 }  // namespace mscclpp
 

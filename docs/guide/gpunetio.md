@@ -1,8 +1,9 @@
 # Device-backed PortChannel
 
 `PortChannel` has two execution modes. Host channels send work through a `ProxyService`; Device channels post
-work directly from the GPU and do not use a proxy. Both return the same plain `PortChannelDeviceHandle` from
-`deviceHandle()`. The normal kernel parameter and calls do not change between modes.
+work directly from the GPU and do not use a proxy. Host ownership types remain non-template.
+Use `deviceHandle()` for a Host GPU view and `deviceBackendHandle()` for a Device GPU view.
+The views have different types, so kernels select the backend at compilation, not during GPU operations.
 
 The current Device implementation uses [DOCA GPUNetIO](https://github.com/NVIDIA-DOCA/gpunetio). Its queue pointers,
 registration keys, and descriptors are implementation details, not channel API fields.
@@ -31,9 +32,9 @@ The GPUNetIO license is installed to `share/licenses/mscclpp/gpunetio`.
 - RDMA atomics on both sides. A Device endpoint cannot connect to a `HostNoAtomic` endpoint.
 - A local GPU endpoint (`EndpointConfig::device.type == DeviceType::GPU`).
 
-Unsupported endpoint creation throws `InvalidUsage`. Unsupported Device kernel operations, unassigned handles,
-and incompatible Host concurrency modes fail explicitly with a device error, including in release builds. They
-never silently fall back to Host execution.
+Unsupported endpoint creation throws `InvalidUsage`. Device operations on an unavailable build or architecture
+and operations on unassigned views fail explicitly with a device error, including in release builds. Host-incompatible
+concurrency modes fail at compilation. Device execution never silently falls back to Host execution.
 
 ## Usage
 
@@ -50,27 +51,46 @@ auto localRegMem = comm.registerMemory(buff, bytes, cfg.transport);
 comm.sendMemory(localRegMem, remoteRank);
 auto remoteRegMem = comm.recvMemory(remoteRank).get();
 mscclpp::PortChannel channel(sema, remoteRegMem, localRegMem);
-auto handle = channel.deviceHandle();
+auto handle = channel.deviceBackendHandle();
 ```
 
-No `ProxyService` is constructed, started, or stopped. The same normal kernel works for either mode:
+No `ProxyService` is constructed, started, or stopped. Share an algorithm source by templating the kernel:
 
 ```cpp
-__global__ void send(mscclpp::PortChannelDeviceHandle channel, size_t bytes) {
+template <class Handle>
+__global__ void send(Handle channel, size_t bytes) {
   if (threadIdx.x != 0) return;
   channel.putWithSignal(0, bytes);
   channel.flush();
 }
+// Launch the Device instantiation. A Host channel instead uses channel.deviceHandle().
+send<<<1, 1>>>(handle, bytes);
 ```
 
 Host channels retain their [existing ProxyService IDs, factories and lifecycle](../tutorials/04-port-channel.md).
-`BasePortChannel` likewise returns a plain `BasePortChannelDeviceHandle` in either mode. Its memory-ID posting
-methods remain Host-only; Device applications bind `RegisteredMemory` through `PortChannel`, not public descriptors.
-The nested `DeviceHandle` aliases and generic `mscclpp::deviceHandle(channel)` helper work for both modes.
+`PortChannelDeviceHandle` and `BasePortChannelDeviceHandle` remain the Host aliases. Their Device counterparts are
+`PortChannelDeviceHandleT<PortChannelBackend::Device>` and `BasePortChannelDeviceHandleT<PortChannelBackend::Device>`.
+Backend is the only handle template argument. The nested `DeviceHandle` aliases and generic
+`mscclpp::deviceHandle(channel)` helper remain Host-only. A mismatched extraction throws `InvalidUsage` on the CPU.
+
+Select the extraction and kernel instantiation on the host. Store different backends in separate typed GPU arrays;
+do not reinterpret raw handle bytes as another backend. `BasePortChannel` memory-ID posting is Host-only. Device
+applications bind `RegisteredMemory` through `PortChannel`, not public descriptors. `putWithAccumulate` is available
+only on the bound Device view. These capability differences are checked at compilation.
+
+Python exposes `device_backend_handle()` and distinct `CppDeviceBasePortChannelDeviceHandle` and
+`CppDevicePortChannelDeviceHandle` raw views. Existing `device_handle()` and Host properties remain Host-only.
+Pass raw bytes only to a kernel compiled for that view type. ProxyService-based Python helpers and the execution-plan
+executor continue to use Host views; they do not automatically select Device execution.
+
+Default Host bound views have no initialized memory IDs. Assigning only their base view does not initialize bounds.
+Bound constructors and extraction accept registry ID zero. Python `src_` or `dst_` assignment initializes Host bounds,
+including zero IDs; reading unset bounds raises `InvalidUsage` without initializing them.
 
 The proxy-free raw constructors reject Host connections. Host constructors reject Device connections or null
-proxies, and constructors taking explicit owner pointers reject null owners. Device constructors also reject uninitialized registered regions. Extraction rejects unassigned channels
-and invalid connection state. Device construction/extraction validates that the remote signal token is nonzero and
+proxies, and constructors taking explicit owner pointers reject null owners. Device constructors also reject
+uninitialized registered regions. Extraction rejects unassigned channels and invalid connection state. Extracting a Host view from a Device channel or a Device view from a Host channel
+throws `InvalidUsage`. Device construction/extraction validates that the remote signal token is nonzero and
 8-byte aligned, resolving current registration metadata rather than caching it in a semaphore handle.
 
 Raw construction creates an internal semaphore owner, like `MemoryChannel` raw construction. Copies share its
@@ -93,7 +113,7 @@ channel meanings. Device `flush` waits for local completion of work posted so fa
 Device `signal` and `accumulate` use RDMA atomic fetch-and-add. `putWithAccumulate` posts a put followed by an
 atomic add; `putWithSignal` uses the signal token as that add's target. The responder applies the atomic after
 placing earlier writes on the same queue pair, so observing it publishes those writes. A plain RDMA write alone
-provides no such visibility guarantee. `putWithAccumulate` is Device-only and explicitly rejects Host handles.
+provides no such visibility guarantee. Host views do not provide `putWithAccumulate`.
 
 Make source data ready before posting, synchronizing with its producers as needed. Queue publication uses DOCA's
 release ordering rather than adding a full system fence per submission. Keep non-inline source buffers unchanged
@@ -107,8 +127,8 @@ Use `PortChannelDeviceHandle::Concurrency` as the first operation template argum
 - `Block`: Device callers are confined to one CTA.
 - `Exclusive`: Device callers serialize access to the queue pair.
 
-Host handles reject `Block` and `Exclusive` at runtime, even in release kernels. A common handle type cannot reject
-these modes at compile time based on the object's runtime backend. Choose the default for kernels shared by modes.
+Host views reject `Block` and `Exclusive` at compilation. Choose the default for a kernel source shared by both
+backends, or select a concurrency template argument in a backend-specific kernel instantiation.
 
 The second template argument selects internal shared-memory slots per CTA, not a different handle type:
 

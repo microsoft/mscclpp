@@ -175,8 +175,8 @@ See all available InfiniBand-specific parameters in {cpp:struct}`mscclpp::Endpoi
 
 ## Device-backed PortChannel
 
-On a supported CUDA GPU and RDMA NIC, the same tutorial kernel can use a Device-backed channel without a
-`ProxyService`. Select Device mode when creating the connection, then follow the raw-semaphore construction used
+On a supported CUDA GPU and RDMA NIC, a Device-backed channel does not need a `ProxyService`.
+Select Device mode when creating the connection, then follow the raw-semaphore construction used
 by the Memory Channel tutorial:
 
 ```cpp
@@ -187,12 +187,14 @@ auto conn = comm.connect(cfg, remoteRank).get();
 auto sema = comm.buildSemaphore(conn, remoteRank).get();
 // Exchange registered regions as above.
 mscclpp::PortChannel portChan(sema, remoteRegMem, localRegMem);
-auto handle = portChan.deviceHandle(); // Plain PortChannelDeviceHandle, for either backend.
+auto handle = portChan.deviceBackendHandle(); // PortChannelDeviceHandleT<PortChannelBackend::Device>.
 ```
 
-The `bidirPutKernel(mscclpp::PortChannelDeviceHandle*, ...)` parameter and kernel body do not change. There is no
-Device proxy to start or stop. Host connections still require the existing `ProxyService` setup; the raw
-constructor above rejects a Host connection.
+The example shares the kernel body through `template <class Handle> bidirPutKernel(Handle*, ...)` and launches
+distinct Host and Device instantiations. It chooses the typed extraction on the host; GPU operations do not dispatch
+on a backend tag. A kernel declared with the normal `PortChannelDeviceHandle` name remains Host-only.
+There is no Device proxy to start or stop. Host connections still require the existing `ProxyService` setup;
+the raw constructor above rejects a Host connection. Mismatched handle extraction throws `InvalidUsage`.
 
 The example accepts an optional final `device` argument for IB transports:
 

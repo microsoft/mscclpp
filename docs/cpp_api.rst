@@ -230,7 +230,12 @@ Channel Device Interfaces
 .. doxygenstruct:: mscclpp::BaseMemoryChannelDeviceHandle
    :members:
 
-.. doxygenstruct:: mscclpp::BasePortChannelDeviceHandle
+.. doxygentypedef:: mscclpp::BasePortChannelDeviceHandle
+
+.. doxygenstruct:: mscclpp::BasePortChannelDeviceHandleT< PortChannelBackend::Host >
+   :members:
+
+.. doxygenstruct:: mscclpp::BasePortChannelDeviceHandleT< PortChannelBackend::Device >
    :members:
 
 .. doxygenunion:: mscclpp::LL16Packet
@@ -240,7 +245,12 @@ Channel Device Interfaces
 .. doxygenstruct:: mscclpp::MemoryChannelDeviceHandle
    :members:
 
-.. doxygenstruct:: mscclpp::PortChannelDeviceHandle
+.. doxygentypedef:: mscclpp::PortChannelDeviceHandle
+
+.. doxygenstruct:: mscclpp::PortChannelDeviceHandleT< PortChannelBackend::Host >
+   :members:
+
+.. doxygenstruct:: mscclpp::PortChannelDeviceHandleT< PortChannelBackend::Device >
    :members:
 
 .. doxygenstruct:: mscclpp::SwitchChannelDeviceHandle

@@ -58,7 +58,14 @@ void register_port_channel(nb::module_& m) {
       .def(nb::init<const Semaphore&>(), nb::arg("semaphore"))
       .def(nb::init<SemaphoreId, std::shared_ptr<Host2DeviceSemaphore>, std::shared_ptr<Proxy>>(),
            nb::arg("semaphore_id"), nb::arg("semaphore"), nb::arg("proxy"))
-      .def("device_handle", &BasePortChannel::deviceHandle);
+      .def("device_handle", &BasePortChannel::deviceHandle)
+      .def("device_backend_handle", &BasePortChannel::deviceBackendHandle);
+
+  nb::class_<BasePortChannelDeviceHandleT<PortChannelBackend::Device>>(m, "CppDeviceBasePortChannelDeviceHandle")
+      .def(nb::init<>())
+      .def_prop_ro("raw", [](const BasePortChannelDeviceHandleT<PortChannelBackend::Device>& self) {
+        return nb::bytes(reinterpret_cast<const char*>(&self), sizeof(self));
+      });
 
   nb::class_<BasePortChannel::DeviceHandle> baseHandle(m, "CppBasePortChannelDeviceHandle");
   bind_port_handle(baseHandle);
@@ -69,16 +76,23 @@ void register_port_channel(nb::module_& m) {
            nb::arg("src"))
       .def(nb::init<SemaphoreId, std::shared_ptr<Host2DeviceSemaphore>, std::shared_ptr<Proxy>, MemoryId, MemoryId>(),
            nb::arg("semaphore_id"), nb::arg("semaphore"), nb::arg("proxy"), nb::arg("dst"), nb::arg("src"))
-      .def("device_handle", &PortChannel::deviceHandle);
+      .def("device_handle", &PortChannel::deviceHandle)
+      .def("device_backend_handle", &PortChannel::deviceBackendHandle);
+
+  nb::class_<PortChannelDeviceHandleT<PortChannelBackend::Device>>(m, "CppDevicePortChannelDeviceHandle")
+      .def(nb::init<>())
+      .def_prop_ro("raw", [](const PortChannelDeviceHandleT<PortChannelBackend::Device>& self) {
+        return nb::bytes(reinterpret_cast<const char*>(&self), sizeof(self));
+      });
 
   nb::class_<PortChannel::DeviceHandle> portHandle(m, "CppPortChannelDeviceHandle");
   bind_port_handle(portHandle);
   using Access = detail::PortChannelHandleAccess;
   portHandle
       .def_prop_rw(
-          "src_", [](PortChannelDeviceHandle& self) { return Access::hostBound(self).src; },
+          "src_", [](const PortChannelDeviceHandle& self) { return Access::hostBound(self).src; },
           [](PortChannelDeviceHandle& self, MemoryId id) { Access::hostBound(self).src = id; })
       .def_prop_rw(
-          "dst_", [](PortChannelDeviceHandle& self) { return Access::hostBound(self).dst; },
+          "dst_", [](const PortChannelDeviceHandle& self) { return Access::hostBound(self).dst; },
           [](PortChannelDeviceHandle& self, MemoryId id) { Access::hostBound(self).dst = id; });
 };
