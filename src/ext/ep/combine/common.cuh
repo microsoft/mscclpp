@@ -40,7 +40,7 @@ MSCCLPP_HOST_DEVICE_INLINE int directSendWorkerCount(int nLocalExperts) {
 
 // Shared-memory staging buffer for rank-major combine: token tiles, TMA barriers, and route metadata.
 template <int Hidden, DispatchDataType DispatchType, int NSlots>
-struct alignas(128) RankMajorCombineSharedStage {
+struct alignas(128) RankMajorCombineStage {
   DispatchElementType<DispatchType> tokens[NSlots][Hidden];
   mscclpp::BulkBarrier barriers[NSlots];
   int validRoutes[NSlots];
@@ -50,11 +50,10 @@ struct alignas(128) RankMajorCombineSharedStage {
 template <int Hidden, DispatchDataType DispatchType, int MaxNTopk>
 MSCCLPP_HOST_DEVICE_INLINE constexpr int rankMajorCombineStageSlots() {
   static_assert(MaxNTopk == 8 || MaxNTopk == MaxNumTopk);
-  if constexpr (sizeof(RankMajorCombineSharedStage<Hidden, DispatchType, MaxNTopk>) <=
-                OptimizedDynamicSharedMemoryBytes) {
+  if constexpr (sizeof(RankMajorCombineStage<Hidden, DispatchType, MaxNTopk>) <= OptimizedDynamicSharedMemoryBytes) {
     return MaxNTopk;
   }
-  static_assert(sizeof(RankMajorCombineSharedStage<Hidden, DispatchType, 8>) <= OptimizedDynamicSharedMemoryBytes);
+  static_assert(sizeof(RankMajorCombineStage<Hidden, DispatchType, 8>) <= OptimizedDynamicSharedMemoryBytes);
   return 8;
 }
 
@@ -62,7 +61,7 @@ template <int Hidden, CombineMode Mode, DispatchDataType DispatchType, DispatchL
 MSCCLPP_HOST_DEVICE_INLINE size_t combineSharedBytes(int nLocalExperts) {
   if constexpr (Layout == DispatchLayout::RANK_MAJOR) {
     constexpr int StageSlots = rankMajorCombineStageSlots<Hidden, DispatchType, MaxNTopk>();
-    constexpr size_t SharedBytes = sizeof(RankMajorCombineSharedStage<Hidden, DispatchType, StageSlots>);
+    constexpr size_t SharedBytes = sizeof(RankMajorCombineStage<Hidden, DispatchType, StageSlots>);
     static_assert(SharedBytes <= OptimizedDynamicSharedMemoryBytes);
     return SharedBytes;
   }
@@ -102,26 +101,26 @@ MSCCLPP_DEVICE_INLINE void publishRankMajorCombineReady(const TransportView& tra
 
 template <CombineMode Mode, int Hidden, DispatchDataType DispatchType, int StageSlots>
 MSCCLPP_DEVICE_INLINE void accumulateRankMajorVector(
-    mscclpp::f32x8& sum, int vectorIdx,
-    const RankMajorCombineSharedStage<Hidden, DispatchType, StageSlots>& sharedStage, float dequantScale) {
+    mscclpp::f32x8& sum, int vectorIdx, const RankMajorCombineStage<Hidden, DispatchType, StageSlots>& stage,
+    float dequantScale) {
   constexpr bool IsDirectSend = Mode == CombineMode::DIRECT_SEND;
   constexpr int NFp32x2PerVector = mscclpp::f32x8::Size / mscclpp::f32x2::Size;
   auto* sumFp32x2 = reinterpret_cast<mscclpp::f32x2*>(&sum);
 #pragma unroll
   for (int stageIdx = 0; stageIdx < StageSlots; ++stageIdx) {
-    if (!sharedStage.validRoutes[stageIdx]) continue;
-    const float routeWeight = IsDirectSend ? sharedStage.routeWeights[stageIdx] : 1.0f;
-    const auto* routeToken = sharedStage.tokens[stageIdx];
+    if (!stage.validRoutes[stageIdx]) continue;
+    const float routeWeight = IsDirectSend ? stage.routeWeights[stageIdx] : 1.0f;
+    const auto* routeToken = stage.tokens[stageIdx];
     if constexpr (DispatchType == DispatchDataType::BF16) {
       const auto values = mscclpp::to<mscclpp::f32x8>(reinterpret_cast<const mscclpp::bf16x8*>(routeToken)[vectorIdx]);
       const auto* valuesFp32x2 = reinterpret_cast<const mscclpp::f32x2*>(&values);
 #pragma unroll
-      for (int fp32x2Idx = 0; fp32x2Idx < NFp32x2PerVector; ++fp32x2Idx) {
+      for (int idx = 0; idx < NFp32x2PerVector; ++idx) {
         if constexpr (IsDirectSend) {
-          sumFp32x2[fp32x2Idx] = mscclpp::fma(
-              valuesFp32x2[fp32x2Idx], mscclpp::f32x2(make_float2(routeWeight, routeWeight)), sumFp32x2[fp32x2Idx]);
+          sumFp32x2[idx] =
+              mscclpp::fma(valuesFp32x2[idx], mscclpp::f32x2(make_float2(routeWeight, routeWeight)), sumFp32x2[idx]);
         } else {
-          sumFp32x2[fp32x2Idx] = sumFp32x2[fp32x2Idx] + valuesFp32x2[fp32x2Idx];
+          sumFp32x2[idx] = sumFp32x2[idx] + valuesFp32x2[idx];
         }
       }
     } else {
@@ -168,8 +167,8 @@ MSCCLPP_DEVICE_INLINE void combineRankMajorTokens(void* output, const void* expe
   const int maxTokensPerRank = workload.maxTokensPerRank_;
   const bool useWeights = topkWeights != nullptr;
   const float dequantScale = DispatchType == DispatchDataType::FP8_E4M3_STATIC ? 1.0f / workload.dispatchScale_ : 1.0f;
-  auto& sharedStage = *reinterpret_cast<RankMajorCombineSharedStage<Hidden, DispatchType, StageSlots>*>(sharedMemory);
-  auto* barriers = sharedStage.barriers;
+  auto& stage = *reinterpret_cast<RankMajorCombineStage<Hidden, DispatchType, StageSlots>*>(sharedMemory);
+  auto* barriers = stage.barriers;
 
   // Reuse each mbarrier across tokens and staging rounds by advancing its phase parity.
   uint32_t phase = 0;
@@ -194,8 +193,8 @@ MSCCLPP_DEVICE_INLINE void combineRankMajorTokens(void* output, const void* expe
     for (int stepIdx = 0; stepIdx < MaxVectorsPerThread; ++stepIdx) {
       auto* sumFp32x2 = reinterpret_cast<mscclpp::f32x2*>(&tileSum[stepIdx]);
 #pragma unroll
-      for (int fp32x2Idx = 0; fp32x2Idx < NFp32x2PerVector; ++fp32x2Idx) {
-        sumFp32x2[fp32x2Idx].storage = make_float2(0.0f, 0.0f);
+      for (int idx = 0; idx < NFp32x2PerVector; ++idx) {
+        sumFp32x2[idx].storage = make_float2(0.0f, 0.0f);
       }
     }
 
@@ -212,9 +211,9 @@ MSCCLPP_DEVICE_INLINE void combineRankMajorTokens(void* output, const void* expe
           EP_DEVICE_ASSERT(slotIdx >= 0 && slotIdx < maxTokensPerRank);
         }
         if (laneIdx < StageSlots) {
-          sharedStage.validRoutes[laneIdx] = active;
+          stage.validRoutes[laneIdx] = active;
           if constexpr (IsDirectSend) {
-            sharedStage.routeWeights[laneIdx] =
+            stage.routeWeights[laneIdx] =
                 useWeights && routeIdx < nTopk ? topkWeights[tokenIdx * nTopk + routeIdx] : 1.0f;
           }
         }
@@ -229,7 +228,7 @@ MSCCLPP_DEVICE_INLINE void combineRankMajorTokens(void* output, const void* expe
             const size_t srcTokenIdx = static_cast<size_t>(transport.rank_) * maxTokensPerRank + slotIdx;
             const size_t inputTokenIdx = IsDirectSend ? srcTokenIdx * nTopk + routeIdx : srcTokenIdx;
             barriers[laneIdx].arriveAndExpect(HiddenBytes);
-            mscclpp::bulkLoad(sharedStage.tokens[laneIdx], peerOutput + inputTokenIdx * HiddenBytes, HiddenBytes,
+            mscclpp::bulkLoad(stage.tokens[laneIdx], peerOutput + inputTokenIdx * HiddenBytes, HiddenBytes,
                               barriers[laneIdx]);
             pending = false;
           }
@@ -244,7 +243,7 @@ MSCCLPP_DEVICE_INLINE void combineRankMajorTokens(void* output, const void* expe
       for (int stepIdx = 0; stepIdx < MaxVectorsPerThread; ++stepIdx) {
         const int vectorIdx = static_cast<int>(threadIdx.x) + stepIdx * CombineNThreads;
         if (vectorIdx < NHiddenVectors) {
-          accumulateRankMajorVector<Mode, Hidden, DispatchType, StageSlots>(tileSum[stepIdx], vectorIdx, sharedStage,
+          accumulateRankMajorVector<Mode, Hidden, DispatchType, StageSlots>(tileSum[stepIdx], vectorIdx, stage,
                                                                             dequantScale);
         }
       }

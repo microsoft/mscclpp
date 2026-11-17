@@ -125,8 +125,8 @@ MSCCLPP_DEVICE_INLINE void reduceExpertMajorTokens(void* output, const int64_t* 
       mscclpp::f32x8 sum;
       auto* sumFp32x2 = reinterpret_cast<mscclpp::f32x2*>(&sum);
 #pragma unroll
-      for (int fp32x2Idx = 0; fp32x2Idx < NFp32x2PerVector; ++fp32x2Idx) {
-        sumFp32x2[fp32x2Idx].storage = make_float2(0.0f, 0.0f);
+      for (int idx = 0; idx < NFp32x2PerVector; ++idx) {
+        sumFp32x2[idx].storage = make_float2(0.0f, 0.0f);
       }
       for (int routeIdx = 0; routeIdx < nTopk; ++routeIdx) {
         const int expertIdx = routeExperts[routeIdx];
@@ -136,8 +136,8 @@ MSCCLPP_DEVICE_INLINE void reduceExpertMajorTokens(void* output, const int64_t* 
         const auto* valuesFp32x2 = reinterpret_cast<const mscclpp::f32x2*>(&values);
         const mscclpp::f32x2 weightFp32x2(make_float2(routeWeights[routeIdx], routeWeights[routeIdx]));
 #pragma unroll
-        for (int fp32x2Idx = 0; fp32x2Idx < NFp32x2PerVector; ++fp32x2Idx) {
-          sumFp32x2[fp32x2Idx] = mscclpp::fma(valuesFp32x2[fp32x2Idx], weightFp32x2, sumFp32x2[fp32x2Idx]);
+        for (int idx = 0; idx < NFp32x2PerVector; ++idx) {
+          sumFp32x2[idx] = mscclpp::fma(valuesFp32x2[idx], weightFp32x2, sumFp32x2[idx]);
         }
       }
       outputTokens[static_cast<size_t>(tokenIdx) * NHiddenVectors + vectorIdx] = mscclpp::to<mscclpp::bf16x8>(sum);

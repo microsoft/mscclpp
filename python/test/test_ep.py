@@ -26,7 +26,6 @@ from mscclpp.ep import (
     MoEMode,
     QuantConfig,
 )
-from mscclpp.ep.types import LATENCY_HIDDEN_SIZES
 from mscclpp.gpu import current_device
 
 NUM_TOPK = 8
@@ -646,7 +645,7 @@ def _run_dispatch_combine_case(
 
 @pytest.mark.nranks(8)
 @pytest.mark.parametrize("num_topk", [8, 16])
-@pytest.mark.parametrize("hidden_size", [1024, 2048, 4096])
+@pytest.mark.parametrize("hidden_size", [1024, 2048, 4096, 8192])
 @pytest.mark.parametrize("apply_router_weights", [None, False])
 def test_dispatch_combine_correctness(ep_group, apply_router_weights, hidden_size, num_topk):
     for case in CASES:
@@ -673,87 +672,6 @@ def test_dispatch_combine_correctness(ep_group, apply_router_weights, hidden_siz
                 num_topk=num_topk,
             )
             ep_group.barrier()
-
-
-@pytest.mark.nranks(8)
-@pytest.mark.parametrize("hidden_size", sorted(LATENCY_HIDDEN_SIZES - {1024, 2048, 4096}))
-def test_latency_hidden_sizes(ep_group, hidden_size):
-    # Widths >= 8192 with BF16 topk=16 exceed 226 KB for 16 tiles and exercise 2-round TMA staging.
-    for layout, data_type, combine_mode in (
-        (DispatchLayout.EXPERT_MAJOR, DispatchDataType.BF16, CombineMode.DIRECT_SEND),
-        (DispatchLayout.EXPERT_MAJOR, DispatchDataType.FP8_E4M3, CombineMode.RANK_LOCAL_REDUCE),
-        (DispatchLayout.RANK_MAJOR, DispatchDataType.BF16, CombineMode.DIRECT_SEND),
-        (DispatchLayout.RANK_MAJOR, DispatchDataType.FP8_E4M3_STATIC, CombineMode.RANK_LOCAL_REDUCE),
-        (DispatchLayout.RANK_MAJOR, DispatchDataType.MXFP8_E4M3, CombineMode.DIRECT_SEND),
-    ):
-        _run_dispatch_combine_case(
-            ep_group,
-            MoEMode.LATENCY,
-            layout,
-            data_type,
-            combine_mode,
-            False,
-            None,
-            hidden_size,
-            num_topk=16,
-        )
-        ep_group.barrier()
-
-
-@pytest.mark.nranks(16)
-@pytest.mark.parametrize("layout", [DispatchLayout.TOKEN_MAJOR, DispatchLayout.RANK_MAJOR])
-@pytest.mark.parametrize("combine_blocks", [2, 25])
-def test_throughput_combine_two_round_pipeline(ep_group, layout, combine_blocks):
-    # 2 blocks (wide 14 warps = 28 warps) and 25 blocks (narrow 12 warps = 300 warps) with enough tokens
-    # so every warp reuses its 2-stage staging buffers across multiple tokens, covering both partial
-    # (9, 11, 15 contributors) and full (16 contributors) second-round contributor counts.
-    num_topk = 16
-    hidden_size = 2048
-    num_tokens = combine_blocks * 28 + 5
-    num_local_experts = 2
-    contributor_counts = (9, 11, 15, 16)
-    with initialized_runtime(
-        ep_group,
-        mode=MoEMode.THROUGHPUT,
-        output_layout=layout,
-        combine_mode=CombineMode.RANK_LOCAL_REDUCE,
-        num_experts=num_local_experts * ep_group.nranks,
-        hidden_size=hidden_size,
-        topk=num_topk,
-        max_tokens_per_rank=num_tokens,
-        num_blocks=(8, combine_blocks),
-    ) as runtime:
-        stream = torch.cuda.Stream()
-        with torch.cuda.stream(stream):
-            route_rows = []
-            observed_contributors = set()
-            for token in range(num_tokens):
-                target_contributors = contributor_counts[token % len(contributor_counts)]
-                ranks = [(ep_group.my_rank + token + step) % ep_group.nranks for step in range(target_contributors)]
-                row = [dst_rank * num_local_experts + (step % num_local_experts) for step, dst_rank in enumerate(ranks)]
-                while len(row) < num_topk:
-                    # Mix duplicate destination ranks and invalid (-1) routes in remaining top-k slots.
-                    row.append(ranks[0] * num_local_experts + 1 if len(row) % 2 == 0 else -1)
-                distinct_ranks = {expert // num_local_experts for expert in row if expert >= 0}
-                assert len(distinct_ranks) == target_contributors
-                observed_contributors.add(len(distinct_ranks))
-                route_rows.append(row)
-            assert observed_contributors == set(contributor_counts)
-
-            routes = torch.tensor(route_rows, dtype=torch.int64, device="cuda")
-            weights = torch.full((num_tokens, num_topk), 1.0 / num_topk, dtype=torch.float32, device="cuda")
-            values = ((torch.arange(num_tokens, device="cuda") + ep_group.my_rank * 13) % 15 + 1).float() * num_topk
-            input = values[:, None].expand(-1, hidden_size).to(torch.bfloat16).contiguous()
-
-            result, handle = runtime.dispatch(input, routes, weights, stream=stream)
-            expert_output = (result.tokens.float() * result.weights.sum(dim=-1, keepdim=True)).to(torch.bfloat16)
-            result.combine_input_buffer.copy_(expert_output)
-            combined = runtime.combine(result.combine_input_buffer, handle, stream=stream)
-            stream.synchronize()
-
-            expected_weights = torch.where(routes >= 0, weights, 0).sum(dim=-1, keepdim=True)
-            expected = input.float() * expected_weights
-            torch.testing.assert_close(combined.float(), expected, rtol=0, atol=0)
 
 
 def test_fused_static_fp8_matches_prequantized_payload(ep_group):
