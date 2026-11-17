@@ -57,19 +57,20 @@ struct BasePortChannelDeviceHandleT<PortChannelBackend::Host> {
     Device = 2,
   };
 
-  SemaphoreId semaphoreId_ = 0;
+  SemaphoreId semaphoreId_;
 
-  Host2DeviceSemaphoreDeviceHandle semaphore_{};
+  Host2DeviceSemaphoreDeviceHandle semaphore_;
 
   // this is a concurrent fifo which is multiple threads from the device
   // can produce for and the sole proxy thread consumes it.
-  FifoDeviceHandle fifo_{};
+  FifoDeviceHandle fifo_;
 
   // One past the highest FIFO position with a completed flush on this connection.
   // Host-pinned: proxy writes after CQ drain, GPU reads in waitFlush().
-  uint64_t* flushDonePos_ = nullptr;
+  uint64_t* flushDonePos_;
 
-  MSCCLPP_HOST_DEVICE_INLINE constexpr BasePortChannelDeviceHandleT() = default;
+  MSCCLPP_HOST_DEVICE_INLINE constexpr BasePortChannelDeviceHandleT() noexcept
+      : semaphoreId_(0), semaphore_(), fifo_(), flushDonePos_(nullptr) {}
 
   MSCCLPP_HOST_DEVICE_INLINE BasePortChannelDeviceHandleT(SemaphoreId semaphoreId,
                                                           Host2DeviceSemaphoreDeviceHandle semaphore,
@@ -198,11 +199,11 @@ struct BasePortChannelDeviceHandleT<PortChannelBackend::Device> {
   /// Scope of concurrent callers posting and flushing through a PortChannel.
   using Concurrency = BasePortChannelDeviceHandleT<PortChannelBackend::Host>::Concurrency;
 
-  PortDevice2DeviceSemaphoreDeviceHandle semaphore_{};
+  PortDevice2DeviceSemaphoreDeviceHandle semaphore_;
 
-  DeviceBackendHandle device_{};
+  DeviceBackendHandle device_;
 
-  MSCCLPP_HOST_DEVICE_INLINE constexpr BasePortChannelDeviceHandleT() = default;
+  MSCCLPP_HOST_DEVICE_INLINE constexpr BasePortChannelDeviceHandleT() noexcept : semaphore_(), device_() {}
 
   MSCCLPP_HOST_DEVICE_INLINE BasePortChannelDeviceHandleT(PortDevice2DeviceSemaphoreDeviceHandle semaphore,
                                                           DeviceBackendHandle device)
@@ -408,10 +409,11 @@ struct PortChannelDeviceHandleT;
 template <>
 struct PortChannelDeviceHandleT<PortChannelBackend::Host>
     : public BasePortChannelDeviceHandleT<PortChannelBackend::Host> {
-  MemoryId dst_ = 0;
-  MemoryId src_ = 0;
+  MemoryId dst_;
+  MemoryId src_;
 
-  MSCCLPP_HOST_DEVICE_INLINE constexpr PortChannelDeviceHandleT() = default;
+  MSCCLPP_HOST_DEVICE_INLINE constexpr PortChannelDeviceHandleT() noexcept
+      : BasePortChannelDeviceHandleT<PortChannelBackend::Host>(), dst_(0), src_(0) {}
 
   MSCCLPP_HOST_DEVICE_INLINE PortChannelDeviceHandleT(SemaphoreId semaphoreId,
                                                       Host2DeviceSemaphoreDeviceHandle semaphore, FifoDeviceHandle fifo,
@@ -493,10 +495,11 @@ struct PortChannelDeviceHandleT<PortChannelBackend::Device>
   /// Scope of concurrent callers accessing this channel's queue pair.
   using Concurrency = BasePortChannelDeviceHandleT<PortChannelBackend::Device>::Concurrency;
 
-  DeviceMemoryHandle dstMemory_{};
-  DeviceMemoryHandle srcMemory_{};
+  DeviceMemoryHandle dstMemory_;
+  DeviceMemoryHandle srcMemory_;
 
-  MSCCLPP_HOST_DEVICE_INLINE constexpr PortChannelDeviceHandleT() = default;
+  MSCCLPP_HOST_DEVICE_INLINE constexpr PortChannelDeviceHandleT() noexcept
+      : BasePortChannelDeviceHandleT<PortChannelBackend::Device>(), dstMemory_(), srcMemory_() {}
 
   MSCCLPP_HOST_DEVICE_INLINE PortChannelDeviceHandleT(PortDevice2DeviceSemaphoreDeviceHandle semaphore,
                                                       DeviceBackendHandle device, DeviceMemoryHandle dstMemory,
