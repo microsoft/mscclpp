@@ -103,6 +103,8 @@ struct BasePortChannel {
 
   std::shared_ptr<Host2DeviceSemaphore> semaphore_;
 
+  std::shared_ptr<PortDevice2DeviceSemaphore> deviceSemaphore_;
+
   std::shared_ptr<Proxy> proxy_;
 
  public:
@@ -115,6 +117,10 @@ struct BasePortChannel {
   /// @param proxy The proxy used for communication.
   BasePortChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore,
                   std::shared_ptr<Proxy> proxy);
+
+  /// Constructor for a channel in device mode (PortChannelBackend::Device).
+  /// @param semaphore The semaphore of a PortChannel device-mode connection.
+  explicit BasePortChannel(std::shared_ptr<PortDevice2DeviceSemaphore> semaphore);
 
   /// Constructor.
   /// @param semaphoreId The ID of the semaphore.
@@ -135,8 +141,10 @@ struct BasePortChannel {
 
   /// Returns the device-side handle.
   /// User should make sure the BasePortChannel is not released when using the returned handle.
+  /// @tparam Backend The backend to use on the device (default: PortChannelBackend::Host).
   /// @return The device-side handle.
-  DeviceHandle deviceHandle() const;
+  template <PortChannelBackend Backend = PortChannelBackend::Host>
+  BasePortChannelDeviceHandleT<Backend> deviceHandle() const;
 };
 
 /// Port channel.
@@ -144,6 +152,8 @@ struct PortChannel : public BasePortChannel {
  private:
   MemoryId dst_;
   MemoryId src_;
+  RegisteredMemory dstMemory_;
+  RegisteredMemory srcMemory_;
 
  public:
   /// Constructor.
@@ -157,6 +167,12 @@ struct PortChannel : public BasePortChannel {
   /// @param src The source memory region.
   PortChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore, std::shared_ptr<Proxy> proxy,
               MemoryId dst, MemoryId src);
+
+  /// Constructor for a channel in device mode (PortChannelBackend::Device).
+  /// @param semaphore The semaphore of a PortChannel device-mode connection.
+  /// @param dst The destination registered memory.
+  /// @param src The source registered memory.
+  PortChannel(std::shared_ptr<PortDevice2DeviceSemaphore> semaphore, RegisteredMemory dst, RegisteredMemory src);
 
   /// Constructor.
   /// @param semaphoreId The ID of the semaphore.
@@ -180,8 +196,10 @@ struct PortChannel : public BasePortChannel {
 
   /// Returns the device-side handle.
   /// User should make sure the PortChannel is not released when using the returned handle.
+  /// @tparam Backend The backend to use on the device (default: PortChannelBackend::Host).
   /// @return The device-side handle.
-  DeviceHandle deviceHandle() const;
+  template <PortChannelBackend Backend = PortChannelBackend::Host>
+  PortChannelDeviceHandleT<Backend> deviceHandle() const;
 };
 
 /// @deprecated Use BasePortChannel instead.

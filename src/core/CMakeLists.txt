@@ -40,6 +40,11 @@ if(MSCCLPP_USE_GDRCOPY)
     target_compile_definitions(mscclpp_obj PRIVATE MSCCLPP_USE_GDRCOPY)
 endif()
 
+if(MSCCLPP_USE_GPUNETIO)
+    target_link_libraries(mscclpp_obj PUBLIC mscclpp_gpunetio_headers)
+    target_compile_definitions(mscclpp_obj PUBLIC MSCCLPP_USE_GPUNETIO)
+endif()
+
 set_target_properties(mscclpp_obj PROPERTIES LINKER_LANGUAGE CXX POSITION_INDEPENDENT_CODE 1 VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
 
 if(MSCCLPP_USE_CUDA)
@@ -66,10 +71,16 @@ endif()
 # libmscclpp
 add_library(mscclpp SHARED)
 target_link_libraries(mscclpp PUBLIC mscclpp_obj)
+if(MSCCLPP_USE_GPUNETIO)
+    target_sources(mscclpp PRIVATE $<TARGET_OBJECTS:mscclpp_gpunetio_obj>)
+endif()
 set_target_properties(mscclpp PROPERTIES VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
 
 add_library(mscclpp_static STATIC)
 target_link_libraries(mscclpp_static PUBLIC mscclpp_obj)
+if(MSCCLPP_USE_GPUNETIO)
+    target_sources(mscclpp_static PRIVATE $<TARGET_OBJECTS:mscclpp_gpunetio_obj>)
+endif()
 set_target_properties(mscclpp_static PROPERTIES VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
 
 install(TARGETS mscclpp

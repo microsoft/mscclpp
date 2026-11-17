@@ -51,6 +51,7 @@ option(MSCCLPP_BUILD_TESTS "Build tests" OFF)
 option(MSCCLPP_BUILD_PYTHON_BINDINGS "Build Python bindings" ON)
 option(MSCCLPP_BUILD_EXT_NCCL "Build NCCL interfaces" ON)
 option(MSCCLPP_BUILD_EXT_COLLECTIVES "Build collective algorithms" ON)
+option(MSCCLPP_BUILD_EXT_MEGAMOE "Build native CUDA SM100-family MegaMoE (experimental)" OFF)
 option(MSCCLPP_BUILD_EXT_EP "Build Expert-Parallel (MoE dispatch/combine) extension" ON)
 option(MSCCLPP_USE_CUDA "Use NVIDIA/CUDA." OFF)
 option(MSCCLPP_USE_ROCM "Use AMD/ROCm." OFF)
@@ -288,6 +289,16 @@ FetchContent_Declare(json
     GIT_TAG v3.12.0
 )
 FetchContent_MakeAvailable(json)
+
+# The GPUNetIO backend is built whenever the platform supports it (CUDA with InfiniBand).
+if(MSCCLPP_USE_CUDA AND NOT MSCCLPP_USE_ROCM AND MSCCLPP_USE_IB)
+    set(MSCCLPP_USE_GPUNETIO ON)
+    message(STATUS "GPUNetIO backend enabled")
+    include(GpuNetIo)
+else()
+    set(MSCCLPP_USE_GPUNETIO OFF)
+    message(STATUS "GPUNetIO backend disabled (requires CUDA and InfiniBand)")
+endif()
 
 if("${INSTALL_PREFIX}" STREQUAL "")
     set(INSTALL_PREFIX "./")

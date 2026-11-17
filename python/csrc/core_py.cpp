@@ -29,6 +29,7 @@ extern void register_algorithm(nb::module_& m);
 
 // ext
 extern void register_algorithm_collection_builder(nb::module_& m);
+extern void register_megamoe(nb::module_& m);
 
 template <typename T>
 void def_shared_future(nb::handle& m, const std::string& typestr) {
@@ -160,7 +161,8 @@ void register_core(nb::module_& m) {
   nb::enum_<EndpointConfig::Ib::Mode>(m, "CppIbMode")
       .value("Default", EndpointConfig::Ib::Mode::Default)
       .value("Host", EndpointConfig::Ib::Mode::Host)
-      .value("HostNoAtomic", EndpointConfig::Ib::Mode::HostNoAtomic);
+      .value("HostNoAtomic", EndpointConfig::Ib::Mode::HostNoAtomic)
+      .value("Device", EndpointConfig::Ib::Mode::Device);
 
   nb::class_<EndpointConfig::Ib>(m, "CppEndpointConfigIb")
       .def(nb::init<>())
@@ -334,4 +336,5 @@ NB_MODULE(_mscclpp, m) {
 
   // ext
   register_algorithm_collection_builder(m);
+  register_megamoe(m);
 }
