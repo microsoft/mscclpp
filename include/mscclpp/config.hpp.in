@@ -1,0 +1,10 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+#ifndef MSCCLPP_CONFIG_HPP_
+#define MSCCLPP_CONFIG_HPP_
+
+// Compiled library capability, also used by standalone installed-header consumers.
+#define MSCCLPP_HAS_GPUNETIO @MSCCLPP_HAS_GPUNETIO@
+
+#endif  // MSCCLPP_CONFIG_HPP_

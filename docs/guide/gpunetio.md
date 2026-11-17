@@ -19,6 +19,22 @@ cmake -DFETCHCONTENT_SOURCE_DIR_GPUNETIO=/path/to/gpunetio ..
 
 The GPUNetIO license is installed to `share/licenses/mscclpp/gpunetio`.
 
+### Standalone installed-header consumers
+
+Use headers and libraries from the same installation. The installed `mscclpp/config.hpp` records whether that library
+includes GPUNetIO. CUDA consumers do not need to define `USE_IBVERBS` to select the Device implementation.
+The GPUNetIO vendor headers are installed alongside the MSCCL++ headers when the backend is enabled.
+For example, compile a CUDA application against an installation at `$MSCCLPP_HOME` with:
+
+```bash
+nvcc -std=c++20 -arch=sm_90 -I"$MSCCLPP_HOME/include" app.cu \\
+  -L"$MSCCLPP_HOME/lib" -Wl,-rpath,"$MSCCLPP_HOME/lib" -lmscclpp -o app
+```
+
+Device posting requires both a GPUNetIO-enabled library and a CUDA target of `sm_90` or newer.
+On unavailable builds or architectures, Device posting and flush fail explicitly, including release builds;
+they do not silently succeed or fall back to a host proxy. Host handles remain available in those builds.
+
 ## Requirements
 
 - A Hopper or newer NVIDIA GPU and an RDMA NIC with a BlueFlame UAR

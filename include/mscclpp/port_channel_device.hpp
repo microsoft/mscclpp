@@ -69,7 +69,7 @@ struct BasePortChannelDeviceHandleT<PortChannelBackend::Host> {
   // Host-pinned: proxy writes after CQ drain, GPU reads in waitFlush().
   uint64_t* flushDonePos_ = nullptr;
 
-  MSCCLPP_INLINE BasePortChannelDeviceHandleT() = default;
+  MSCCLPP_HOST_DEVICE_INLINE constexpr BasePortChannelDeviceHandleT() = default;
 
   MSCCLPP_HOST_DEVICE_INLINE BasePortChannelDeviceHandleT(SemaphoreId semaphoreId,
                                                           Host2DeviceSemaphoreDeviceHandle semaphore,
@@ -202,7 +202,7 @@ struct BasePortChannelDeviceHandleT<PortChannelBackend::Device> {
 
   DeviceBackendHandle device_{};
 
-  MSCCLPP_INLINE BasePortChannelDeviceHandleT() = default;
+  MSCCLPP_HOST_DEVICE_INLINE constexpr BasePortChannelDeviceHandleT() = default;
 
   MSCCLPP_HOST_DEVICE_INLINE BasePortChannelDeviceHandleT(PortDevice2DeviceSemaphoreDeviceHandle semaphore,
                                                           DeviceBackendHandle device)
@@ -411,7 +411,7 @@ struct PortChannelDeviceHandleT<PortChannelBackend::Host>
   MemoryId dst_ = 0;
   MemoryId src_ = 0;
 
-  MSCCLPP_INLINE PortChannelDeviceHandleT() = default;
+  MSCCLPP_HOST_DEVICE_INLINE constexpr PortChannelDeviceHandleT() = default;
 
   MSCCLPP_HOST_DEVICE_INLINE PortChannelDeviceHandleT(SemaphoreId semaphoreId,
                                                       Host2DeviceSemaphoreDeviceHandle semaphore, FifoDeviceHandle fifo,
@@ -496,7 +496,7 @@ struct PortChannelDeviceHandleT<PortChannelBackend::Device>
   DeviceMemoryHandle dstMemory_{};
   DeviceMemoryHandle srcMemory_{};
 
-  MSCCLPP_INLINE PortChannelDeviceHandleT() = default;
+  MSCCLPP_HOST_DEVICE_INLINE constexpr PortChannelDeviceHandleT() = default;
 
   MSCCLPP_HOST_DEVICE_INLINE PortChannelDeviceHandleT(PortDevice2DeviceSemaphoreDeviceHandle semaphore,
                                                       DeviceBackendHandle device, DeviceMemoryHandle dstMemory,

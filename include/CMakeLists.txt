@@ -9,4 +9,5 @@ target_sources(
 )
 
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/mscclpp DESTINATION include)
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/mscclpp/version.hpp DESTINATION include/mscclpp)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/mscclpp/version.hpp ${CMAKE_CURRENT_BINARY_DIR}/mscclpp/config.hpp
+    DESTINATION include/mscclpp)
