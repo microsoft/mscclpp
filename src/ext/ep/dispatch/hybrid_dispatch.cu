@@ -186,7 +186,7 @@ MSCCLPP_DEVICE_INLINE void distributeProduce(void* output, void* outputScales, i
     mscclpp::bulkFence();
     syncNamedBarrier(groupBarrierId, nGroupThreads);
 
-    gateway.forward<PayloadBytes>(groupRemoteTokenIndices[groupIdx], staged, stride, groupThreadIdx, nGroupThreads,
+    gateway.enqueue<PayloadBytes>(groupRemoteTokenIndices[groupIdx], staged, stride, groupThreadIdx, nGroupThreads,
                                   groupBarrierId);
 
     if (subWarpIdx == 0) {
@@ -244,7 +244,7 @@ MSCCLPP_DEVICE_INLINE void distributeControl(const int64_t* routes, const Worklo
   WorkspaceView workspace(context->workspace_, nRanks, workload.numExperts_);
   const Gateway combineGateway(transport, hybridCtx.gatewayRank_, hybridCtx.nTokensPerChunk_,
                                hybridCtx.aggregateSendBuffer_, hybridCtx.aggregateRecvBuffer_,
-                               hybridCtx.aggregateControl_->qpSignalCount, hybridCtx.aggregateChunkReady_);
+                               hybridCtx.aggregateControl_->qpSignals, hybridCtx.aggregateChunkReady_);
 
   for (int peerIdx = threadIdx.x; peerIdx < nRanks; peerIdx += blockDim.x) rankTokenCounts[peerIdx] = 0;
   if (threadIdx.x == 0) nRemoteTokens = 0;
@@ -266,7 +266,7 @@ MSCCLPP_DEVICE_INLINE void distributeControl(const int64_t* routes, const Worklo
     const size_t stride =
         InterRackDispatchPayload::stride(Hidden, workload.numTopk_, sizeof(DispatchElementType<DataType>), ScaleBytes);
     gateway.forward(warpIdx, nRemoteTokens, stride, &state->recvHeader, &state->sendHeader,
-                    InterRackDispatchHeader::wireBytes(nRanks), &state->bufferReuseReady,
+                    InterRackDispatchHeader::wireBytes(nRanks), &state->recvBufferFree,
                     &hybridCtx.distributeScratch_->forwardComplete);
   }
 }
@@ -278,8 +278,8 @@ MSCCLPP_DEVICE_INLINE void distributeForward(void* output, void* outputScales, i
                                              const TransportView& transport, const Gateway& gateway, uint32_t flag,
                                              uint8_t* sharedMemory, int forwarderIdx, int nForwarders) {
   using ElementType = DispatchElementType<DataType>;
+  constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(ElementType);
   constexpr size_t ScaleBytes = DataType == DispatchDataType::MXFP8_E4M3 ? Hidden / 32 : 0;
-  constexpr size_t PayloadBytes = InterRackDispatchPayload::payloadBytes(Hidden, sizeof(ElementType), ScaleBytes);
   constexpr size_t TileStride = hybridDispatchTileStride<Hidden, DataType>();
   const auto& hybridCtx = context->hybridCtx_;
   auto* state = hybridCtx.distributeControl_;
@@ -304,29 +304,38 @@ MSCCLPP_DEVICE_INLINE void distributeForward(void* output, void* outputScales, i
   }
   __syncthreads();
 
-  gateway.forward<PayloadBytes, TileStride, HybridForwardWarps>(
-      tileBase, nIncomingTokens, stride, forwarderIdx, nForwarders,
-      [&](int tokenIdx, void* landing, const uint8_t* staged, auto&& waitPayload) {
+  int expertIdx = -1;
+  int slotIdx = -1;
+  float weight = 0.0f;
+  gateway.forward<HiddenBytes, TileStride, HybridForwardWarps, ScaleBytes>(
+      tileBase, output, outputScales, nIncomingTokens, stride, forwarderIdx, nForwarders,
+      [&](int tokenIdx, void* landing) {
         const InterRackDispatchPayload payload(landing, Hidden, nTopk, sizeof(ElementType), ScaleBytes);
-        const int expertIdx = laneIdx < nTopk ? payload.expertIds_[laneIdx] : -1;
-        const int dstRank = expertIdx >= 0 ? expertIdx / nLocalExperts : -1;
-        const int slotIdx = laneIdx < nTopk ? payload.dstSlots_[laneIdx] : -1;
-        const float weight = laneIdx < nTopk ? payload.topkWeights_[laneIdx] : 0.0f;
+        expertIdx = laneIdx < nTopk ? payload.expertIds_[laneIdx] : -1;
+        slotIdx = laneIdx < nTopk ? payload.dstSlots_[laneIdx] : -1;
+        weight = laneIdx < nTopk ? payload.topkWeights_[laneIdx] : 0.0f;
         if (laneIdx < nTopk) {
-          // Preserve routes for combine before the ACK allows peers to reuse the RDMA landing buffer.
+          // Preserve routes for combine before releasing recvBuffer for the next dispatch round.
           auto* cached = hybridCtx.aggregateRoutes_ + static_cast<size_t>(tokenIdx) * 3 * nTopk;
           cached[laneIdx] = expertIdx;
           cached[nTopk + laneIdx] = slotIdx;
           reinterpret_cast<float*>(cached + 2 * nTopk)[laneIdx] = weight;
         }
-        const bool isLeader = isFirstLaneForRank(dstRank, laneIdx);
-        const bool isLocalLeader = dstRank >= 0 && transport.isNvlinkPeer(dstRank) && isLeader;
-        waitPayload();
-        sendNvlinkToken<Hidden, DataType>(output, outputScales, outputIds, outputWeights, staged, gateway.peerRank(),
-                                          dstRank, slotIdx, expertIdx, weight, isLocalLeader, workload, transport);
+        const int dstRank = expertIdx >= 0 ? expertIdx / nLocalExperts : -1;
+        EP_DEVICE_ASSERT(dstRank < 0 || !transport.isNvlinkPeer(dstRank) ||
+                         (slotIdx >= 0 && slotIdx < workload.maxTokensPerRank_));
+        const size_t dstIndex = static_cast<size_t>(gateway.peerRank()) * workload.maxTokensPerRank_ + max(0, slotIdx);
+        return Gateway::ForwardRoute{dstRank, dstIndex};
+      },
+      [&](int, const Gateway::ForwardRoute& route, unsigned int leaderMask) {
+        const int outputExpertIdx =
+            workload.emitLocalExpertIds_ && expertIdx >= 0 ? expertIdx % nLocalExperts : expertIdx;
+        writeRankMajorMetadataNvlink(transport, outputIds, outputWeights, gateway.peerRank(), route.dstRank, slotIdx,
+                                     outputExpertIdx, weight, leaderMask, nTopk, workload.maxTokensPerRank_,
+                                     workload.invalidTokenExpertId_);
       });
-  gateway.forwardSignal(&hybridCtx.distributeScratch_->nCompletedForwarders, nForwarders,
-                        &hybridCtx.distributeScratch_->forwardComplete, state->payloadReady, flag);
+  gateway.signalIntraDomain(&hybridCtx.distributeScratch_->nCompletedForwarders, nForwarders,
+                            &hybridCtx.distributeScratch_->forwardComplete, state->payloadReady, flag);
 }
 
 #endif
@@ -347,7 +356,7 @@ __global__ __launch_bounds__(DispatchNThreads,
   const TransportView transport(context);
   const auto& hybridCtx = context->hybridCtx_;
   const Gateway gateway(transport, hybridCtx.gatewayRank_, hybridCtx.nTokensPerChunk_, hybridCtx.distributeSendBuffer_,
-                        hybridCtx.distributeRecvBuffer_, hybridCtx.distributeControl_->qpSignalCount,
+                        hybridCtx.distributeRecvBuffer_, hybridCtx.distributeControl_->qpSignals,
                         hybridCtx.distributeScratch_->chunkReadySignals);
   if (blockIdx.x == 0) {
     distributeControl<Hidden, DataType>(routes, workload, recvBuffer, context, transport, gateway, flag,

@@ -116,24 +116,24 @@ The dispatch grid needs at least 10 resident blocks, and the launcher checks ful
   Producer blocks join the forwarders when they finish.
 - **Forwarder blocks (blocks 1 and up).** These read the peer's header. Forwarder 0 republishes the per-destination
   counts to the local peers. Each forwarding warp waits until the RDMA atomic for its token's chunk has incremented
-  the per-QP `qpSignalCount` past the chunk's position on that QP. It then TMA-loads the token from the landing
+  the per-QP `qpSignals` past the chunk's position on that QP. It then TMA-loads the token from the landing
   buffer, stores it and its metadata to local destinations over NVLink, and caches the routes for combine. The last
-  forwarder resets `qpSignalCount`, sets the local forward-complete flag, and publishes the per-source
+  forwarder resets `qpSignals`, sets the local forward-complete flag, and publishes the per-source
   payload-ready epoch to every local peer with a system-scoped release.
 - **Receive.** Each block finalizes the counts and padding metadata for a grid-stride subset of source ranks. It
   waits on the NVLink semaphore for local sources and on the payload-ready epoch for remote sources.
 
 Memory ordering: the RDMA atomic for a chunk is applied only after earlier writes on the same QP are placed, so
-observing `qpSignalCount` publishes the chunk payload; the header publishes itself through its per-word epochs.
+observing `qpSignals` publishes the chunk payload; the header publishes itself through its per-word epochs.
 Send-buffer and header writers join through warp or CTA barriers and device-scoped release counters, and the
 posting thread acquires those counters. The writers' data stays in GPU memory, so DOCA's GPU-scoped release
 before the doorbell publishes it to the NIC; the hybrid path adds no system fences.
 
 Buffer reuse: dispatch does not drain its QPs before returning. After its forwarders finish, each rank sends a
-`bufferReuseReady` RDMA atomic to its paired rank. The next Combine control block waits for and clears the peer's
+`recvBufferFree` RDMA atomic to its paired rank. The next Combine control block waits for and clears the peer's
 acknowledgment. This guarantees that the peer has consumed this rank's chunks and header, so the next Dispatch may
 overwrite this rank's send buffer and the peer's landing buffer. Counters are per round, not cumulative: dispatch
-chunk counters are reset by Combine, and Combine's chunk counters and `qpSignalCount` are reset at the start of the
+chunk counters are reset by Combine, and Combine's chunk counters and `qpSignals` are reset at the start of the
 next Dispatch, before its header is sent.
 
 ### Hybrid combine
@@ -147,7 +147,7 @@ FP32, adds the returned row, and casts to BF16 once. **FP32 addition grouping di
 
 - **Control block (block 0).** Exchanges start signals with local peers and publishes their ready epochs. One
   posting warp per QP sends chunk `c` once all of its gateway rows are reduced. The block also resets the dispatch
-  counters, and its thread 0 waits for and clears `bufferReuseReady`.
+  counters, and its thread 0 waits for and clears `recvBufferFree`.
 - **Worker blocks.** Each block splits into two 16-warp groups to overlap TMA loads with FP32 reductions. Gateway
   tokens run first: chunk `0` launches immediately so QP `0` posts early, and later chunks pace behind one grid wave of
   completed gateway TMA loads. Once full-wave gateway TMA loads complete, groups reduce their local tokens and write
@@ -155,7 +155,7 @@ FP32, adds the returned row, and casts to BF16 once. **FP32 addition grouping di
 
 Combine requires at least `worldSize` blocks. There must be **exactly one fresh Dispatch before every Combine**,
 including CUDA graph replays. No device-side guard enforces this: replaying Combine without a new Dispatch reuses
-stale chunk counters and blocks in the `bufferReuseReady` wait.
+stale chunk counters and blocks in the `recvBufferFree` wait.
 
 The hybrid paths reuse `LatencyRuntimeContext`, including its workspace, IPC channels, and device context. Its
 symmetric allocation additionally reserves the send and landing regions and the control blocks targeted by RDMA.

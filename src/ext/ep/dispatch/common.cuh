@@ -160,7 +160,7 @@ MSCCLPP_DEVICE_INLINE void dispatchRankMajorRecvSource(int* outputTopkIdx, float
   if (threadIdx.x == 0) {
     if (payloadReady != nullptr && !transport.isNvlinkPeer(sourceRank)) {
 #if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
-      Gateway::forwardWait(payloadReady, sourceRank, flag);
+      Gateway::waitIntraDomain(payloadReady, sourceRank, flag);
 #endif
     } else if (nRankTokens > 0) {
       if (transport.isSelf(sourceRank)) {
