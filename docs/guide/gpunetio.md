@@ -21,19 +21,20 @@ The GPUNetIO license is installed to `share/licenses/mscclpp/gpunetio`.
 
 ### Standalone installed-header consumers
 
-Use headers and libraries from the same installation. The installed `mscclpp/config.hpp` records whether that library
-includes GPUNetIO. CUDA consumers do not need to define `USE_IBVERBS` to select the Device implementation.
-The GPUNetIO vendor headers are installed alongside the MSCCL++ headers when the backend is enabled.
-For example, compile a CUDA application against an installation at `$MSCCLPP_HOME` with:
+Use headers and libraries from the same GPUNetIO-enabled CUDA/InfiniBand installation. Its GPUNetIO vendor headers
+must also be installed. Set `$MSCCLPP_HOME` to that installation and explicitly define `USE_IBVERBS` when compiling
+standalone CUDA code for Device posting. For example:
 
 ```bash
-nvcc -std=c++20 -arch=sm_90 -I"$MSCCLPP_HOME/include" app.cu \
+nvcc -std=c++20 -arch=sm_90 -DUSE_IBVERBS -I"$MSCCLPP_HOME/include" app.cu \
   -L"$MSCCLPP_HOME/lib" -Xlinker=-rpath -Xlinker="$MSCCLPP_HOME/lib" -lmscclpp -o app
 ```
 
-Device posting requires both a GPUNetIO-enabled library and a CUDA target of `sm_90` or newer.
-On unavailable builds or architectures, Device posting and flush fail explicitly, including release builds;
-they do not silently succeed or fall back to a host proxy. Host handles remain available in those builds.
+`USE_IBVERBS` is a caller-provided implementation-selection flag, not detection of the library's capabilities.
+Do not use it to enable Device posting against a library built with InfiniBand off or without GPUNetIO. The flag
+cannot supply a missing library backend or vendor headers, and it does not enable non-CUDA or pre-`sm_90` execution.
+Without the flag, or on non-CUDA/unsupported-architecture compilation paths, Device posting and flush fail explicitly,
+including release builds; they do not silently succeed or fall back to a host proxy. Host handles remain available.
 
 ## Requirements
 

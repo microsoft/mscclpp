@@ -1,10 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-// Compile the actual public owner/handle API without the library target's private build context.
-#ifdef USE_IBVERBS
-#error "This probe must not inherit USE_IBVERBS"
-#endif
+// Compile the actual public owner/handle API with explicit standalone-consumer flags.
 #include <mscclpp/port_channel.hpp>
 #include <type_traits>
 #include <utility>

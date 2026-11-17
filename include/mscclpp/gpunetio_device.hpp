@@ -7,7 +7,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <mscclpp/config.hpp>
 
 #include "assert_device.hpp"
 #include "device.hpp"
@@ -16,7 +15,7 @@
 #include "atomic_device.hpp"
 #endif
 
-#if defined(MSCCLPP_DEVICE_CUDA) && MSCCLPP_HAS_GPUNETIO && (!defined(__CUDA_ARCH__) || __CUDA_ARCH__ >= 900)
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS) && (!defined(__CUDA_ARCH__) || __CUDA_ARCH__ >= 900)
 #define MSCCLPP_DETAIL_GPUNETIO_DEVICE_AVAILABLE 1
 #else
 #define MSCCLPP_DETAIL_GPUNETIO_DEVICE_AVAILABLE 0
