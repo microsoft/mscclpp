@@ -6,6 +6,7 @@
 #include <mscclpp/memory_channel_device.hpp>
 
 #include "common/device_helpers.cuh"
+#include "common/gateway.cuh"
 #include "common/latency.cuh"
 #include "exception.hpp"
 #include "kernels.hpp"
@@ -158,9 +159,9 @@ MSCCLPP_DEVICE_INLINE void dispatchRankMajorRecvSource(int* outputTopkIdx, float
 
   if (threadIdx.x == 0) {
     if (payloadReady != nullptr && !transport.isNvlinkPeer(sourceRank)) {
-      while (mscclpp::atomicLoad<uint32_t, mscclpp::scopeSystem>(payloadReady + sourceRank,
-                                                                 mscclpp::memoryOrderAcquire) != flag) {
-      }
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
+      Gateway::forwardWait(payloadReady, sourceRank, flag);
+#endif
     } else if (nRankTokens > 0) {
       if (transport.isSelf(sourceRank)) {
         workspaceView.dispatchLocalPayloadReady_->acquire();

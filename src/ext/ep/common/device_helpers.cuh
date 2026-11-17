@@ -5,6 +5,7 @@
 
 #include <mscclpp/atomic_device.hpp>
 #include <mscclpp/memory_channel_device.hpp>
+#include <mscclpp/port_channel_device.hpp>
 
 #include "exception.hpp"
 
@@ -99,6 +100,38 @@ MSCCLPP_DEVICE_INLINE void blockPeerBarrier(BaseMemoryChannelDeviceHandle* chann
   }
   __syncthreads();
 }
+
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
+// Deferred PortChannel helpers built on public put / putWithAccumulate / accumulate.
+template <uint32_t MaxExclusiveThreadsPerBlock = DeviceBackendHandle::kDefaultMaxExclusiveThreadsPerBlock,
+          typename WaitFn>
+MSCCLPP_DEVICE_INLINE void putAfter(PortChannelDeviceHandleT<PortChannelBackend::Device>& channel, uint64_t dstOffset,
+                                    uint64_t srcOffset, uint64_t size, int slotIdx, WaitFn&& waitReady) {
+  constexpr auto kExclusive = PortChannelDeviceHandle::Concurrency::Exclusive;
+  waitReady();
+  channel.put<kExclusive, MaxExclusiveThreadsPerBlock>(dstOffset, srcOffset, size, slotIdx);
+}
+
+template <uint32_t MaxExclusiveThreadsPerBlock = DeviceBackendHandle::kDefaultMaxExclusiveThreadsPerBlock,
+          typename WaitFn>
+MSCCLPP_DEVICE_INLINE void putWithAccumulateAfter(PortChannelDeviceHandleT<PortChannelBackend::Device>& channel,
+                                                  uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
+                                                  uint64_t accOffset, int64_t value, int slotIdx, WaitFn&& waitReady) {
+  constexpr auto kExclusive = PortChannelDeviceHandle::Concurrency::Exclusive;
+  waitReady();
+  channel.putWithAccumulate<kExclusive, MaxExclusiveThreadsPerBlock>(dstOffset, srcOffset, size, accOffset, value,
+                                                                     slotIdx);
+}
+
+template <uint32_t MaxExclusiveThreadsPerBlock = DeviceBackendHandle::kDefaultMaxExclusiveThreadsPerBlock,
+          typename WaitFn>
+MSCCLPP_DEVICE_INLINE void accumulateAfter(PortChannelDeviceHandleT<PortChannelBackend::Device>& channel,
+                                           uint64_t dstOffset, int64_t value, int slotIdx, WaitFn&& waitReady) {
+  constexpr auto kExclusive = PortChannelDeviceHandle::Concurrency::Exclusive;
+  waitReady();
+  channel.accumulate<kExclusive, MaxExclusiveThreadsPerBlock>(dstOffset, value, slotIdx);
+}
+#endif
 
 }  // namespace ep
 }  // namespace mscclpp

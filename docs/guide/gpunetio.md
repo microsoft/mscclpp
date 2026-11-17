@@ -141,8 +141,8 @@ next Dispatch, before its header is sent.
 Hybrid runtimes always use gateway aggregation, for both `RANK_LOCAL_REDUCE` and `DIRECT_SEND`. Each gateway
 reduces, in FP32, the local-domain expert outputs for the tokens it forwarded. Inputs are the preweighted BF16 rank
 partials for `RANK_LOCAL_REDUCE` and the per-route outputs, weighted on the fly, for `DIRECT_SEND`. The gateway
-returns compact rows (FP32 by default, or BF16 when the combine input is `FP8_E4M3_STATIC` or `combineBf16Wire` /
-`combine_bf16_wire` is enabled) in ordered per-QP chunks. Each owner reduces its own local-domain contributions in
+returns compact rows (FP32 by default, or BF16 when the combine input is `FP8_E4M3_STATIC` or `combineBf16PartialSum` /
+`combine_bf16_partial_sum` is enabled) in ordered per-QP chunks. Each owner reduces its own local-domain contributions in
 FP32, adds the returned row, and casts to BF16 once. **FP32 addition grouping differs** from single-domain combine.
 
 - **Control block (block 0).** Exchanges start signals with local peers and publishes their ready epochs. One

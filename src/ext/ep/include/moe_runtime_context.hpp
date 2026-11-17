@@ -91,7 +91,7 @@ struct LatencyRuntimeContext {
   LatencyRuntimeContext(mscclpp::Communicator& communicator, int rank, int numRanks, int numRanksPerIpcDomain,
                         int maxTokensPerRank, int hidden, int numExperts, int numTopk, DispatchLayout outputLayout,
                         CombineMode combineMode, int qpsPerPeer = 4, int nTokensPerChunk = 8,
-                        bool combineBf16Wire = false);
+                        bool combineBf16PartialSum = false);
   ~LatencyRuntimeContext() noexcept(false);
 
  private:
@@ -113,7 +113,7 @@ struct LatencyRuntimeContext {
   CombineMode combineMode_;
   int qpsPerPeer_ = 4;
   int nTokensPerChunk_ = 8;
-  bool combineBf16Wire_ = false;
+  bool combineBf16PartialSum_ = false;
   bool isHybrid_ = false;
   int64_t symmetricBufferBytes_;
   size_t workspaceBytes_;
