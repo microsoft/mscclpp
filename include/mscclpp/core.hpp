@@ -29,7 +29,7 @@ std::string version();
 class Bootstrap {
  public:
   /// Constructor.
-  Bootstrap(){};
+  Bootstrap() {};
 
   /// Destructor.
   virtual ~Bootstrap() = default;
@@ -220,11 +220,15 @@ enum class Transport {
   IB6,            // InfiniBand device 6 transport type.
   IB7,            // InfiniBand device 7 transport type.
   Ethernet,       // Ethernet transport type.
+  MRC0,           // Native MRC device 0 transport type.
+  MRC1,           // Native MRC device 1 transport type.
+  MRC2,           // Native MRC device 2 transport type.
+  MRC3,           // Native MRC device 3 transport type.
   NumTransports,  // The number of transports.
 };
 
 namespace detail {
-const size_t TransportFlagsSize = 11;
+const size_t TransportFlagsSize = 15;
 static_assert(TransportFlagsSize == static_cast<size_t>(Transport::NumTransports),
               "TransportFlagsSize must match the number of transports");
 /// Bitset for storing transport flags.
@@ -446,7 +450,39 @@ struct EndpointConfig {
           mode(mode) {}
   };
 
-  /// Communication transport type (e.g., CudaIpc, IB0-IB7, Ethernet).
+  /// Native MRC options, used only for MRC0-MRC3.
+  struct Mrc {
+    /// Port number; the native provider requires an explicit port.
+    int port;
+    /// GID index; -1 uses MSCCLPP_IB_GID_INDEX.
+    int gidIndex;
+    /// EV profile ID, which must already be configured by the controller.
+    uint64_t evProfileId;
+    /// Maximum send completion queue size.
+    int maxCqSize;
+    /// Maximum outstanding send work requests.
+    int maxSendWr;
+    /// Maximum outstanding notification receive work requests.
+    int maxRecvWr;
+
+    /// Constructor.
+    /// @param port Port number.
+    /// @param gidIndex GID index, or -1 to use the environment.
+    /// @param evProfileId Existing controller EV profile ID.
+    /// @param maxCqSize Maximum send completion queue size.
+    /// @param maxSendWr Maximum outstanding send work requests.
+    /// @param maxRecvWr Maximum outstanding notification receive work requests.
+    Mrc(int port = 1, int gidIndex = -1, uint64_t evProfileId = 0, int maxCqSize = 1024, int maxSendWr = 8192,
+        int maxRecvWr = 16)
+        : port(port),
+          gidIndex(gidIndex),
+          evProfileId(evProfileId),
+          maxCqSize(maxCqSize),
+          maxSendWr(maxSendWr),
+          maxRecvWr(maxRecvWr) {}
+  };
+
+  /// Communication transport type (e.g., CudaIpc, IB0-IB7, Ethernet, MRC0-MRC3).
   Transport transport;
   /// Target device for the endpoint (GPU or CPU with optional device ID).
   Device device;
@@ -454,15 +490,18 @@ struct EndpointConfig {
   int maxWriteQueueSize;
   /// InfiniBand-specific options (used only for Transport::IBx).
   Ib ib;
+  /// Native MRC-specific options (used only for Transport::MRCx).
+  Mrc mrc;
 
   /// Constructs endpoint configuration with specified transport, device, and optional settings.
   /// @param transport Communication transport to use.
   /// @param device Target device for the endpoint.
   /// @param maxWriteQueueSize Maximum write queue size (-1 for system default).
   /// @param ib IB-specific configuration.
+  /// @param mrc Native MRC-specific configuration.
   EndpointConfig(Transport transport = Transport::Unknown, Device device = DeviceType::GPU, int maxWriteQueueSize = -1,
-                 Ib ib = {})
-      : transport(transport), device(device), maxWriteQueueSize(maxWriteQueueSize), ib(ib) {}
+                 Ib ib = {}, Mrc mrc = {})
+      : transport(transport), device(device), maxWriteQueueSize(maxWriteQueueSize), ib(ib), mrc(mrc) {}
 };
 
 class Context;
@@ -987,7 +1026,10 @@ extern const TransportFlags NoTransports;
 /// A constant TransportFlags object representing all InfiniBand transports.
 extern const TransportFlags AllIBTransports;
 
-/// A constant TransportFlags object representing all transports.
+/// All native MRC device identities. Native MRC must be requested explicitly.
+extern const TransportFlags AllMrcTransports;
+
+/// The legacy IPC, InfiniBand, and Ethernet transport group; native MRC requires explicit selection.
 extern const TransportFlags AllTransports;
 
 /// A type which could be safely used on the device side.

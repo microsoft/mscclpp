@@ -3,6 +3,8 @@
 
 #include "endpoint.hpp"
 
+#include <algorithm>
+
 #include "api.h"
 #include "context.hpp"
 #include "logger.hpp"
@@ -14,6 +16,7 @@ namespace mscclpp {
 
 Endpoint::Impl::Impl(const EndpointConfig& config, Context::Impl& contextImpl)
     : config_(config), hostHash_(getHostHash()), pidHash_(getPidHash()) {
+  checkMrcSupport(config_.transport);
   if (config_.device.type == DeviceType::GPU && config_.device.id < 0) {
     MSCCLPP_CUDATHROW(cudaGetDevice(&(config_.device.id)));
   }
@@ -33,13 +36,19 @@ Endpoint::Impl::Impl(const EndpointConfig& config, Context::Impl& contextImpl)
 }
 
 Endpoint::Impl::Impl(const std::vector<char>& serialization) {
+  if (serialization.size() < sizeof(config_) + sizeof(hostHash_) + sizeof(pidHash_)) {
+    throw Error("Truncated endpoint metadata", ErrorCode::InvalidUsage);
+  }
   auto it = serialization.begin();
   it = detail::deserialize(it, config_);
   it = detail::deserialize(it, hostHash_);
   it = detail::deserialize(it, pidHash_);
   if (getRdmaTransports().has(config_.transport)) {
-    rdmaEndpoint_ = deserializeRdmaEndpoint(config_, it);
+    rdmaEndpoint_ = deserializeRdmaEndpoint(config_, it, serialization.end());
   } else if (config_.transport == Transport::Ethernet) {
+    if (serialization.end() - it < static_cast<std::ptrdiff_t>(sizeof(socketAddress_))) {
+      throw Error("Truncated Ethernet endpoint metadata", ErrorCode::InvalidUsage);
+    }
     it = detail::deserialize(it, socketAddress_);
   }
   if (it != serialization.end()) {

@@ -4,6 +4,7 @@
 #include <array>
 #include <cstring>
 #include <mscclpp/core.hpp>
+#include <mscclpp/errors.hpp>
 #include <sstream>
 
 #include "../framework.hpp"
@@ -48,6 +49,17 @@ class OpaqueRdmaProvider : public mscclpp::RdmaProvider {
   size_t size_;
 };
 
+template <typename F>
+void expectInvalidUsage(F function, const char* message = nullptr) {
+  try {
+    function();
+    FAIL() << "Expected invalid usage";
+  } catch (const mscclpp::Error& error) {
+    EXPECT_TRUE(error.getErrorCode() == mscclpp::ErrorCode::InvalidUsage);
+    if (message) EXPECT_TRUE(std::string(error.what()).find(message) != std::string::npos);
+  }
+}
+
 }  // namespace
 
 class LocalCommunicatorTest : public ::mscclpp::test::TestCase {
@@ -73,6 +85,90 @@ TEST(TransportFlagsTest, OutputStream) {
   EXPECT_EQ(toString(mscclpp::Transport::CudaIpc), std::string("{IPC}"));
   EXPECT_EQ(toString(mscclpp::Transport::CudaIpc | mscclpp::Transport::IB0 | mscclpp::Transport::Ethernet),
             std::string("{IPC, IB0, ETH}"));
+  EXPECT_EQ(toString(mscclpp::Transport::MRC0 | mscclpp::Transport::MRC3), std::string("{MRC0, MRC3}"));
+}
+
+TEST(TransportFlagsTest, MrcIsExplicitOptIn) {
+  EXPECT_TRUE((mscclpp::AllTransports & mscclpp::AllMrcTransports).none());
+  EXPECT_TRUE((mscclpp::AllIBTransports & mscclpp::AllMrcTransports).none());
+  EXPECT_TRUE(mscclpp::AllTransports ==
+              (mscclpp::AllIBTransports | mscclpp::Transport::CudaIpc | mscclpp::Transport::Ethernet));
+  auto selected = mscclpp::Transport::CudaIpc | mscclpp::Transport::MRC1;
+  EXPECT_TRUE(selected.has(mscclpp::Transport::MRC1));
+  EXPECT_FALSE(selected.has(mscclpp::Transport::IB1));
+  EXPECT_EQ((selected & mscclpp::AllMrcTransports).count(), size_t{1});
+}
+
+TEST(RdmaProviderTest, FailedCreationDoesNotPopulateCache) {
+  auto owner = mscclpp::Context::create();
+  auto& context = RdmaTestAccess::getImpl(*owner);
+  std::vector<mscclpp::Transport> rejected{mscclpp::Transport::Unknown, mscclpp::Transport::CudaIpc,
+                                           mscclpp::Transport::Ethernet};
+#if !defined(USE_IBVERBS)
+  rejected.push_back(mscclpp::Transport::IB0);
+#endif
+#if !defined(MSCCLPP_USE_MRC)
+  rejected.push_back(mscclpp::Transport::MRC0);
+#endif
+  for (auto transport : rejected) {
+    for (int attempt = 0; attempt < 2; ++attempt) {
+      expectInvalidUsage([&] { context.getRdmaProvider(transport); });
+      EXPECT_TRUE(context.rdmaProviders_.empty());
+    }
+  }
+}
+
+#if !defined(USE_IBVERBS)
+TEST(IbDisabledTest, ExplicitRequestsFail) {
+  auto context = mscclpp::Context::create();
+  unsigned char buffer[64]{};
+  const char* message = "IB support is not enabled";
+  expectInvalidUsage([&] { context->registerMemory(buffer, sizeof(buffer), mscclpp::Transport::IB0); }, message);
+  expectInvalidUsage([&] { context->createEndpoint({mscclpp::Transport::IB0, mscclpp::DeviceType::CPU}); }, message);
+  expectInvalidUsage([&] { context->createEndpoint({mscclpp::Transport::IB0}); }, message);
+}
+#endif
+
+#if !defined(MSCCLPP_USE_MRC)
+TEST(MrcDisabledTest, ExplicitRequestsFail) {
+  auto context = mscclpp::Context::create();
+  unsigned char buffer[64]{};
+  const char* message = "Native MRC support is disabled";
+  expectInvalidUsage([&] { context->registerMemory(buffer, sizeof(buffer), mscclpp::Transport::MRC0); }, message);
+  expectInvalidUsage([&] { context->createEndpoint({mscclpp::Transport::MRC0, mscclpp::DeviceType::CPU}); }, message);
+  expectInvalidUsage([&] { context->createEndpoint({mscclpp::Transport::MRC0}); }, message);
+}
+
+TEST(MrcDisabledTest, RejectsNativeMetadata) {
+  const char* message = "Native MRC support is disabled";
+  std::vector<char> endpoint;
+  mscclpp::detail::serialize(endpoint, mscclpp::EndpointConfig(mscclpp::Transport::MRC0, mscclpp::DeviceType::CPU));
+  mscclpp::detail::serialize(endpoint, uint64_t{1});
+  mscclpp::detail::serialize(endpoint, uint64_t{2});
+  expectInvalidUsage([&] { mscclpp::Endpoint::deserialize(endpoint); }, message);
+
+  for (auto flags : {mscclpp::TransportFlags(mscclpp::Transport::MRC0), mscclpp::NoTransports}) {
+    std::vector<char> memory;
+    mscclpp::detail::serialize(memory, reinterpret_cast<void*>(uintptr_t{0x1000}));
+    mscclpp::detail::serialize(memory, size_t{64});
+    mscclpp::detail::serialize(memory, uint64_t{1});
+    mscclpp::detail::serialize(memory, uint64_t{2});
+    mscclpp::detail::serialize(memory, flags);
+    int8_t count = flags.none() ? 1 : 0;
+    mscclpp::detail::serialize(memory, count);
+    if (count != 0) mscclpp::detail::serialize(memory, mscclpp::Transport::MRC0);
+    expectInvalidUsage([&] { mscclpp::RegisteredMemory::deserialize(memory); }, message);
+  }
+}
+#endif
+
+TEST(EndpointMetadataTest, ExistingTransportRoundtrip) {
+  auto context = mscclpp::Context::create();
+  auto endpoint = context->createEndpoint({mscclpp::Transport::CudaIpc, mscclpp::DeviceType::CPU});
+  auto imported = mscclpp::Endpoint::deserialize(endpoint.serialize());
+  EXPECT_TRUE(imported.transport() == mscclpp::Transport::CudaIpc);
+  EXPECT_TRUE(imported.device().type == mscclpp::DeviceType::CPU);
+  EXPECT_TRUE(imported.serialize() == endpoint.serialize());
 }
 
 TEST(LocalCommunicatorTest, RegisterMemory) {
@@ -121,6 +217,8 @@ TEST(RdmaProviderTest, ImportedEndpointPreservesWireBytes) {
     auto endpoint = Endpoint::deserialize(bytes);
     EXPECT_TRUE(endpoint.serialize() == bytes);
     EXPECT_FALSE(RdmaTestAccess::getImpl(endpoint).rdmaEndpoint_->isLocal());
+    bytes.pop_back();
+    expectInvalidUsage([&] { Endpoint::deserialize(bytes); });
   }
 }
 
@@ -157,6 +255,8 @@ TEST(RdmaProviderTest, ImportedMemoryPreservesRecordOrderAndBytes) {
   const auto& firstIb1 = getIbMemory(RdmaTestAccess::getImpl(memory).getTransportInfo(Transport::IB1));
   EXPECT_EQ(firstIb1.info().addr, uint64_t{0x1000});
   EXPECT_FALSE(firstIb1.isLocal());
+  bytes.pop_back();
+  expectInvalidUsage([&] { RegisteredMemory::deserialize(bytes); });
 }
 
 TEST(RdmaProviderTest, ImportedMemoryPreservesMixedIpcMetadataBytes) {

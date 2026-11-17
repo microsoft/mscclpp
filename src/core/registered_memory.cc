@@ -31,6 +31,13 @@
 
 namespace mscclpp {
 
+static void checkMemoryMetadataSize(std::vector<char>::const_iterator it, std::vector<char>::const_iterator end,
+                                    size_t size) {
+  if (end - it < static_cast<std::ptrdiff_t>(size)) {
+    throw Error("Truncated registered memory metadata", ErrorCode::InvalidUsage);
+  }
+}
+
 RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports, Context::Impl& contextImpl)
     : data(data),
       originalDataPtr(data),
@@ -38,6 +45,7 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports,
       hostHash(getHostHash()),
       pidHash(getPidHash()),
       transports(transports) {
+  checkMrcSupport(transports);
   if (transports.has(Transport::CudaIpc)) {
     CudaDeviceGuard deviceGuard(detail::gpuIdFromAddress(data));
 
@@ -106,25 +114,38 @@ MSCCLPP_API_CPP RegisteredMemory RegisteredMemory::deserialize(const std::vector
 RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
                              const std::vector<char>::const_iterator& end) {
   auto it = begin;
+  checkMemoryMetadataSize(it, end,
+                          sizeof(originalDataPtr) + sizeof(size) + sizeof(hostHash) + sizeof(pidHash) +
+                              sizeof(transports) + sizeof(int8_t));
   it = detail::deserialize(it, this->originalDataPtr);
   it = detail::deserialize(it, this->size);
   it = detail::deserialize(it, this->hostHash);
   it = detail::deserialize(it, this->pidHash);
   it = detail::deserialize(it, this->transports);
+  checkMrcSupport(this->transports);
   int8_t transportCount;
   it = detail::deserialize(it, transportCount);
+  if (transportCount < 0) throw Error("Invalid transport record count", ErrorCode::InvalidUsage);
+  TransportFlags seenRdma;
   for (int i = 0; i < transportCount; ++i) {
-    TransportInfo transportInfo;
+    TransportInfo transportInfo{};
+    checkMemoryMetadataSize(it, end, sizeof(transportInfo.transport));
     it = detail::deserialize(it, transportInfo.transport);
+    if (static_cast<unsigned int>(transportInfo.transport) >= static_cast<unsigned int>(Transport::NumTransports)) {
+      throw Error("Invalid memory transport identity", ErrorCode::InvalidUsage);
+    }
     if (transportInfo.transport == Transport::CudaIpc) {
+      checkMemoryMetadataSize(it, end, sizeof(transportInfo.gpuIpcMemHandle));
       it = detail::deserialize(it, transportInfo.gpuIpcMemHandle);
     } else if (getRdmaTransports().has(transportInfo.transport)) {
-      transportInfo.rdmaMemory = deserializeRdmaMemory(transportInfo.transport, it);
+      transportInfo.rdmaMemory = deserializeRdmaMemory(transportInfo.transport, it, end, this->originalDataPtr,
+                                                       this->size, this->transports, seenRdma);
     } else {
       throw Error("Unknown transport", ErrorCode::InternalError);
     }
     this->transportRecords.push_back(std::move(transportInfo));
   }
+  validateRdmaMemoryRecords(this->transports, seenRdma);
   if (it != end) {
     throw Error("Serialization failed", ErrorCode::InternalError);
   }

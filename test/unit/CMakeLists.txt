@@ -21,6 +21,11 @@ target_sources(unit_tests PRIVATE
     bulk_tests.cu
 )
 
+if(MSCCLPP_USE_MRC)
+    target_sources(unit_tests PRIVATE mrc_tests.cc)
+    target_compile_definitions(unit_tests PRIVATE MSCCLPP_USE_MRC)
+endif()
+
 if(TARGET mscclpp_ep)
     target_sources(unit_tests PRIVATE ep_quantization_tests.cu)
     target_include_directories(unit_tests PRIVATE ${PROJECT_SOURCE_DIR}/src/ext/ep ${PROJECT_SOURCE_DIR}/src/ext/ep/include)

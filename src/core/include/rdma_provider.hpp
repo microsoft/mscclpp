@@ -50,11 +50,16 @@ class RdmaProvider : public std::enable_shared_from_this<RdmaProvider> {
 
 TransportFlags getRdmaTransports();
 bool areRdmaTransportsCompatible(Transport local, Transport remote);
+void checkMrcSupport(TransportFlags transports);
 
 std::shared_ptr<RdmaProvider> createRdmaProvider(Transport transport);
 std::shared_ptr<RdmaEndpoint> deserializeRdmaEndpoint(const EndpointConfig& config,
-                                                      std::vector<char>::const_iterator& it);
-std::shared_ptr<RdmaMemory> deserializeRdmaMemory(Transport transport, std::vector<char>::const_iterator& it);
+                                                      std::vector<char>::const_iterator& it,
+                                                      std::vector<char>::const_iterator end);
+std::shared_ptr<RdmaMemory> deserializeRdmaMemory(Transport transport, std::vector<char>::const_iterator& it,
+                                                  std::vector<char>::const_iterator end, void* originalData,
+                                                  size_t size, TransportFlags advertised, TransportFlags& seen);
+void validateRdmaMemoryRecords(TransportFlags advertised, TransportFlags seen);
 
 }  // namespace mscclpp
 
