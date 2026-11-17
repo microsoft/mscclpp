@@ -22,7 +22,8 @@ namespace ep {
 LatencyRuntimeContext::LatencyRuntimeContext(mscclpp::Communicator& communicator, int rank, int numRanks,
                                              int numRanksPerIpcDomain, int maxTokensPerRank, int hidden, int numExperts,
                                              int numTopk, DispatchLayout outputLayout, CombineMode combineMode,
-                                             int qpsPerPeer, int nTokensPerChunk, bool combineBf16PartialSum)
+                                             int qpsPerPeer, int nTokensPerChunk,
+                                             mscclpp::DataType combineInterDomainDtype)
     : rank_(rank),
       numRanks_(numRanks),
       numRanksPerIpcDomain_(numRanksPerIpcDomain),
@@ -34,7 +35,7 @@ LatencyRuntimeContext::LatencyRuntimeContext(mscclpp::Communicator& communicator
       combineMode_(combineMode),
       qpsPerPeer_(qpsPerPeer),
       nTokensPerChunk_(nTokensPerChunk),
-      combineBf16PartialSum_(combineBf16PartialSum),
+      combineInterDomainDtype_(combineInterDomainDtype),
       symmetricBufferBytes_(0),
       workspaceBytes_(0),
       communicator_(communicator) {
@@ -44,6 +45,9 @@ LatencyRuntimeContext::LatencyRuntimeContext(mscclpp::Communicator& communicator
   EP_HOST_ASSERT(outputLayout == DispatchLayout::EXPERT_MAJOR || outputLayout == DispatchLayout::RANK_MAJOR);
   EP_HOST_ASSERT(combineMode == CombineMode::RANK_LOCAL_REDUCE || combineMode == CombineMode::DIRECT_SEND);
   EP_HOST_ASSERT(numRanks_ % numRanksPerIpcDomain_ == 0);
+  if (combineInterDomainDtype != mscclpp::DataType::FLOAT32 && combineInterDomainDtype != mscclpp::DataType::BFLOAT16) {
+    EP_THROW("Unsupported combineInterDomainDtype: expected FLOAT32 or BFLOAT16");
+  }
   MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId_));
 
 #if defined(MSCCLPP_USE_CUDA) && defined(USE_IBVERBS)
@@ -223,7 +227,7 @@ void LatencyRuntimeContext::initialize() {
         .aggregateControl_ = storage.aggregateControl_,
         .aggregateChunkReady_ = aggregateChunkReady_.get(),
         .aggregateChunkLoadDone_ = aggregateChunkReady_.get() + maxCombineChunks,
-        .combineBf16PartialSum_ = combineBf16PartialSum_};
+        .combineInterDomainDtype_ = combineInterDomainDtype_};
   }
   deviceContext_.devicePtr_ = static_cast<DeviceContext*>(mscclpp::detail::gpuCalloc(sizeof(DeviceContext)));
   mscclpp::gpuMemcpy<DeviceContext>(deviceContext_.devicePtr_, &deviceContext_, 1, cudaMemcpyHostToDevice);

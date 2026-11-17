@@ -9,11 +9,11 @@ namespace mscclpp::ep {
 #if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS) && MSCCLPP_BULK_AVAILABLE
 
 template <DispatchDataType DispatchType>
-MSCCLPP_DEVICE_INLINE bool useBf16CombinePartialSum(const HybridDeviceContext& hybridCtx) {
+MSCCLPP_DEVICE_INLINE bool useBf16InterDomainCombine(const HybridDeviceContext& hybridCtx) {
   if constexpr (DispatchType == DispatchDataType::FP8_E4M3_STATIC) {
     return true;
   } else {
-    return hybridCtx.combineBf16PartialSum_;
+    return hybridCtx.combineInterDomainDtype_ == mscclpp::DataType::BFLOAT16;
   }
 }
 
@@ -26,7 +26,7 @@ MSCCLPP_DEVICE_INLINE void aggregateStoreFinalVector(void* output, mscclpp::f32x
   if (remoteTokenIdx >= 0) {
     const size_t remoteVecIdx = static_cast<size_t>(remoteTokenIdx) * NHiddenVectors + vectorIdx;
     const mscclpp::f32x8 partial =
-        useBf16CombinePartialSum<DispatchType>(hybridCtx)
+        useBf16InterDomainCombine<DispatchType>(hybridCtx)
             ? mscclpp::to<mscclpp::f32x8>(
                   reinterpret_cast<const mscclpp::bf16x8*>(hybridCtx.aggregateRecvBuffer_)[remoteVecIdx])
             : reinterpret_cast<const mscclpp::f32x8*>(hybridCtx.aggregateRecvBuffer_)[remoteVecIdx];
@@ -256,12 +256,12 @@ MSCCLPP_DEVICE_INLINE void aggregateReduceToken(void* destination, const void* e
       }
     }
   } else if constexpr (IsGateway) {
-    const bool bf16PartialSum = useBf16CombinePartialSum<DispatchType>(hybridCtx);
+    const bool bf16InterDomain = useBf16InterDomainCombine<DispatchType>(hybridCtx);
 #pragma unroll
     for (int stepIdx = 0; stepIdx < MaxVectorsPerThread; ++stepIdx) {
       const int vectorIdx = groupThreadIdx + stepIdx * HybridCombineGroupThreads;
       if (vectorIdx < NHiddenVectors) {
-        if (bf16PartialSum) {
+        if (bf16InterDomain) {
           reinterpret_cast<mscclpp::bf16x8*>(destination)[vectorIdx] = mscclpp::to<mscclpp::bf16x8>(tileSum[stepIdx]);
         } else {
           reinterpret_cast<mscclpp::f32x8*>(destination)[vectorIdx] = tileSum[stepIdx];
@@ -370,7 +370,7 @@ __global__ __launch_bounds__(CombineNThreads,
     if (blockIdx.x == 0) {
       aggregateControl(context, transport, workspace, flag);
     }
-    const size_t wireElemBytes = useBf16CombinePartialSum<DispatchType>(hybridCtx) ? sizeof(Bf16) : sizeof(float);
+    const size_t wireElemBytes = useBf16InterDomainCombine<DispatchType>(hybridCtx) ? sizeof(Bf16) : sizeof(float);
     const int posterQueueIdx = warpIdx - configCellDiv(context->numRanks_, WARP_SIZE);
     gateway.reduceAndForward<HybridCombineNWarpGroups, HybridCombineGroupThreads>(
         *hybridCtx.nIncomingTokens_, static_cast<size_t>(Hidden) * wireElemBytes, hybridCtx.aggregateChunkLoadDone_,

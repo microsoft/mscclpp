@@ -277,9 +277,10 @@ Runtime views are reused by later operations, not independent results.
   input, routing, and weight values may change while their pointers, shapes,
   token count, and active capacity remain fixed. Every rank must replay
   collectives in the same order.
-* CUDA SM90+ and one IPC domain are required; HIP and inter-domain transports
-  are unsupported. The implementation accepts 1-64 ranks, not a claim of
-  hardware qualification of every 64-rank topology. Expert placement is even
+* CUDA SM90+ is required; HIP is unsupported. Within one CUDA IPC domain, both
+  modes accept 1-64 ranks; latency `RANK_MAJOR` additionally supports up to 128
+  ranks across two equal IPC domains via GPUNetIO (not a claim of hardware
+  qualification of every topology). Expert placement is even
   and contiguous; top-k is 1-16; throughput allows at most 128 experts per rank.
 * Latency hidden sizes are `1024, 2048, 4096, 4352, 5120, 5376, 6656, 7168, 8192, 8704, 9216`.
   Throughput combine always consumes BF16 and requires hidden size to be a
@@ -295,6 +296,66 @@ Runtime views are reused by later operations, not independent results.
   uses `N` for both operations.
 * The API does not automatically overlap communication with expert computation
   or provide PyTorch autograd backward support.
+
+## Cross-domain hybrid latency `RANK_MAJOR`
+
+Cross-domain EP uses `MSCCLPP_HCA_DEVICES` to map each GPU to its IB transport
+(`IB0`–`IB7`), or discovers IB devices via `ibverbs` when `MSCCLPP_HCA_DEVICES`
+is unset. If a rank's process sets `MSCCLPP_HCA_DEVICES` to a single HCA name
+(for example `export MSCCLPP_HCA_DEVICES=mlx5_0`), that rank uses `IB0`.
+`qps_per_peer` (`qpsPerPeer`, 1 or 4, default 4) sets the QPs per peer, and
+`n_tokens_per_chunk` (`nTokensPerChunk`, 1–128, default 8) sets the tokens per
+IB chunk. Hybrid dispatch and combine stripe chunks round-robin across all
+configured QPs.
+
+### Hybrid dispatch
+
+Latency `RANK_MAJOR` EP automatically uses the hybrid algorithm when ranks span
+two equal, fully IPC-mapped domains (`topk <= 16`; BF16, `FP8_E4M3_STATIC`, or
+`MXFP8_E4M3`). Rank `r` pairs with gateway rank `(r + domainSize) % worldSize`
+in the other domain. The dispatch grid requires at least 10 resident blocks:
+
+- **Control block (block 0).** Counts routes, writes a self-validating `LL8Packet`
+  header (`nRemoteTokens` and per-rank counts), publishes local NVLink counts and
+  completion signals, and posts IB transfers (`Gateway::forward`: QP 0 sends the
+  header, all QPs stream ready chunks, and QP 0 posts `recvBufferFree` once local
+  forwarding finishes).
+- **Forwarder blocks (`1 .. min((gridBlocks - 1) // 2, 16)`).** Read the peer
+  header (forwarder 0 relays per-rank counts to local NVLink peers), wait for
+  per-QP `qpSignals`, TMA-load incoming tokens, forward payloads and metadata to
+  local NVLink destinations (`Gateway::forward`), cache routes for combine, and
+  publish intra-domain readiness (`Gateway::signalIntraDomain`).
+- **Producer blocks (remaining worker blocks).** Quantize or TMA-load input
+  tokens, enqueue compact remote tokens into the IB send buffer
+  (`Gateway::enqueue`), and store NVLink-local tokens directly.
+- **Receive.** Each worker block finalizes counts and padding metadata for a
+  subset of source ranks, waiting on NVLink semaphores for intra-domain sources
+  and `Gateway::waitIntraDomain` for cross-domain sources.
+
+Dispatch returns without draining QPs; the paired rank sends `recvBufferFree`
+after its forwarders finish, and the next Combine control block waits for and
+clears `recvBufferFree` before the next Dispatch reuses the send/landing buffers.
+
+### Hybrid combine
+
+Hybrid combine uses gateway aggregation for both `RANK_LOCAL_REDUCE` and
+`DIRECT_SEND`. Each gateway reduces local-domain expert outputs in FP32 and
+streams compact partial sums back over IB in per-QP chunks (FP32 by default, or
+BF16 when combine input is `FP8_E4M3_STATIC` or `combine_inter_domain_dtype` /
+`combineInterDomainDtype` is set to BF16). Each owner reduces its own intra-domain
+contributions in FP32, adds the returned remote-domain partial sum, and casts to
+BF16 once (**FP32 addition grouping differs** from single-domain combine):
+
+- **Control block (block 0).** Exchanges intra-domain start signals, streams
+  ready reduced chunks over IB (`Gateway::reduceAndForward`), resets dispatch
+  counters, and waits on `recvBufferFree`.
+- **Worker blocks.** Split into two 16-warp groups. Gateway reductions run first
+  (`Gateway::reduceAndForward`: chunk 0 launches uncontested, later chunks pace
+  behind one grid wave of completed TMA loads); groups then reduce local tokens
+  and fuse remote partial sums directly as chunks arrive (`Gateway::poll`/`wait`).
+
+Combine requires at least `worldSize` blocks and **exactly one fresh Dispatch
+before every Combine**, including CUDA graph replays.
 
 ## Unified EP benchmark
 

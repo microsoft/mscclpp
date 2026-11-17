@@ -273,6 +273,12 @@ def test_config_validation_at_construction(ep_group):
             invalid_token_expert_id=None,
             emit_local_expert_ids=True,
         )
+    assert config.combine_inter_domain_dtype == torch.float32
+    assert replace(config, combine_inter_domain_dtype=torch.bfloat16).combine_inter_domain_dtype == torch.bfloat16
+    with pytest.raises(TypeError, match="combine_inter_domain_dtype must be a torch.dtype"):
+        replace(config, combine_inter_domain_dtype="bf16")
+    with pytest.raises(ValueError, match="combine_inter_domain_dtype must be torch.float32 or torch.bfloat16"):
+        replace(config, combine_inter_domain_dtype=torch.float16)
 
 
 @pytest.mark.parametrize("mode", [MoEMode.LATENCY, MoEMode.THROUGHPUT])

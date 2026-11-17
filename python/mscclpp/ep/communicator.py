@@ -10,6 +10,7 @@ from typing import Optional, Tuple, Union
 import torch
 
 from mscclpp import CommGroup
+from mscclpp.utils import torch_dtype_to_mscclpp_dtype
 
 from . import _cpp
 from ._cpp import CombineMode, DispatchLayout, MoEMode
@@ -61,7 +62,7 @@ class MoECommunicator:
                 combine_mode=self.combine_mode,
                 qps_per_peer=self._config.qps_per_peer,
                 n_tokens_per_chunk=self._config.n_tokens_per_chunk,
-                combine_bf16_partial_sum=self._config.combine_bf16_partial_sum,
+                combine_inter_domain_dtype=torch_dtype_to_mscclpp_dtype(self._config.combine_inter_domain_dtype),
             )
         self._request_builder = RequestBuilder(self._config, self._runtime)
 

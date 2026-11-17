@@ -18,6 +18,10 @@ namespace ep {
 // Cross-domain two-hop gateway channel over device-initiated PortChannels and local NVLink peers.
 class Gateway {
  public:
+  struct ForwardRoute {
+    int dstRank = -1;
+    size_t dstIndex = 0;
+  };
   MSCCLPP_DEVICE_INLINE Gateway(const TransportView& transport, int peerRank, int nItemsPerChunk, void* sendBuffer,
                                 void* recvBuffer, uint64_t* qpSignals, int* chunkReadySignals)
       : transport_(transport),
@@ -67,11 +71,6 @@ class Gateway {
       releaseRecvBuffer(channel, queueIdx, peerRecvBufferFree, localForwardDone);
     }
   }
-
-  struct ForwardRoute {
-    int dstRank = -1;
-    size_t dstIndex = 0;
-  };
 
   // Dynamic multi-dst NVLink forward: wait for incoming IB chunks, TMA-load each item into shared memory, resolve
   // per-lane destinations during bulkLoad, TMA-store payload (and optional AuxBytes) to each unique local NVLink peer,

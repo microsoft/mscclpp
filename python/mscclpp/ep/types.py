@@ -79,7 +79,7 @@ class MoECommunicatorConfig:
     emit_local_expert_ids: bool = False
     qps_per_peer: int = 4
     n_tokens_per_chunk: int = 8
-    combine_bf16_partial_sum: bool = False
+    combine_inter_domain_dtype: torch.dtype = torch.float32
 
     def __post_init__(self) -> None:
         """Validate and resolve configuration for the communicator and CUDA device."""
@@ -101,8 +101,10 @@ class MoECommunicatorConfig:
             raise TypeError("combine_mode must be a CombineMode")
         if type(self.emit_local_expert_ids) is not bool:
             raise TypeError("emit_local_expert_ids must be a bool")
-        if type(self.combine_bf16_partial_sum) is not bool:
-            raise TypeError("combine_bf16_partial_sum must be a bool")
+        if not isinstance(self.combine_inter_domain_dtype, torch.dtype):
+            raise TypeError("combine_inter_domain_dtype must be a torch.dtype")
+        if self.combine_inter_domain_dtype not in (torch.float32, torch.bfloat16):
+            raise ValueError("combine_inter_domain_dtype must be torch.float32 or torch.bfloat16")
         latency = self.mode == MoEMode.LATENCY
         layout = self.output_layout
         if layout is None:

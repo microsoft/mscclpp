@@ -159,20 +159,22 @@ def test_ep_hybrid_cli_preserves_defaults(monkeypatch):
 
     monkeypatch.setattr(sys, "argv", ["ep-bench", "--backend", "mscclpp"])
     args = parse_args()
-    assert args.qps_per_peer is None and args.n_tokens_per_chunk is None and not args.combine_bf16_partial_sum
+    assert args.qps_per_peer is None and args.n_tokens_per_chunk is None and args.combine_inter_domain_dtype == "fp32"
     assert args.routing == "random" and args.routing_sigma == 0.85
 
 
-def test_ep_combine_bf16_partial_sum_cli(monkeypatch):
+def test_ep_combine_inter_domain_dtype_cli(monkeypatch):
     from mscclpp_benchmark.ep.bench import parse_args
 
     monkeypatch.setattr(
-        sys, "argv", ["ep-bench", "--backend", "mscclpp", "--ep-layout", "rank_major", "--combine-bf16-partial-sum"]
+        sys,
+        "argv",
+        ["ep-bench", "--backend", "mscclpp", "--ep-layout", "rank_major", "--combine-inter-domain-dtype", "bf16"],
     )
     args = parse_args()
-    assert args.combine_bf16_partial_sum
-    monkeypatch.setattr(sys, "argv", ["ep-bench", "--backend", "nccl", "--combine-bf16-partial-sum"])
-    with pytest.raises(SystemExit, match="--combine-bf16-partial-sum requires"):
+    assert args.combine_inter_domain_dtype == "bf16"
+    monkeypatch.setattr(sys, "argv", ["ep-bench", "--backend", "nccl", "--combine-inter-domain-dtype", "bf16"])
+    with pytest.raises(SystemExit, match="--combine-inter-domain-dtype bf16 requires"):
         parse_args()
 
 
@@ -404,8 +406,8 @@ def test_ep_fp8_combine_unit_output_rounds_remote_domain(scale, combine_scale, r
     assert torch.equal(actual, torch.full((1, 8), expected / combine_scale, dtype=torch.bfloat16))
 
 
-@pytest.mark.parametrize("combine_bf16_partial_sum,expected", [(False, 1.0078125), (True, 1.0)])
-def test_ep_combine_bf16_partial_sum_unit_output_rounds_remote_domain(combine_bf16_partial_sum, expected):
+@pytest.mark.parametrize("combine_inter_domain_dtype,expected", [(torch.float32, 1.0078125), (torch.bfloat16, 1.0)])
+def test_ep_combine_inter_domain_dtype_unit_output_rounds_remote_domain(combine_inter_domain_dtype, expected):
     import mscclpp.ep as ep
     from mscclpp_benchmark.ep.bench_mscclpp import _expected_rank_major_unit_output
 
@@ -415,7 +417,7 @@ def test_ep_combine_bf16_partial_sum_unit_output_rounds_remote_domain(combine_bf
         hidden_size=8,
         combine_mode=ep.CombineMode.DIRECT_SEND,
         quant=None,
-        combine_bf16_partial_sum=combine_bf16_partial_sum,
+        combine_inter_domain_dtype=combine_inter_domain_dtype,
     )
     routes = torch.tensor([[0, 4, -1, 8]])
     weights = torch.tensor([[2**-8, 1.00390625, 1000, 1000]], dtype=torch.float32)

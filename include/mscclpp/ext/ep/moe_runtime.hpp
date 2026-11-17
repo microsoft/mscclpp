@@ -44,15 +44,15 @@ class MoERuntime {
   /// @param combineMode Latency-mode combine algorithm.
   /// @param qpsPerPeer Queue pairs per peer for cross-domain hybrid EP (1 or 4).
   /// @param nTokensPerChunk Tokens per IB chunk for cross-domain hybrid EP, in [1, 128].
-  /// @param combineBf16PartialSum Whether cross-domain hybrid combine downcasts remote-domain FP32 partial sums to BF16
-  /// before IB transfer.
+  /// @param combineInterDomainDtype Data type (`FLOAT32` or `BFLOAT16`) used to transfer remote-domain partial sums
+  /// over IB in cross-domain hybrid combine.
   /// @throws EPException For an unsupported mode or invalid configuration.
   /// @warning @p communicator is retained by reference and must remain alive
   /// until initialize() returns.
   MoERuntime(mscclpp::Communicator& communicator, MoEMode mode, int maxTokensPerRank, int hidden, int numExperts,
              int numTopk, DispatchLayout outputLayout = DispatchLayout::EXPERT_MAJOR,
              CombineMode combineMode = CombineMode::RANK_LOCAL_REDUCE, int qpsPerPeer = 4, int nTokensPerChunk = 8,
-             bool combineBf16PartialSum = false);
+             mscclpp::DataType combineInterDomainDtype = mscclpp::DataType::FLOAT32);
   /// Release owned resources without explicitly synchronizing user streams.
   /// The caller must ensure all local and peer GPU work using these resources,
   /// including graph replays, has completed before destruction.
@@ -196,7 +196,7 @@ std::shared_ptr<MoERuntime> createMoERuntime(mscclpp::Communicator& communicator
                                              DispatchLayout outputLayout = DispatchLayout::EXPERT_MAJOR,
                                              CombineMode combineMode = CombineMode::RANK_LOCAL_REDUCE,
                                              int qpsPerPeer = 4, int nTokensPerChunk = 8,
-                                             bool combineBf16PartialSum = false);
+                                             mscclpp::DataType combineInterDomainDtype = mscclpp::DataType::FLOAT32);
 
 }  // namespace ep
 }  // namespace mscclpp

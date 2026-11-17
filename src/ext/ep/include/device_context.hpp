@@ -3,6 +3,7 @@
 #ifndef MSCCLPP_EP_DEVICE_CONTEXT_HPP_
 #define MSCCLPP_EP_DEVICE_CONTEXT_HPP_
 
+#include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/memory_channel_device.hpp>
 #include <mscclpp/port_channel_device.hpp>
 
@@ -53,7 +54,7 @@ struct HybridDeviceContext {
   /// Private completed-token and TMA-load counters, reset on the caller stream during dispatch.
   int* aggregateChunkReady_ = nullptr;
   int* aggregateChunkLoadDone_ = nullptr;
-  bool combineBf16PartialSum_ = false;
+  mscclpp::DataType combineInterDomainDtype_ = mscclpp::DataType::FLOAT32;
 };
 
 /// Persistent device resources shared by every dispatch and combine algorithm.
