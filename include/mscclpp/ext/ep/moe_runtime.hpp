@@ -43,9 +43,9 @@ class MoERuntime {
   /// @param outputLayout Dispatch output layout.
   /// @param combineMode Latency-mode combine algorithm.
   /// @param qpsPerPeer Queue pairs per peer for cross-domain hybrid EP (1 or 4).
-  /// @param nTokensPerChunk Tokens per IB chunk for cross-domain hybrid EP, in [1, 128].
+  /// @param nTokensPerChunk Tokens per RDMA chunk for cross-domain hybrid EP, in [1, 128].
   /// @param combineInterDomainDtype Data type (`FLOAT32` or `BFLOAT16`) used to transfer remote-domain partial sums
-  /// over IB in cross-domain hybrid combine.
+  /// over RDMA in cross-domain hybrid combine.
   /// @throws EPException For an unsupported mode or invalid configuration.
   /// @warning @p communicator is retained by reference and must remain alive
   /// until initialize() returns.

@@ -116,18 +116,18 @@ void LatencyRuntimeContext::initialize() {
   peerBufferMemories_.resize(numRanks_);
   peerBufferMemories_[rank_] =
       communicator_.registerMemory(symmetricBuffer_.get(), symmetricBufferBytes_, ipcTransport);
-  mscclpp::Transport ibTransport = mscclpp::Transport::Unknown;
+  mscclpp::Transport rdmaTransport = mscclpp::Transport::Unknown;
   if (isHybrid_) {
     const std::string& hcaDevices = mscclpp::env()->hcaDevices;
-    ibTransport = (!hcaDevices.empty() && hcaDevices.find(',') == std::string::npos)
-                      ? mscclpp::Transport::IB0
-                      : static_cast<mscclpp::Transport>(static_cast<int>(mscclpp::Transport::IB0) + deviceId_);
-    ibLocalMemory_ = communicator_.registerMemory(symmetricBuffer_.get(), symmetricBufferBytes_, ibTransport);
+    rdmaTransport = (!hcaDevices.empty() && hcaDevices.find(',') == std::string::npos)
+                        ? mscclpp::Transport::IB0
+                        : static_cast<mscclpp::Transport>(static_cast<int>(mscclpp::Transport::IB0) + deviceId_);
+    rdmaLocalMemory_ = communicator_.registerMemory(symmetricBuffer_.get(), symmetricBufferBytes_, rdmaTransport);
   }
   const int gatewayRank = isHybrid_ ? (rank_ + ipcDomainSize) % numRanks_ : -1;
   std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteFutures(numRanks_);
   std::vector<std::shared_future<mscclpp::Connection>> ipcConnectionFutures(numRanks_);
-  std::vector<std::vector<std::shared_future<mscclpp::Connection>>> ibConnectionFutures(numRanks_);
+  std::vector<std::vector<std::shared_future<mscclpp::Connection>>> rdmaConnectionFutures(numRanks_);
   for (int r = 0; r < numRanks_; ++r) {
     if (r == rank_) continue;
     if (isMappedPeer(r)) {
@@ -135,12 +135,12 @@ void LatencyRuntimeContext::initialize() {
       remoteFutures[r] = communicator_.recvMemory(r, MemoryTag);
       ipcConnectionFutures[r] = communicator_.connect(ipcConfig, r, ConnectTagBase);
     } else if (r == gatewayRank) {
-      communicator_.sendMemory(ibLocalMemory_, r, MemoryTag);
+      communicator_.sendMemory(rdmaLocalMemory_, r, MemoryTag);
       remoteFutures[r] = communicator_.recvMemory(r, MemoryTag);
       for (int q = 0; q < qpsPerPeer_; ++q) {
-        mscclpp::EndpointConfig ibConfig(ibTransport, {mscclpp::DeviceType::GPU, deviceId_});
-        ibConfig.ib.mode = mscclpp::EndpointConfig::Ib::Mode::Device;
-        ibConnectionFutures[r].push_back(communicator_.connect(ibConfig, r, ConnectTagBase + q));
+        mscclpp::EndpointConfig rdmaConfig(rdmaTransport, {mscclpp::DeviceType::GPU, deviceId_});
+        rdmaConfig.ib.mode = mscclpp::EndpointConfig::Ib::Mode::Device;
+        rdmaConnectionFutures[r].push_back(communicator_.connect(rdmaConfig, r, ConnectTagBase + q));
       }
     }
   }
@@ -162,8 +162,8 @@ void LatencyRuntimeContext::initialize() {
       peerBufferMemories_[r] = remoteFutures[r].get();
       for (int q = 0; q < qpsPerPeer_; ++q) {
         auto semaphore =
-            std::make_shared<mscclpp::PortDevice2DeviceSemaphore>(communicator_, ibConnectionFutures[r][q].get());
-        portChannels_.emplace_back(semaphore, peerBufferMemories_[r], ibLocalMemory_);
+            std::make_shared<mscclpp::PortDevice2DeviceSemaphore>(communicator_, rdmaConnectionFutures[r][q].get());
+        portChannels_.emplace_back(semaphore, peerBufferMemories_[r], rdmaLocalMemory_);
         auto handle = portChannels_.back().deviceHandle();
         handle.device_.blueFlameLimit = 2 * 1024 * 1024;
         portChannelHandles[static_cast<size_t>(r) * qpsPerPeer_ + q] = handle;
@@ -201,32 +201,32 @@ void LatencyRuntimeContext::initialize() {
     portChannelContext_ = mscclpp::GpuBuffer<PortChannelDeviceContext>(1).memory();
     mscclpp::gpuMemcpy<PortChannelDeviceContext>(portChannelContext_.get(), &portChannelContext, 1,
                                                  cudaMemcpyHostToDevice);
-    distributeScratch_ =
-        mscclpp::detail::gpuCallocShared<int>(HybridDistributeScratch::numInts(maxTokensPerRank_, nTokensPerChunk_));
+    hybridDispatchScratch_ =
+        mscclpp::detail::gpuCallocShared<int>(HybridDispatchScratch::numInts(maxTokensPerRank_, nTokensPerChunk_));
     const auto storage = storageLayout();
     const int maxCombineChunks = configCellDiv(maxTokensPerRank_, nTokensPerChunk_);
-    aggregateMetadata_ =
+    hybridCombineMetadata_ =
         mscclpp::detail::gpuCallocShared<int>(1 + static_cast<size_t>(maxTokensPerRank_) * (1 + 3 * numTopk_));
-    aggregateLocal_ = mscclpp::detail::gpuCallocShared<float>(static_cast<size_t>(maxTokensPerRank_) * hidden_);
-    aggregateChunkReady_ = mscclpp::detail::gpuCallocShared<int>(2 * static_cast<size_t>(maxCombineChunks));
+    hybridCombineLocal_ = mscclpp::detail::gpuCallocShared<float>(static_cast<size_t>(maxTokensPerRank_) * hidden_);
+    hybridCombineChunkReady_ = mscclpp::detail::gpuCallocShared<int>(2 * static_cast<size_t>(maxCombineChunks));
     deviceContext_.hybridCtx_ = {
         .portChannels_ = portChannelContext_.get(),
         .nTokensPerChunk_ = nTokensPerChunk_,
         .gatewayRank_ = gatewayRank,
-        .distributeCapacity_ = maxTokensPerRank_,
-        .distributeSendBuffer_ = storage.distributeSendBuffer_,
-        .distributeRecvBuffer_ = storage.distributeRecvBuffer_,
-        .distributeControl_ = storage.distributeControl_,
-        .distributeScratch_ = reinterpret_cast<HybridDistributeScratch*>(distributeScratch_.get()),
-        .aggregateRemoteTokenIndices_ = aggregateMetadata_.get() + 1,
-        .nIncomingTokens_ = aggregateMetadata_.get(),
-        .aggregateRoutes_ = aggregateMetadata_.get() + 1 + maxTokensPerRank_,
-        .aggregateLocalBuffer_ = aggregateLocal_.get(),
-        .aggregateSendBuffer_ = storage.aggregateSendBuffer_,
-        .aggregateRecvBuffer_ = storage.aggregateRecvBuffer_,
-        .aggregateControl_ = storage.aggregateControl_,
-        .aggregateChunkReady_ = aggregateChunkReady_.get(),
-        .aggregateChunkLoadDone_ = aggregateChunkReady_.get() + maxCombineChunks,
+        .maxTokensPerRank_ = maxTokensPerRank_,
+        .dispatchSendBuffer_ = storage.hybridDispatchSendBuffer_,
+        .dispatchRecvBuffer_ = storage.hybridDispatchRecvBuffer_,
+        .dispatchControl_ = storage.hybridDispatchControl_,
+        .dispatchScratch_ = reinterpret_cast<HybridDispatchScratch*>(hybridDispatchScratch_.get()),
+        .combineRemoteTokenIndices_ = hybridCombineMetadata_.get() + 1,
+        .nIncomingTokens_ = hybridCombineMetadata_.get(),
+        .combineRoutes_ = hybridCombineMetadata_.get() + 1 + maxTokensPerRank_,
+        .combineLocalBuffer_ = hybridCombineLocal_.get(),
+        .combineSendBuffer_ = storage.hybridCombineSendBuffer_,
+        .combineRecvBuffer_ = storage.hybridCombineRecvBuffer_,
+        .combineControl_ = storage.hybridCombineControl_,
+        .combineChunkReady_ = hybridCombineChunkReady_.get(),
+        .combineChunkLoadReady_ = hybridCombineChunkReady_.get() + maxCombineChunks,
         .combineInterDomainDtype_ = combineInterDomainDtype_};
   }
   deviceContext_.devicePtr_ = static_cast<DeviceContext*>(mscclpp::detail::gpuCalloc(sizeof(DeviceContext)));

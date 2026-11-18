@@ -51,7 +51,7 @@ struct RankMajorCombineSharedControl {
   float routeWeights[NSlots];
 };
 
-// Hybrid combine per-warp-group shared-memory control state, placed after each group's compacted stage tiles.
+// Hybrid combine per-warp-group shared-memory control state, placed after each group's compacted stage slots.
 template <int NSlots>
 struct alignas(16) HybridCombineGroupControl {
   mscclpp::BulkBarrier barrier;

@@ -124,17 +124,17 @@ struct LatencyRuntimeContext {
   mscclpp::Communicator& communicator_;
   std::vector<void*> peerMappedBufferBases_;
   std::vector<mscclpp::RegisteredMemory> peerBufferMemories_;
-  mscclpp::RegisteredMemory ibLocalMemory_;
+  mscclpp::RegisteredMemory rdmaLocalMemory_;
   void** peerMappedBufferBasesGpu_ = nullptr;
   std::vector<mscclpp::BaseMemoryChannel> baseMemoryChannels_;
   std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> baseMemoryChannelHandles_;
   std::vector<mscclpp::PortChannel<mscclpp::PortChannelBackend::Device>> portChannels_;
   std::shared_ptr<PortChannelDeviceHandle> portChannelHandles_;
   std::shared_ptr<PortChannelDeviceContext> portChannelContext_;
-  std::shared_ptr<int> distributeScratch_;
-  std::shared_ptr<int> aggregateMetadata_;
-  std::shared_ptr<float> aggregateLocal_;
-  std::shared_ptr<int> aggregateChunkReady_;
+  std::shared_ptr<int> hybridDispatchScratch_;
+  std::shared_ptr<int> hybridCombineMetadata_;
+  std::shared_ptr<float> hybridCombineLocal_;
+  std::shared_ptr<int> hybridCombineChunkReady_;
 };
 
 struct ThroughputRuntimeContext {

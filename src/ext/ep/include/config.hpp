@@ -40,7 +40,7 @@ MSCCLPP_HOST_DEVICE_INLINE constexpr dtype_t configAlign(dtype_t a, dtype_t b) {
   return configCellDiv<dtype_t>(a, b) * b;
 }
 
-// Inter-rack (hybrid) dispatch RDMA payload layout per compact remote token:
+// Inter-domain (hybrid) dispatch RDMA payload layout per compact remote token:
 //
 //   [data: ElementType[hidden]]
 //   [optional scales: uint8_t[hidden / 32], padded to 16 bytes for TMA]
@@ -49,7 +49,7 @@ MSCCLPP_HOST_DEVICE_INLINE constexpr dtype_t configAlign(dtype_t a, dtype_t b) {
 //   [dstSlots: int[topk] (compact token index on each destination rank)]
 //
 // Each token payload is 128-byte aligned (BufferAlignmentBytes) for TMA bulkLoad.
-struct InterRackDispatchPayload {
+struct InterDomainDispatchPayload {
   int* expertIds_;
   float* topkWeights_;
   int* dstSlots_;
@@ -66,15 +66,15 @@ struct InterRackDispatchPayload {
     return configAlign<size_t>(payloadBytes(hidden, elementBytes, scaleBytes) + metadataBytes, BufferAlignmentBytes);
   }
 
-  MSCCLPP_HOST_DEVICE_INLINE InterRackDispatchPayload(void* token, int hidden, int topk,
-                                                      size_t elementBytes = sizeof(uint16_t), size_t scaleBytes = 0)
+  MSCCLPP_HOST_DEVICE_INLINE InterDomainDispatchPayload(void* token, int hidden, int topk,
+                                                        size_t elementBytes = sizeof(uint16_t), size_t scaleBytes = 0)
       : expertIds_(
             reinterpret_cast<int*>(reinterpret_cast<uint8_t*>(token) + payloadBytes(hidden, elementBytes, scaleBytes))),
         topkWeights_(reinterpret_cast<float*>(expertIds_ + topk)),
         dstSlots_(reinterpret_cast<int*>(topkWeights_ + topk)) {}
 };
 
-struct alignas(BufferAlignmentBytes) InterRackDispatchHeader {
+struct alignas(BufferAlignmentBytes) InterDomainDispatchHeader {
   mscclpp::LL8Packet nRemoteTokens;
   mscclpp::LL8Packet nTokensPerRank[MaxNumRanks];
 
@@ -83,27 +83,29 @@ struct alignas(BufferAlignmentBytes) InterRackDispatchHeader {
   }
 };
 
-struct HybridDistributeScratch {
+struct HybridDispatchScratch {
   int nRemoteTokens;
   int nCompletedForwarders;
   int forwardComplete;
   int chunkReadySignals[1];
 
   MSCCLPP_HOST_DEVICE_INLINE static constexpr size_t numInts(int maxTokensPerRank, int nTokensPerChunk) {
-    return offsetof(HybridDistributeScratch, chunkReadySignals) / sizeof(int) +
+    return offsetof(HybridDispatchScratch, chunkReadySignals) / sizeof(int) +
            static_cast<size_t>(configCellDiv(maxTokensPerRank, nTokensPerChunk));
   }
 };
 
+constexpr int HybridDispatchControlQueueIdx = 0;
+
 struct alignas(BufferAlignmentBytes) HybridDispatchControl {
   uint64_t qpSignals[MaxQpsPerPeer];
-  uint64_t recvBufferFree;
+  uint64_t completionSignal;
   alignas(BufferAlignmentBytes) uint32_t payloadReady[MaxNumRanks];
-  InterRackDispatchHeader sendHeader;
-  InterRackDispatchHeader recvHeader;
+  InterDomainDispatchHeader sendHeader;
+  InterDomainDispatchHeader recvHeader;
 };
 
-struct alignas(BufferAlignmentBytes) HybridAggregateControl {
+struct alignas(BufferAlignmentBytes) HybridCombineControl {
   uint64_t qpSignals[MaxQpsPerPeer];
 };
 
@@ -260,12 +262,12 @@ MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTokenOffset(int numRanks, int numExpe
 
 struct LatencyStorageLayout {
   size_t totalBytes_;
-  void* distributeSendBuffer_ = nullptr;
-  void* distributeRecvBuffer_ = nullptr;
-  HybridDispatchControl* distributeControl_ = nullptr;
-  float* aggregateSendBuffer_ = nullptr;
-  float* aggregateRecvBuffer_ = nullptr;
-  HybridAggregateControl* aggregateControl_ = nullptr;
+  void* hybridDispatchSendBuffer_ = nullptr;
+  void* hybridDispatchRecvBuffer_ = nullptr;
+  HybridDispatchControl* hybridDispatchControl_ = nullptr;
+  float* hybridCombineSendBuffer_ = nullptr;
+  float* hybridCombineRecvBuffer_ = nullptr;
+  HybridCombineControl* hybridCombineControl_ = nullptr;
   void* dispatchRecvBuffer_ = nullptr;
   // Rank-major expert input or expert-major receive staging.
   void* combineBuffer_ = nullptr;
@@ -312,13 +314,13 @@ struct LatencyStorageLayout {
     totalBytes_ = alignedDispatchRecvBufferBytes + alignedCombineBufferBytes +
                   (rankMajor ? 0 : configAlign<size_t>(dispatchOutputBytes, BufferAlignmentBytes));
 
-    const size_t distributeOffset = totalBytes_;
-    const size_t distributeBytes =
-        isHybrid ? static_cast<size_t>(maxTokensPerRank) * InterRackDispatchPayload::stride(hidden, numTopk) : 0;
-    if (isHybrid) totalBytes_ += 2 * distributeBytes + sizeof(HybridDispatchControl);
-    const size_t aggregateOffset = totalBytes_;
-    const size_t aggregateBytes = isHybrid ? static_cast<size_t>(maxTokensPerRank) * hidden * sizeof(float) : 0;
-    if (isHybrid) totalBytes_ += 2 * aggregateBytes + sizeof(HybridAggregateControl);
+    const size_t hybridDispatchOffset = totalBytes_;
+    const size_t hybridDispatchBytes =
+        isHybrid ? static_cast<size_t>(maxTokensPerRank) * InterDomainDispatchPayload::stride(hidden, numTopk) : 0;
+    if (isHybrid) totalBytes_ += 2 * hybridDispatchBytes + sizeof(HybridDispatchControl);
+    const size_t hybridCombineOffset = totalBytes_;
+    const size_t hybridCombineBytes = isHybrid ? static_cast<size_t>(maxTokensPerRank) * hidden * sizeof(float) : 0;
+    if (isHybrid) totalBytes_ += 2 * hybridCombineBytes + sizeof(HybridCombineControl);
 
     if (symmetricBuffer != nullptr) {
       auto* base = reinterpret_cast<uint8_t*>(symmetricBuffer);
@@ -330,12 +332,14 @@ struct LatencyStorageLayout {
                                         : base + alignedDispatchRecvBufferBytes + alignedCombineBufferBytes;
       combineBuffer_ = base + alignedDispatchRecvBufferBytes;
       if (isHybrid) {
-        distributeSendBuffer_ = base + distributeOffset;
-        distributeRecvBuffer_ = base + distributeOffset + distributeBytes;
-        distributeControl_ = reinterpret_cast<HybridDispatchControl*>(base + distributeOffset + 2 * distributeBytes);
-        aggregateSendBuffer_ = reinterpret_cast<float*>(base + aggregateOffset);
-        aggregateRecvBuffer_ = reinterpret_cast<float*>(base + aggregateOffset + aggregateBytes);
-        aggregateControl_ = reinterpret_cast<HybridAggregateControl*>(base + aggregateOffset + 2 * aggregateBytes);
+        hybridDispatchSendBuffer_ = base + hybridDispatchOffset;
+        hybridDispatchRecvBuffer_ = base + hybridDispatchOffset + hybridDispatchBytes;
+        hybridDispatchControl_ =
+            reinterpret_cast<HybridDispatchControl*>(base + hybridDispatchOffset + 2 * hybridDispatchBytes);
+        hybridCombineSendBuffer_ = reinterpret_cast<float*>(base + hybridCombineOffset);
+        hybridCombineRecvBuffer_ = reinterpret_cast<float*>(base + hybridCombineOffset + hybridCombineBytes);
+        hybridCombineControl_ =
+            reinterpret_cast<HybridCombineControl*>(base + hybridCombineOffset + 2 * hybridCombineBytes);
       }
     }
   }

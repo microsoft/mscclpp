@@ -27,33 +27,33 @@ struct PortChannelDeviceContext {
 };
 
 struct HybridDispatchControl;
-struct HybridAggregateControl;
-struct HybridDistributeScratch;
+struct HybridCombineControl;
+struct HybridDispatchScratch;
 
 struct HybridDeviceContext {
   /// Cross-domain PortChannel device context for peers outside this rank's NVLink/IPC domain,
-  /// or nullptr when every peer is NVLink-mapped.
+  /// or nullptr when every peer is intra-domain mapped.
   PortChannelDeviceContext* portChannels_ = nullptr;
-  /// Tokens per hybrid dispatch/combine IB chunk.
+  /// Tokens per hybrid dispatch/combine RDMA chunk.
   int nTokensPerChunk_ = 0;
   int gatewayRank_ = -1;
-  int distributeCapacity_ = 0;
-  void* distributeSendBuffer_ = nullptr;
-  void* distributeRecvBuffer_ = nullptr;
-  HybridDispatchControl* distributeControl_ = nullptr;
-  HybridDistributeScratch* distributeScratch_ = nullptr;
-  int* aggregateRemoteTokenIndices_ = nullptr;
+  int maxTokensPerRank_ = 0;
+  void* dispatchSendBuffer_ = nullptr;
+  void* dispatchRecvBuffer_ = nullptr;
+  HybridDispatchControl* dispatchControl_ = nullptr;
+  HybridDispatchScratch* dispatchScratch_ = nullptr;
+  int* combineRemoteTokenIndices_ = nullptr;
   int* nIncomingTokens_ = nullptr;
   /// Private [compact token, IDs then destination slots then weights] cache, never exposed to remote writes.
-  int* aggregateRoutes_ = nullptr;
-  float* aggregateLocalBuffer_ = nullptr;
+  int* combineRoutes_ = nullptr;
+  float* combineLocalBuffer_ = nullptr;
   /// Independent registered FP32 send/landing tokens, indexed by compact remote token.
-  float* aggregateSendBuffer_ = nullptr;
-  float* aggregateRecvBuffer_ = nullptr;
-  HybridAggregateControl* aggregateControl_ = nullptr;
-  /// Private completed-token and TMA-load counters, reset on the caller stream during dispatch.
-  int* aggregateChunkReady_ = nullptr;
-  int* aggregateChunkLoadDone_ = nullptr;
+  float* combineSendBuffer_ = nullptr;
+  float* combineRecvBuffer_ = nullptr;
+  HybridCombineControl* combineControl_ = nullptr;
+  /// Private completed-token and TMA-load counters, reset during dispatch.
+  int* combineChunkReady_ = nullptr;
+  int* combineChunkLoadReady_ = nullptr;
   mscclpp::DataType combineInterDomainDtype_ = mscclpp::DataType::FLOAT32;
 };
 
@@ -108,9 +108,9 @@ struct TransportView {
                                  reinterpret_cast<const uint8_t*>(symmetricBufferBase_));
   }
 
-  // A peer is NVLink/IPC-reachable if it is self or its symmetric buffer is
-  // directly mapped; otherwise it is a cross-domain peer served over PortChannel.
-  MSCCLPP_HOST_DEVICE_INLINE bool isNvlinkPeer(int peerRank) const {
+  // A peer is intra-domain (IPC/NVLink) reachable if it is self or its symmetric
+  // buffer is directly mapped; otherwise it is an inter-domain peer served over PortChannel.
+  MSCCLPP_HOST_DEVICE_INLINE bool isIntraDomainPeer(int peerRank) const {
     return isSelf(peerRank) || peerMappedBufferBases_[peerRank] != nullptr;
   }
 

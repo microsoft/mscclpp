@@ -102,7 +102,7 @@ MSCCLPP_DEVICE_INLINE void blockPeerBarrier(BaseMemoryChannelDeviceHandle* chann
 }
 
 #if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
-// Deferred PortChannel helpers built on public put / putWithAccumulate / accumulate.
+// Deferred PortChannel helpers built on public put / putWithAccumulate.
 template <uint32_t MaxExclusiveThreadsPerBlock = DeviceBackendHandle::kDefaultMaxExclusiveThreadsPerBlock,
           typename WaitFn>
 MSCCLPP_DEVICE_INLINE void putAfter(PortChannelDeviceHandleT<PortChannelBackend::Device>& channel, uint64_t dstOffset,
@@ -121,15 +121,6 @@ MSCCLPP_DEVICE_INLINE void putWithAccumulateAfter(PortChannelDeviceHandleT<PortC
   waitReady();
   channel.putWithAccumulate<kExclusive, MaxExclusiveThreadsPerBlock>(dstOffset, srcOffset, size, accOffset, value,
                                                                      slotIdx);
-}
-
-template <uint32_t MaxExclusiveThreadsPerBlock = DeviceBackendHandle::kDefaultMaxExclusiveThreadsPerBlock,
-          typename WaitFn>
-MSCCLPP_DEVICE_INLINE void accumulateAfter(PortChannelDeviceHandleT<PortChannelBackend::Device>& channel,
-                                           uint64_t dstOffset, int64_t value, int slotIdx, WaitFn&& waitReady) {
-  constexpr auto kExclusive = PortChannelDeviceHandle::Concurrency::Exclusive;
-  waitReady();
-  channel.accumulate<kExclusive, MaxExclusiveThreadsPerBlock>(dstOffset, value, slotIdx);
 }
 #endif
 

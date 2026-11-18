@@ -305,7 +305,7 @@ is unset. If a rank's process sets `MSCCLPP_HCA_DEVICES` to a single HCA name
 (for example `export MSCCLPP_HCA_DEVICES=mlx5_0`), that rank uses `IB0`.
 `qps_per_peer` (`qpsPerPeer`, 1 or 4, default 4) sets the QPs per peer, and
 `n_tokens_per_chunk` (`nTokensPerChunk`, 1–128, default 8) sets the tokens per
-IB chunk. Hybrid dispatch and combine stripe chunks round-robin across all
+RDMA chunk. Hybrid dispatch and combine stripe chunks round-robin across all
 configured QPs.
 
 ### Hybrid dispatch
@@ -316,41 +316,42 @@ two equal, fully IPC-mapped domains (`topk <= 16`; BF16, `FP8_E4M3_STATIC`, or
 in the other domain. The dispatch grid requires at least 10 resident blocks:
 
 - **Control block (block 0).** Counts routes, writes a self-validating `LL8Packet`
-  header (`nRemoteTokens` and per-rank counts), publishes local NVLink counts and
-  completion signals, and posts IB transfers (`Gateway::forward`: QP 0 sends the
-  header, all QPs stream ready chunks, and QP 0 posts `recvBufferFree` once local
-  forwarding finishes).
+  header (`nRemoteTokens` and per-rank counts), publishes local intra-domain counts and
+  completion signals, and posts RDMA transfers. QP 0 sends the header
+  (`Gateway::sendHeader`), all QPs stream ready chunks (`Gateway::send`), and
+  QP 0 signals the peer (`Gateway::complete`) once local forwarding finishes.
 - **Forwarder blocks (`1 .. min((gridBlocks - 1) // 2, 16)`).** Read the peer
-  header (forwarder 0 relays per-rank counts to local NVLink peers), wait for
+  header (forwarder 0 relays per-rank counts to intra-domain peers), wait for
   per-QP `qpSignals`, TMA-load incoming tokens, forward payloads and metadata to
-  local NVLink destinations (`Gateway::forward`), cache routes for combine, and
+  intra-domain destinations (`Gateway::forward`), cache routes for combine, and
   publish intra-domain readiness (`Gateway::signalIntraDomain`).
 - **Producer blocks (remaining worker blocks).** Quantize or TMA-load input
-  tokens, enqueue compact remote tokens into the IB send buffer
-  (`Gateway::enqueue`), and store NVLink-local tokens directly.
+  tokens, enqueue compact remote tokens into the RDMA send buffer
+  (`Gateway::enqueue`), and store intra-domain tokens directly.
 - **Receive.** Each worker block finalizes counts and padding metadata for a
-  subset of source ranks, waiting on NVLink semaphores for intra-domain sources
+  subset of source ranks, waiting on intra-domain semaphores for intra-domain sources
   and `Gateway::waitIntraDomain` for cross-domain sources.
 
-Dispatch returns without draining QPs; the paired rank sends `recvBufferFree`
-after its forwarders finish, and the next Combine control block waits for and
-clears `recvBufferFree` before the next Dispatch reuses the send/landing buffers.
+Dispatch returns without draining QPs. The paired rank sends a completion signal
+(`Gateway::complete`) on QP 0 after its forwarders finish, and the next Combine
+control block consumes that completion (`Gateway::waitComplete`) before the next
+Dispatch reuses the buffers.
 
 ### Hybrid combine
 
 Hybrid combine uses gateway aggregation for both `RANK_LOCAL_REDUCE` and
 `DIRECT_SEND`. Each gateway reduces local-domain expert outputs in FP32 and
-streams compact partial sums back over IB in per-QP chunks (FP32 by default, or
-BF16 when combine input is `FP8_E4M3_STATIC` or `combine_inter_domain_dtype` /
-`combineInterDomainDtype` is set to BF16). Each owner reduces its own intra-domain
+streams compact partial sums back over RDMA in per-QP chunks (FP32 by default, or
+BF16 when `combine_inter_domain_dtype` / `combineInterDomainDtype` is set to
+BF16). Each owner reduces its own intra-domain
 contributions in FP32, adds the returned remote-domain partial sum, and casts to
 BF16 once (**FP32 addition grouping differs** from single-domain combine):
 
 - **Control block (block 0).** Exchanges intra-domain start signals, streams
-  ready reduced chunks over IB (`Gateway::reduceAndForward`), resets dispatch
-  counters, and waits on `recvBufferFree`.
+  ready reduced chunks over RDMA (`Gateway::reduceAndSend`), resets dispatch
+  send counters, and waits for the peer's Dispatch completion.
 - **Worker blocks.** Split into two 16-warp groups. Gateway reductions run first
-  (`Gateway::reduceAndForward`: chunk 0 launches uncontested, later chunks pace
+  (`Gateway::reduceAndSend`: chunk 0 launches uncontested, later chunks pace
   behind one grid wave of completed TMA loads); groups then reduce local tokens
   and fuse remote partial sums directly as chunks arrive (`Gateway::poll`/`wait`).
 
@@ -478,8 +479,8 @@ synthetic expert-output construction. Latency rank-major timings reuse
 fixed unit-valued expert-output rows: local-reduce sums one partial per distinct
 destination rank, while direct-send applies the original per-slot routing weights.
 The unit-output reference preserves FP32 accumulation order within each NVLink
-domain. With static-FP8 combine inputs it also accounts for BF16 rounding of
-the remote domain sum transferred over IB. The final combine output is BF16,
+domain, and accounts for BF16 rounding of the remote domain sum when
+`--combine-inter-domain-dtype bf16` is selected. The final combine output is BF16,
 including when `--combine-dtype fp8_e4m3_static` selects FP8 expert inputs.
 This is communication-only timing, not an end-to-end weighted MoE computation.
 NCCL-EP uses a prebuilt routing handle;

@@ -149,8 +149,8 @@ def _expected_rank_major_unit_output(topk_idx, topk_weights, config, rank, ranks
         same_domain = peers[:, lane : lane + 1] // ranks_per_domain == rank // ranks_per_domain
         local += torch.where(active & same_domain, weight, 0)
         remote += torch.where(active & ~same_domain, weight, 0)
-    # FP8-input hybrid combine or BF16 combine_inter_domain_dtype transports the remote FP32 domain sum as BF16.
-    if fp8_combine or getattr(config, "combine_inter_domain_dtype", torch.float32) == torch.bfloat16:
+    # BF16 combine_inter_domain_dtype transports the remote FP32 domain sum as BF16.
+    if getattr(config, "combine_inter_domain_dtype", torch.float32) == torch.bfloat16:
         remote = remote.to(torch.bfloat16).float()
     return (local + remote).to(torch.bfloat16).expand(-1, config.hidden_size)
 

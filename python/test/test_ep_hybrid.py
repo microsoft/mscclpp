@@ -299,7 +299,7 @@ def test_latency_hybrid_single_round_graph_changing_routes(ep_group):
 def test_latency_hybrid_send_distribute(
     ep_group, qps_per_peer, chunk_rows, hidden, combine_mode, emit_local_expert_ids
 ):
-    """Single-copy IB chunks, gateway-excluding routes, and credit reuse across changing graph rounds."""
+    """Single-copy RDMA chunks, gateway-excluding routes, and credit reuse across changing graph rounds."""
     domain = ep_group.nranks_per_ipc_domain
     if not (ep_group.nranks == 2 * domain and domain >= 2):
         pytest.skip("Send-and-distribute coverage requires two equal NVLink domains with at least two ranks each")

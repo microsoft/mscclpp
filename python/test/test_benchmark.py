@@ -388,8 +388,13 @@ def test_ep_direct_send_unit_output_uses_domain_reduction_order(rank, ranks_per_
 
 
 @pytest.mark.parametrize("scale,combine_scale", [(1.0, 1.0), (2.0, 2.0), ((4.0, 2.0), 2.0), ((4.0, None), 4.0)])
-@pytest.mark.parametrize("rank,expected", [(0, 1.0), (2, 1.0078125)])
-def test_ep_fp8_combine_unit_output_rounds_remote_domain(scale, combine_scale, rank, expected):
+@pytest.mark.parametrize(
+    "combine_inter_domain_dtype,rank,expected",
+    [(torch.float32, 0, 1.0078125), (torch.bfloat16, 0, 1.0), (torch.bfloat16, 2, 1.0078125)],
+)
+def test_ep_fp8_combine_unit_output_respects_inter_domain_dtype(
+    scale, combine_scale, combine_inter_domain_dtype, rank, expected
+):
     import mscclpp.ep as ep
     from mscclpp_benchmark.ep.bench_mscclpp import _expected_rank_major_unit_output
 
@@ -399,6 +404,7 @@ def test_ep_fp8_combine_unit_output_rounds_remote_domain(scale, combine_scale, r
         hidden_size=8,
         combine_mode=ep.CombineMode.DIRECT_SEND,
         quant=SimpleNamespace(scale=scale, combine_format=ep.DispatchDataType.FP8_E4M3_STATIC),
+        combine_inter_domain_dtype=combine_inter_domain_dtype,
     )
     routes = torch.tensor([[0, 4, -1, 8]])
     weights = torch.tensor([[2**-8, 1.00390625, 1000, 1000]], dtype=torch.float32)

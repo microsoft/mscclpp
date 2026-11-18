@@ -103,12 +103,12 @@ MSCCLPP_DEVICE_INLINE void publishDispatchPayloads(const TransportView& transpor
 }
 
 #if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
-// Write per-token top-k IDs and weights for all NVLink-reachable leader lanes in leaderMask.
-MSCCLPP_DEVICE_INLINE void writeRankMajorMetadataNvlink(const TransportView& transport, int* outputTopkIdx,
-                                                        float* outputTopkWeights, int sourceRank, int dstRank,
-                                                        int destinationSlot, int candidateExpert, float candidateWeight,
-                                                        unsigned int leaderMask, int nTopk, int maxTokensPerRank,
-                                                        int invalidTokenExpertId) {
+// Write per-token top-k IDs and weights for all intra-domain leader lanes in leaderMask.
+MSCCLPP_DEVICE_INLINE void writeRankMajorMetadataIntraDomain(const TransportView& transport, int* outputTopkIdx,
+                                                             float* outputTopkWeights, int sourceRank, int dstRank,
+                                                             int destinationSlot, int candidateExpert,
+                                                             float candidateWeight, unsigned int leaderMask, int nTopk,
+                                                             int maxTokensPerRank, int invalidTokenExpertId) {
   const int laneId = getLaneId();
   const int totalEntries = __popc(leaderMask) * nTopk;
   for (int begin = 0; begin < totalEntries; begin += WARP_SIZE) {
@@ -158,7 +158,7 @@ MSCCLPP_DEVICE_INLINE void dispatchRankMajorRecvSource(int* outputTopkIdx, float
   }
 
   if (threadIdx.x == 0) {
-    if (payloadReady != nullptr && !transport.isNvlinkPeer(sourceRank)) {
+    if (payloadReady != nullptr && !transport.isIntraDomainPeer(sourceRank)) {
 #if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
       Gateway::waitIntraDomain(payloadReady, sourceRank, flag);
 #endif

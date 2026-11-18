@@ -97,7 +97,7 @@ def parse_args() -> argparse.Namespace:
         "--n-tokens-per-chunk",
         type=int,
         default=None,
-        help="MSCCL++ hybrid latency tokens per IB chunk (1-128); omitted uses the runtime default.",
+        help="MSCCL++ hybrid latency tokens per RDMA chunk (1-128); omitted uses the runtime default.",
     )
     p.add_argument(
         "--dispatch-dtype",
