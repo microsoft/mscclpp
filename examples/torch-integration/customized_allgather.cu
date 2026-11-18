@@ -19,11 +19,11 @@ namespace py = pybind11;
 #endif
 
 __global__ void __launch_bounds__(1024)
-    allgather(mscclpp::DeviceHandle<mscclpp::PortChannel>* portChannels, int rank, size_t nbytesPerGPU) {
+    allgather(mscclpp::DeviceHandle<mscclpp::PortChannel<>>* portChannels, int rank, size_t nbytesPerGPU) {
   int warpId = threadIdx.x / WARP_SIZE;
 
   // Each warp is responsible for one of the remote ranks
-  mscclpp::DeviceHandle<mscclpp::PortChannel> portChan = portChannels[warpId];
+  mscclpp::DeviceHandle<mscclpp::PortChannel<>> portChan = portChannels[warpId];
 
   // this allgather is really simple and implemented as an alltoall
 
@@ -51,7 +51,7 @@ struct Context {
   int nRanksPerNode;
 
   std::vector<mscclpp::RegisteredMemory> registeredMemories;
-  std::shared_ptr<mscclpp::DeviceHandle<mscclpp::PortChannel>> portChannelDeviceHandles;
+  std::shared_ptr<mscclpp::DeviceHandle<mscclpp::PortChannel<>>> portChannelDeviceHandles;
 };
 
 class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
@@ -138,7 +138,7 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
     }
 
     // setup channels
-    std::vector<mscclpp::DeviceHandle<mscclpp::PortChannel>> portChannels;
+    std::vector<mscclpp::DeviceHandle<mscclpp::PortChannel<>>> portChannels;
     mscclpp::MemoryId inputMemoryId = this->proxyService_->addMemory(inputBufRegMem);
     for (int i = 0; i < this->conns_.size(); i++) {
       auto remoteMemory = remoteRegMemories[i].get();
@@ -147,7 +147,7 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
           this->proxyService_->buildAndAddSemaphore(*comm, this->conns_[i]), remoteMemoryId, inputMemoryId)));
     }
     ctx->portChannelDeviceHandles =
-        mscclpp::detail::gpuCallocShared<mscclpp::DeviceHandle<mscclpp::PortChannel>>(portChannels.size());
+        mscclpp::detail::gpuCallocShared<mscclpp::DeviceHandle<mscclpp::PortChannel<>>>(portChannels.size());
     mscclpp::gpuMemcpy(ctx->portChannelDeviceHandles.get(), portChannels.data(), portChannels.size(),
                        cudaMemcpyHostToDevice);
 
