@@ -625,15 +625,6 @@ struct PortChannelDeviceHandle<PortChannelBackend::Device>
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 
-/// @deprecated Use BasePortChannelDeviceHandle<Backend> instead.
-template <PortChannelBackend Backend = PortChannelBackend::Host>
-using BasePortChannelDeviceHandleT [[deprecated("Use BasePortChannelDeviceHandle<Backend> instead.")]] =
-    BasePortChannelDeviceHandle<Backend>;
-/// @deprecated Use PortChannelDeviceHandle<Backend> instead.
-template <PortChannelBackend Backend = PortChannelBackend::Host>
-using PortChannelDeviceHandleT [[deprecated("Use PortChannelDeviceHandle<Backend> instead.")]] =
-    PortChannelDeviceHandle<Backend>;
-
 }  // namespace mscclpp
 
 #endif  // MSCCLPP_PORT_CHANNEL_DEVICE_HPP_

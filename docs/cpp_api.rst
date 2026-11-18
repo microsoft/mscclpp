@@ -235,16 +235,13 @@ GPU channel types consistently use ``DeviceHandle`` names for non-owning state.
 the Memory and Switch handle types remain concrete. Owner names, nested ``DeviceHandle`` aliases,
 ``deviceHandle()`` methods, generic extraction, header filenames and Python API names are unchanged.
 
-``BasePortChannelDeviceHandleT<B>`` and ``PortChannelDeviceHandleT<B>`` are deprecated direct
-aliases to the corresponding canonical templates without the ``T`` suffix.
 ``SmChannelDeviceHandle`` remains a deprecated direct alias to ``MemoryChannelDeviceHandle``.
 
 The former plain Host Port aliases cannot coexist with the canonical templates. In type positions,
 use ``PortChannelDeviceHandle<>*`` rather than ``PortChannelDeviceHandle*``, and likewise for the
 base handle, or use ``Owner::DeviceHandle``. Do not rely on every old form being accepted by class
 template argument deduction. This is a limited source-compatibility break and not a binary-compatibility
-guarantee. Rebuild consumers; external declarations/specializations of the former ``T`` classes
-must migrate to the canonical templates.
+guarantee. Rebuild consumers.
 
 .. doxygenstruct:: mscclpp::BaseMemoryChannelDeviceHandle
    :members:

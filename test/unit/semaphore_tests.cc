@@ -40,24 +40,12 @@ static_assert(std::is_trivially_copyable_v<mscclpp::BaseMemoryChannelDeviceHandl
               std::is_trivially_copyable_v<mscclpp::MemoryChannelDeviceHandle> &&
               std::is_trivially_copyable_v<mscclpp::SwitchChannelDeviceHandle>);
 
-template <class Legacy, class Handle>
-constexpr bool sameHandle = std::is_same_v<Legacy, Handle> && sizeof(Legacy) == sizeof(Handle) &&
-                            alignof(Legacy) == alignof(Handle) && std::is_trivially_copyable_v<Handle>;
-
-// Only the deprecated T/Sm aliases are referenced in this compatibility block.
+// The pre-existing Sm alias remains deprecated.
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 #endif
-static_assert(sameHandle<mscclpp::BasePortChannelDeviceHandleT<Backend::Host>,
-                         mscclpp::BasePortChannelDeviceHandle<Backend::Host>>);
-static_assert(sameHandle<mscclpp::BasePortChannelDeviceHandleT<Backend::Device>,
-                         mscclpp::BasePortChannelDeviceHandle<Backend::Device>>);
-static_assert(
-    sameHandle<mscclpp::PortChannelDeviceHandleT<Backend::Host>, mscclpp::PortChannelDeviceHandle<Backend::Host>>);
-static_assert(
-    sameHandle<mscclpp::PortChannelDeviceHandleT<Backend::Device>, mscclpp::PortChannelDeviceHandle<Backend::Device>>);
-static_assert(sameHandle<mscclpp::SmChannelDeviceHandle, mscclpp::MemoryChannelDeviceHandle>);
+static_assert(std::is_same_v<mscclpp::SmChannelDeviceHandle, mscclpp::MemoryChannelDeviceHandle>);
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic pop
 #endif
