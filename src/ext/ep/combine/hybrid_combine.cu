@@ -54,20 +54,6 @@ MSCCLPP_DEVICE_INLINE void combineStoreFinalVector(void* output, mscclpp::f32x8 
       mscclpp::to<mscclpp::bf16x8>(sum);
 }
 
-template <int Hidden, int MaxVectorsPerThread>
-MSCCLPP_DEVICE_INLINE void combineStoreFinalToken(void* output, const mscclpp::f32x8 (&tokenSum)[MaxVectorsPerThread],
-                                                  int tokenIdx, int remoteTokenIdx, const DeviceContext* context,
-                                                  int groupThreadIdx) {
-  constexpr int NHiddenVectors = Hidden / mscclpp::f32x8::Size;
-#pragma unroll
-  for (int stepIdx = 0; stepIdx < MaxVectorsPerThread; ++stepIdx) {
-    const int vectorIdx = groupThreadIdx + stepIdx * HybridCombineGroupThreads;
-    if (vectorIdx < NHiddenVectors) {
-      combineStoreFinalVector<Hidden>(output, tokenSum[stepIdx], tokenIdx, remoteTokenIdx, vectorIdx, context);
-    }
-  }
-}
-
 template <int Hidden, int StageSlots>
 MSCCLPP_DEVICE_INLINE void combineFinalize(void* output, int tokenIdx, const DeviceContext* context,
                                            const Gateway& gateway, const HybridCombineGroup<StageSlots>& group) {
@@ -301,9 +287,17 @@ MSCCLPP_DEVICE_INLINE void combineLocalTokens(void* output, const void* expertOu
   const auto& hybridCtx = context->hybridCtx_;
   const int laneIdx = getLaneId();
 
-  for (int tokenIdx = localWorkerIdx, stepIdx = 0; tokenIdx < workload.numTokens_;
-       tokenIdx += nLocalWorkers, ++stepIdx) {
-    const bool isLastToken = tokenIdx + nLocalWorkers >= workload.numTokens_;
+  auto flushPending = [&] {
+    const int nPending = group.control.nPendingTokens;
+    for (int idx = 0; idx < nPending; ++idx) {
+      combineFinalize<Hidden>(output, group.control.pendingTokens[idx], context, gateway, group);
+    }
+    if (nPending > 0 && group.threadIdx == 0) group.control.nPendingTokens = 0;
+  };
+
+  for (int tokenIdx = localWorkerIdx; tokenIdx < workload.numTokens_; tokenIdx += nLocalWorkers) {
+    const bool hasNextToken = tokenIdx + nLocalWorkers < workload.numTokens_;
+    const bool overlapRemote = hasNextToken || group.control.nPendingTokens > 0;
     const IntraDomainRoute laneRoute =
         group.warpIdx == 0
             ? resolveLocalRoute<Mode>(tokenIdx, laneIdx, topkIndices, topkWeights, workload, context, workspace)
@@ -312,51 +306,46 @@ MSCCLPP_DEVICE_INLINE void combineLocalTokens(void* output, const void* expertOu
     reduceIntraDomainToken<Mode, Hidden, DispatchType, MaxNTopk>(
         tokenSum, context->rank_, laneRoute, expertOutput, workload, transport, workspace, flag, dequantScale, group,
         [&] {
-          if (!isLastToken) {
+          if (overlapRemote) {
             const int remoteTokenIdx = hybridCtx.combineRemoteTokenIndices_[tokenIdx];
-            const bool ready = stepIdx < 64 && (remoteTokenIdx < 0 || gateway.poll(remoteTokenIdx));
-            group.control.remoteReady = ready;
-            if (!ready && stepIdx < 64) group.control.pendingMask |= (uint64_t{1} << stepIdx);
+            group.control.interDomainTokenReady = remoteTokenIdx < 0 || gateway.poll(remoteTokenIdx);
           }
         });
 
-    if (!isLastToken) {
-      if (group.control.remoteReady) {
-        const int remoteTokenIdx = hybridCtx.combineRemoteTokenIndices_[tokenIdx];
-        combineStoreFinalToken<Hidden>(output, tokenSum, tokenIdx, remoteTokenIdx, context, group.threadIdx);
-      } else if (stepIdx >= 64) {
-        const int remoteTokenIdx = hybridCtx.combineRemoteTokenIndices_[tokenIdx];
-        if (remoteTokenIdx >= 0) {
-          if (group.threadIdx == 0) gateway.wait(remoteTokenIdx);
-          group.sync();
-        }
-        combineStoreFinalToken<Hidden>(output, tokenSum, tokenIdx, remoteTokenIdx, context, group.threadIdx);
-      } else {
-        auto* localScratch =
-            reinterpret_cast<mscclpp::f32x8*>(hybridCtx.combineLocalBuffer_ + static_cast<size_t>(tokenIdx) * Hidden);
+    if (overlapRemote && !group.control.interDomainTokenReady) {
+      // Remote RDMA partial is still in flight; stash local FP32 sum so earlier pending tokens or the next local token
+      // can proceed without blocking on this RDMA chunk.
+      auto* localScratch =
+          reinterpret_cast<mscclpp::f32x8*>(hybridCtx.combineLocalBuffer_ + static_cast<size_t>(tokenIdx) * Hidden);
 #pragma unroll
-        for (int vecStep = 0; vecStep < MaxVectorsPerThread; ++vecStep) {
-          const int vectorIdx = group.threadIdx + vecStep * HybridCombineGroupThreads;
-          if (vectorIdx < NHiddenVectors) localScratch[vectorIdx] = tokenSum[vecStep];
-        }
+      for (int stepIdx = 0; stepIdx < MaxVectorsPerThread; ++stepIdx) {
+        const int vectorIdx = group.threadIdx + stepIdx * HybridCombineGroupThreads;
+        if (vectorIdx < NHiddenVectors) localScratch[vectorIdx] = tokenSum[stepIdx];
       }
+      if (group.threadIdx == 0) group.control.pendingTokens[group.control.nPendingTokens++] = tokenIdx;
       group.sync();
-    } else {
-      // Keep the last token's sum in registers while finalizing any earlier tokens whose RDMA partials were pending.
-      uint64_t pendingMask = group.control.pendingMask;
-      while (pendingMask != 0) {
-        const int pendingStep = __ffsll(pendingMask) - 1;
-        pendingMask &= pendingMask - 1;
-        combineFinalize<Hidden>(output, localWorkerIdx + pendingStep * nLocalWorkers, context, gateway, group);
-      }
-      const int remoteTokenIdx = hybridCtx.combineRemoteTokenIndices_[tokenIdx];
-      if (remoteTokenIdx >= 0) {
-        if (group.threadIdx == 0) gateway.wait(remoteTokenIdx);
+      if (group.control.nPendingTokens == HybridCombineMaxPendingTokens) {
+        flushPending();
         group.sync();
       }
-      combineStoreFinalToken<Hidden>(output, tokenSum, tokenIdx, remoteTokenIdx, context, group.threadIdx);
+      continue;
     }
+
+    const int remoteTokenIdx = hybridCtx.combineRemoteTokenIndices_[tokenIdx];
+    if (!overlapRemote && remoteTokenIdx >= 0) {
+      if (group.threadIdx == 0) gateway.wait(remoteTokenIdx);
+      group.sync();
+    }
+#pragma unroll
+    for (int stepIdx = 0; stepIdx < MaxVectorsPerThread; ++stepIdx) {
+      const int vectorIdx = group.threadIdx + stepIdx * HybridCombineGroupThreads;
+      if (vectorIdx < NHiddenVectors) {
+        combineStoreFinalVector<Hidden>(output, tokenSum[stepIdx], tokenIdx, remoteTokenIdx, vectorIdx, context);
+      }
+    }
+    if (hasNextToken) group.sync();
   }
+  flushPending();
 }
 
 MSCCLPP_DEVICE_INLINE void combineControl(const DeviceContext* context, const TransportView& transport,
@@ -429,8 +418,8 @@ __global__ __launch_bounds__(CombineNThreads,
 
     if (group.threadIdx == 0) {
       group.control.barrier.init();
-      group.control.pendingMask = 0;
-      group.control.remoteReady = false;
+      group.control.nPendingTokens = 0;
+      group.control.interDomainTokenReady = false;
     }
     group.sync();
 

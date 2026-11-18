@@ -51,15 +51,18 @@ struct RankMajorCombineSharedControl {
   float routeWeights[NSlots];
 };
 
+inline constexpr int HybridCombineMaxPendingTokens = 64;
+
 // Hybrid combine per-warp-group shared-memory control state, placed after each group's compacted stage slots.
 template <int NSlots>
 struct alignas(16) HybridCombineGroupControl {
   mscclpp::BulkBarrier barrier;
   float routeWeights[NSlots];
-  uint64_t pendingMask;
+  int pendingTokens[HybridCombineMaxPendingTokens];
+  int nPendingTokens;
   int nRoundRoutes;
   int nTotalRounds;
-  bool remoteReady;
+  bool interDomainTokenReady;
 };
 
 template <int Hidden, DispatchDataType DispatchType, int NSlots>
