@@ -127,7 +127,8 @@ __device__ __forceinline__ void runMmaRole(const P& p, Storage& s, typename P::C
                                            typename P::Collective::Load& activationPipeline,
                                            typename P::Collective::Accumulate& accumulatePipeline,
                                            typename P::Collective::Mainloop& fc1, TmemStorage tmemStorage, int hidden,
-                                           int intermediate, int warp, int cta, int cluster, int tasks) {
+                                           int intermediate, int warp, int cta, int cluster, int tasks, int tokenBlocks,
+                                           int localExperts) {
   using namespace cute;
   using Mainloop = typename P::Collective::Mainloop;
   using Load = typename P::Collective::Load;
@@ -140,19 +141,27 @@ __device__ __forceinline__ void runMmaRole(const P& p, Storage& s, typename P::C
     if constexpr (P::Activation == ActivationDtype::Fp8Static) {
       if (elect_one_sync()) copy(get<8>(mmaInputs), get<9>(mmaInputs)(_, _, _, _, 0), get<10>(mmaInputs));
     }
-    for (int i = cluster; i < tasks; i += gridDim.x / P::Tiles::ClusterSize) {
-      Task task = taskAt(p, i, hidden, intermediate);
-      auto coord = taskCoord(p, task, cta);
-      int kTiles = taskKTiles(p, task, hidden, intermediate);
-      auto accumulator = Mainloop::slice_accumulator(tmemStorage, accumulateState.index());
-      auto phase = task.fc1 ? KernelTracePhase::MmaFc1 : KernelTracePhase::MmaFc2;
-      traceKernel(phase, true, i);
-      loadState = fc1.template mma<P::Activation>(make_tuple(loadPipeline, activationPipeline, accumulatePipeline),
-                                                  make_tuple(loadState, accumulateState), accumulator, mmaInputs, coord,
-                                                  kTiles, task.tokens.rows);
-      traceKernel(phase, false, i);
-      accumulatePipeline.producer_commit(accumulateState);
-      ++accumulateState;
+    const int fc1Tiles = fc1TaskTiles<P>(intermediate);
+    const int fc2Tiles = fc2TaskTiles<P>(hidden);
+    const int numClusters = gridDim.x / P::Tiles::ClusterSize;
+    if (cluster < tasks) {
+      Task nextTask = taskAtFast(p, cluster, tokenBlocks, localExperts, fc1Tiles, fc2Tiles);
+      for (int i = cluster; i < tasks; i += numClusters) {
+        Task task = nextTask;
+        const bool hasNext = (i + numClusters) < tasks;
+        auto coord = taskCoord(p, task, cta);
+        int kTiles = taskKTiles(p, task, hidden, intermediate);
+        auto accumulator = Mainloop::slice_accumulator(tmemStorage, accumulateState.index());
+        auto phase = task.fc1 ? KernelTracePhase::MmaFc1 : KernelTracePhase::MmaFc2;
+        traceKernel(phase, true, i);
+        loadState = fc1.template mma<P::Activation>(make_tuple(loadPipeline, activationPipeline, accumulatePipeline),
+                                                    make_tuple(loadState, accumulateState), accumulator, mmaInputs,
+                                                    coord, kTiles, task.tokens.rows);
+        if (hasNext) nextTask = taskAtFast(p, i + numClusters, tokenBlocks, localExperts, fc1Tiles, fc2Tiles);
+        traceKernel(phase, false, i);
+        accumulatePipeline.producer_commit(accumulateState);
+        ++accumulateState;
+      }
     }
     accumulatePipeline.producer_tail(accumulateState);
   }

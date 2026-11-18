@@ -312,6 +312,7 @@ __device__ int buildTokenBlockMetadata(const P& p, int* routeOffsets = nullptr) 
       w.cursors[expert] = nExpertRows;
     }
     if (expert < nLocalExperts && routeOffsets) routeOffsets[expert] += firstBlock * RoutingTileN;
+    const int16_t cacheFlag = nExpertRows > RoutingTileN ? TokenBlockCacheWeightsBit : 0;
     for (int block = blockIdx.x; block < nExpertBlocks; block += gridDim.x) {
       int groupShift = 0;
       int groupOffset = 0;
@@ -322,7 +323,7 @@ __device__ int buildTokenBlockMetadata(const P& p, int* routeOffsets = nullptr) 
       }
       w.blocks[firstBlock + block] =
           TokenBlock{int16_t(expert), int16_t(min(int(RoutingTileN), nExpertRows - block * RoutingTileN)),
-                     int16_t(groupOffset), int16_t(groupShift)};
+                     int16_t(groupOffset), int16_t(groupShift | cacheFlag)};
     }
     nPrecedingBlocks += warpBlocks;
   }
@@ -459,6 +460,9 @@ __device__ void prepareRoutes(const P& p, int nTokens, const int32_t* ids = null
   for (int counter = threadIdx.x; counter <= nLocalExperts + c.worldSize; counter += P::ThreadCount)
     scratch.nRoutesByExpert[counter] = 0;
   __syncthreads();
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
+  if constexpr (P::WeightMxfp4) cudaGridDependencySynchronize();
+#endif
   auto cacheOwnedRoute = [&](int expert, uint32_t route, int lane) { cacheRoute(scratch, expert, route, lane); };
   processSourceRouteChunks<true>(p, nTokens, ids, scores, epoch, scratch.nRoutesByOwner, firstChunkExpertId,
                                  cacheOwnedRoute);

@@ -74,6 +74,9 @@ struct alignas(8) TokenBlock {
   int16_t groupShift;
 };
 
+constexpr int TokenBlockGroupShiftMask = 0x7f;
+constexpr int16_t TokenBlockCacheWeightsBit = int16_t(1 << 8);
+
 static_assert(sizeof(TokenBlock) == sizeof(uint2));
 
 struct Task {
@@ -127,11 +130,16 @@ __device__ __forceinline__ int* w4InputChunkCounter(const Workspace& w, int hidd
 
 template <class Types>
 struct W4DispatchStorageT {
+  static constexpr int EffectiveDispatchStages =
+      (Types::WeightMxfp4 && Types::DispatchStages == 1 && Types::DispatchWarps == 2 && Types::DispatchChunk >= 4096)
+          ? 2
+          : Types::DispatchStages;
+  static constexpr int EffectiveDispatchBarriers = EffectiveDispatchStages;
   static constexpr int RequiredScaleStageBytes = (Types::DispatchChunk / 32 + 15) / 16 * 16;
   static constexpr int ScaleStageBytes = RequiredScaleStageBytes < 128 ? 128 : RequiredScaleStageBytes;
-  alignas(128) uint8_t tiles[Types::DispatchWarps][Types::DispatchStages][Types::DispatchChunk];
-  BulkBarrier barriers[Types::DispatchWarps][Types::DispatchStages];
-  alignas(128) uint8_t scales[Types::DispatchWarps][Types::DispatchStages][ScaleStageBytes];
+  alignas(128) uint8_t tiles[Types::DispatchWarps][EffectiveDispatchStages][Types::DispatchChunk];
+  BulkBarrier barriers[Types::DispatchWarps][EffectiveDispatchBarriers];
+  alignas(128) uint8_t scales[Types::DispatchWarps][EffectiveDispatchStages][ScaleStageBytes];
   uint32_t arrivals;
   uint32_t publishedPhase;
 };
@@ -181,6 +189,7 @@ struct alignas(1024) W4A8SharedStorageT {
   cutlass::arch::ClusterBarrier tmemReady;
   EpilogueStorage<Types::EpilogueTokens> epilogue;
   W4DispatchStorageT<Types> dispatch;
+  uint64_t fc2OffloadMeta;
 };
 
 using W4A8SharedStorage = W4A8SharedStorageT<W4A8CollectiveTypes>;

@@ -223,6 +223,166 @@ __global__ void quantizeInputStaticKernel(const __bfloat16* input, uint8_t* quan
   }
 }
 
+template <int Hidden, int Slots, int Threads = 1024, bool TriggerNext = false>
+__global__ __launch_bounds__(Threads,
+                             1024 / Threads) void combineSlotsStandaloneKernel(const uint4* __restrict__ partial,
+                                                                               const int32_t* __restrict__ routeIds,
+                                                                               __bfloat16* __restrict__ output,
+                                                                               int tokens, int hidden) {
+  constexpr int WarpSize = 32;
+  constexpr int Elements = mscclpp::bf16x8::Size;
+  constexpr int WarpsPerCta = Threads / WarpSize;
+  static_assert((Threads == 512 || Threads == 1024) && Slots == 14 && (Hidden == 0 || Hidden % Elements == 0));
+  const int vectors = (Hidden > 0 ? Hidden : hidden) / Elements;
+  const int tokenTasks = (vectors + WarpSize - 1) / WarpSize;
+  const int tasks = tokens * tokenTasks;
+  const int lane = threadIdx.x % WarpSize;
+  const int warps = int(gridDim.x) * WarpsPerCta;
+  int task = (int(threadIdx.x) / WarpSize) * int(gridDim.x) + int(blockIdx.x);
+  auto loadMask = [&](int t) -> uint32_t {
+    int id = (t < tasks && lane < Slots) ? routeIds[(t / tokenTasks) * Slots + lane] : -1;
+    return __ballot_sync(0xffffffff, id >= 0);
+  };
+  uint32_t nextMask = (task < tasks) ? loadMask(task) : 0u;
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
+  cudaGridDependencySynchronize();
+  if constexpr (TriggerNext) {
+    if (threadIdx.x == 0) cudaTriggerProgrammaticLaunchCompletion();
+  }
+#endif
+  if (task >= tasks) return;
+  const bool aligned = (reinterpret_cast<uintptr_t>(output) & 15) == 0;
+  for (; task < tasks; task += warps) {
+    const int token = task / tokenTasks;
+    const int first = (task % tokenTasks) * WarpSize + lane;
+    const uint32_t routedMask = nextMask;
+    nextMask = loadMask(task + warps);
+    const bool validVec = (Hidden > 0 && (Hidden / Elements) % WarpSize == 0) || first < vectors;
+    const uint4* source = partial + size_t(token * Slots) * vectors + first;
+    mscclpp::f32x8 sum;
+#pragma unroll
+    for (int element = 0; element < Elements; ++element) sum.data[element] = 0.0f;
+    if constexpr (Hidden > 0) {
+      mscclpp::bf16x8 values[Slots];
+#pragma unroll
+      for (int slot = 0; slot < Slots; ++slot) {
+        values[slot].storage = make_uint4(0, 0, 0, 0);
+        if (((routedMask & (1u << slot)) != 0) && validVec) values[slot].storage = __ldcg(source + slot * vectors);
+      }
+#pragma unroll
+      for (int slot = 0; slot < Slots; ++slot) {
+        auto partialValues = mscclpp::to<mscclpp::f32x8>(values[slot]);
+#pragma unroll
+        for (int element = 0; element < Elements; ++element) sum.data[element] += partialValues.data[element];
+      }
+    } else {
+      constexpr int HalfSlots = Slots / 2;
+      for (int base = 0; base < Slots; base += HalfSlots) {
+        mscclpp::bf16x8 values[HalfSlots];
+#pragma unroll
+        for (int slot = 0; slot < HalfSlots; ++slot) {
+          values[slot].storage = make_uint4(0, 0, 0, 0);
+          if (((routedMask & (1u << (base + slot))) != 0) && validVec)
+            values[slot].storage = __ldcg(source + size_t(base + slot) * vectors);
+        }
+#pragma unroll
+        for (int slot = 0; slot < HalfSlots; ++slot) {
+          auto partialValues = mscclpp::to<mscclpp::f32x8>(values[slot]);
+#pragma unroll
+          for (int element = 0; element < Elements; ++element) sum.data[element] += partialValues.data[element];
+        }
+      }
+    }
+    if (validVec) {
+      auto outValues = mscclpp::to<mscclpp::bf16x8>(sum);
+      __bfloat16* dst = output + (size_t(token) * vectors + first) * Elements;
+      if (aligned) {
+        *reinterpret_cast<uint4*>(dst) = outValues.storage;
+      } else {
+#pragma unroll
+        for (int element = 0; element < Elements; ++element) dst[element] = outValues.data[element];
+      }
+    }
+  }
+}
+
+template <bool CombineRouteWeights, bool TriggerNext = false>
+__global__ __launch_bounds__(512, 2) void combineGeneralStandaloneKernel(const uint4* __restrict__ partial,
+                                                                         const int32_t* __restrict__ routeIds,
+                                                                         const float* __restrict__ routeWeights,
+                                                                         __bfloat16* __restrict__ output, int tokens,
+                                                                         int hidden, int topK) {
+  constexpr int WarpSize = 32;
+  constexpr int Elements = mscclpp::bf16x8::Size;
+  constexpr int WarpsPerCta = 16;
+  constexpr int CombineSlots = 8;
+  const int vectors = hidden / Elements;
+  const int tokenTasks = (vectors + WarpSize - 1) / WarpSize;
+  const int tasks = tokens * tokenTasks;
+  const int lane = threadIdx.x % WarpSize;
+  const int warps = int(gridDim.x) * WarpsPerCta;
+  int task = (int(threadIdx.x) / WarpSize) * int(gridDim.x) + int(blockIdx.x);
+  auto loadMask = [&](int t, int base) -> uint32_t {
+    int id = (t < tasks && lane < CombineSlots && base + lane < topK)
+                 ? routeIds[size_t(t / tokenTasks) * topK + base + lane]
+                 : -1;
+    return __ballot_sync(0xffffffff, id >= 0);
+  };
+  uint32_t nextMask = (task < tasks) ? loadMask(task, 0) : 0u;
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
+  cudaGridDependencySynchronize();
+  if constexpr (TriggerNext) {
+    if (threadIdx.x == 0) cudaTriggerProgrammaticLaunchCompletion();
+  }
+#endif
+  if (task >= tasks) return;
+  const bool aligned = (reinterpret_cast<uintptr_t>(output) & 15) == 0;
+  for (; task < tasks; task += warps) {
+    const int token = task / tokenTasks;
+    const int first = (task % tokenTasks) * WarpSize + lane;
+    const uint32_t firstBatchMask = nextMask;
+    nextMask = loadMask(task + warps, 0);
+    const bool validVec = first < vectors;
+    mscclpp::f32x8 sum;
+#pragma unroll
+    for (int element = 0; element < Elements; ++element) sum.data[element] = 0.0f;
+    for (int base = 0; base < topK; base += CombineSlots) {
+      const uint32_t routedMask = (base == 0) ? firstBatchMask : loadMask(task, base);
+      const uint4* source = partial + size_t(token * topK + base) * vectors + first;
+      mscclpp::bf16x8 values[CombineSlots];
+#pragma unroll
+      for (int slot = 0; slot < CombineSlots; ++slot) {
+        values[slot].storage = make_uint4(0, 0, 0, 0);
+        if (((routedMask & (1u << slot)) != 0) && validVec)
+          values[slot].storage = __ldcg(source + size_t(slot) * vectors);
+      }
+#pragma unroll
+      for (int slot = 0; slot < CombineSlots; ++slot) {
+        const bool routed = (routedMask & (1u << slot)) != 0;
+        const float slotWeight =
+            (CombineRouteWeights && routed) ? routeWeights[size_t(token) * topK + base + slot] : 1.0f;
+        auto partialValues = mscclpp::to<mscclpp::f32x8>(values[slot]);
+#pragma unroll
+        for (int element = 0; element < Elements; ++element) {
+          sum.data[element] = CombineRouteWeights
+                                  ? __fmaf_rn(partialValues.data[element], slotWeight, sum.data[element])
+                                  : (sum.data[element] + partialValues.data[element]);
+        }
+      }
+    }
+    if (validVec) {
+      auto outValues = mscclpp::to<mscclpp::bf16x8>(sum);
+      __bfloat16* dst = output + (size_t(token) * vectors + first) * Elements;
+      if (aligned) {
+        *reinterpret_cast<uint4*>(dst) = outValues.storage;
+      } else {
+#pragma unroll
+        for (int element = 0; element < Elements; ++element) dst[element] = outValues.data[element];
+      }
+    }
+  }
+}
+
 template <class Types>
 W4ScaleLayout<Types> makeW4ScaleLayout(int m, int n, int k, int experts, bool activation) {
   using namespace cute;
@@ -516,28 +676,141 @@ void launchNativeW4A8(const std::shared_ptr<KernelPlan>& plan, const void* input
   MSCCLPP_CUDATHROW(cudaStreamIsCapturing(stream, &capture));
   const void* directInput = params.config.computeOnly ? input : nullptr;
   const uint8_t* directInputScales = params.config.computeOnly ? inputScales : nullptr;
+  const auto* source =
+      input ? static_cast<const __bfloat16*>(input) : detail::at<__bfloat16>(params.local, params.symmetric.input);
+  const size_t inputBytes = size_t(tokens) * params.config.hidden * sizeof(__bfloat16);
+  const bool disjointIo =
+      (tokens > 0) && (reinterpret_cast<uintptr_t>(source) <= reinterpret_cast<uintptr_t>(output)
+                           ? (reinterpret_cast<uintptr_t>(output) - reinterpret_cast<uintptr_t>(source) >= inputBytes)
+                           : (reinterpret_cast<uintptr_t>(source) - reinterpret_cast<uintptr_t>(output) >= inputBytes));
+  const bool triggerNextQuantize = (input != nullptr) && (ids != nullptr) && disjointIo;
   if (tokens && !params.config.computeOnly) {
-    dim3 threads(128);
-    dim3 blocks((params.config.hidden / 32 + 31) / 32, std::min(tokens, 65535));
-    const auto* source =
-        input ? static_cast<const __bfloat16*>(input) : detail::at<__bfloat16>(params.local, params.symmetric.input);
+    cudaLaunchAttribute quantizeAttr[1]{};
+    quantizeAttr[0].id = cudaLaunchAttributeProgrammaticStreamSerialization;
+    quantizeAttr[0].val.programmaticStreamSerializationAllowed = 1;
+    cudaLaunchConfig_t quantizeLaunch{};
+    quantizeLaunch.gridDim = dim3((params.config.hidden / 32 + 31) / 32, std::min(tokens, 65535));
+    quantizeLaunch.blockDim = dim3(128);
+    quantizeLaunch.stream = stream;
+    quantizeLaunch.attrs = quantizeAttr;
+    quantizeLaunch.numAttrs = triggerNextQuantize ? 1 : 0;
     if (params.config.activationDtype == ActivationDtype::Fp8Static) {
-      detail::quantizeInputStaticKernel<<<blocks, threads, 0, stream>>>(
-          source, detail::at<uint8_t>(params.local, params.symmetric.quantizedInput), params.config.activationScale,
-          tokens, params.config.hidden);
+      MSCCLPP_CUDATHROW(cudaLaunchKernelEx(&quantizeLaunch, detail::quantizeInputStaticKernel, source,
+                                           detail::at<uint8_t>(params.local, params.symmetric.quantizedInput),
+                                           params.config.activationScale, tokens, params.config.hidden));
     } else {
-      detail::quantizeInputKernel<<<blocks, threads, 0, stream>>>(
-          source, detail::at<uint8_t>(params.local, params.symmetric.quantizedInput),
-          detail::at<uint8_t>(params.local, params.symmetric.quantizedInputScale), tokens, params.config.hidden);
+      MSCCLPP_CUDATHROW(cudaLaunchKernelEx(&quantizeLaunch, detail::quantizeInputKernel, source,
+                                           detail::at<uint8_t>(params.local, params.symmetric.quantizedInput),
+                                           detail::at<uint8_t>(params.local, params.symmetric.quantizedInputScale),
+                                           tokens, params.config.hidden));
     }
-    MSCCLPP_CUDATHROW(cudaGetLastError());
   }
-  std::array<cudaLaunchAttribute, 2> launchAttributes{};
-  auto launch = detail::makeLaunchConfig(plan->ctas, detail::W4A8Parameters::ThreadCount, plan->sharedBytes, stream,
-                                         launchAttributes, detail::W4ClusterSize);
+  std::array<cudaLaunchAttribute, 3> launchAttributes{};
+  launchAttributes[0].id = cudaLaunchAttributeClusterDimension;
+  launchAttributes[0].val.clusterDim = {static_cast<unsigned int>(detail::W4ClusterSize), 1, 1};
+  launchAttributes[1].id = cudaLaunchAttributeCooperative;
+  launchAttributes[1].val.cooperative = 1;
+  launchAttributes[2].id = cudaLaunchAttributeProgrammaticStreamSerialization;
+  launchAttributes[2].val.programmaticStreamSerializationAllowed = 1;
+  cudaLaunchConfig_t launch{};
+  launch.gridDim = dim3(plan->ctas);
+  launch.blockDim = dim3(detail::W4A8Parameters::ThreadCount);
+  launch.dynamicSmemBytes = plan->sharedBytes;
+  launch.stream = stream;
+  launch.attrs = launchAttributes.data();
+  launch.numAttrs = (tokens > 0 && !params.config.computeOnly) ? 3 : 2;
   MSCCLPP_CUDATHROW(cudaLaunchKernelEx(
       &launch, detail::w4a8KernelEntry(params.config, capture == cudaStreamCaptureStatusActive), params, tokens,
       static_cast<__bfloat16*>(output), kernelEntrySignal, directInput, directInputScales, ids, scores));
+  if (tokens > 0 && !params.config.computeOnly && params.config.weightDtype == WeightDtype::Mxfp4 &&
+      params.config.activationDtype == ActivationDtype::Mxfp8 &&
+      !(params.config.worldSize == 1 && params.config.topK == 1 && !params.config.combineRouteWeights)) {
+    const int vectors = params.config.hidden / mscclpp::bf16x8::Size;
+    const int tokenTasks = (vectors + 31) / 32;
+    const auto* partial =
+        reinterpret_cast<const uint4*>(detail::at<__bfloat16>(params.local, params.symmetric.partialOutput));
+    const int32_t* routeIds = ids ? ids : detail::at<int32_t>(params.local, params.symmetric.topkIds);
+    auto* outBf16 = static_cast<__bfloat16*>(output);
+    cudaLaunchAttribute combineAttr[1]{};
+    combineAttr[0].id = cudaLaunchAttributeProgrammaticStreamSerialization;
+    combineAttr[0].val.programmaticStreamSerializationAllowed = 1;
+    if (!params.config.combineRouteWeights && params.config.topK == 14) {
+      auto launchSlots14 = [&]<int Threads, bool TriggerNext>() {
+        constexpr int WarpsPerCta = Threads / 32;
+        const int combineCtas =
+            std::min(plan->ctas, std::max(1, (tokens * tokenTasks + WarpsPerCta - 1) / WarpsPerCta));
+        cudaLaunchConfig_t combineLaunch{};
+        combineLaunch.gridDim = dim3(combineCtas);
+        combineLaunch.blockDim = dim3(Threads);
+        combineLaunch.stream = stream;
+        combineLaunch.attrs = combineAttr;
+        combineLaunch.numAttrs = 1;
+        switch (params.config.hidden) {
+          case 4096:
+            MSCCLPP_CUDATHROW(cudaLaunchKernelEx(&combineLaunch,
+                                                 detail::combineSlotsStandaloneKernel<4096, 14, Threads, TriggerNext>,
+                                                 partial, routeIds, outBf16, tokens, params.config.hidden));
+            break;
+          case 5120:
+            MSCCLPP_CUDATHROW(cudaLaunchKernelEx(&combineLaunch,
+                                                 detail::combineSlotsStandaloneKernel<5120, 14, Threads, TriggerNext>,
+                                                 partial, routeIds, outBf16, tokens, params.config.hidden));
+            break;
+          case 8192:
+            MSCCLPP_CUDATHROW(cudaLaunchKernelEx(&combineLaunch,
+                                                 detail::combineSlotsStandaloneKernel<8192, 14, Threads, TriggerNext>,
+                                                 partial, routeIds, outBf16, tokens, params.config.hidden));
+            break;
+          case 9216:
+            MSCCLPP_CUDATHROW(cudaLaunchKernelEx(&combineLaunch,
+                                                 detail::combineSlotsStandaloneKernel<9216, 14, Threads, TriggerNext>,
+                                                 partial, routeIds, outBf16, tokens, params.config.hidden));
+            break;
+          default:
+            MSCCLPP_CUDATHROW(cudaLaunchKernelEx(&combineLaunch,
+                                                 detail::combineSlotsStandaloneKernel<0, 14, Threads, TriggerNext>,
+                                                 partial, routeIds, outBf16, tokens, params.config.hidden));
+            break;
+        }
+      };
+      if (tokens < 128) {
+        if (triggerNextQuantize)
+          launchSlots14.template operator()<512, true>();
+        else
+          launchSlots14.template operator()<512, false>();
+      } else {
+        if (triggerNextQuantize)
+          launchSlots14.template operator()<1024, true>();
+        else
+          launchSlots14.template operator()<1024, false>();
+      }
+    } else {
+      const int combineCtas = std::min(plan->ctas, std::max(1, (tokens * tokenTasks + 15) / 16));
+      const float* routeWeights = scores ? scores : detail::at<float>(params.local, params.symmetric.topkWeights);
+      cudaLaunchConfig_t combineLaunch{};
+      combineLaunch.gridDim = dim3(combineCtas);
+      combineLaunch.blockDim = dim3(512);
+      combineLaunch.stream = stream;
+      combineLaunch.attrs = combineAttr;
+      combineLaunch.numAttrs = 1;
+      auto launchGeneral = [&]<bool CombineRouteWeights, bool TriggerNext>() {
+        MSCCLPP_CUDATHROW(cudaLaunchKernelEx(
+            &combineLaunch, detail::combineGeneralStandaloneKernel<CombineRouteWeights, TriggerNext>, partial, routeIds,
+            routeWeights, outBf16, tokens, params.config.hidden, params.config.topK));
+      };
+      if (params.config.combineRouteWeights) {
+        if (triggerNextQuantize)
+          launchGeneral.template operator()<true, true>();
+        else
+          launchGeneral.template operator()<true, false>();
+      } else {
+        if (triggerNextQuantize)
+          launchGeneral.template operator()<false, true>();
+        else
+          launchGeneral.template operator()<false, false>();
+      }
+    }
+  }
 }
 
 #if !defined(MSCCLPP_MEGAMOE_JIT_MODULE) || !MSCCLPP_MEGAMOE_JIT_MODULE

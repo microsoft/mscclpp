@@ -99,7 +99,7 @@ struct W4A8CollectiveTypesT {
       cutlass::gemm::collective::StageCount<LoadStages_>, KernelSchedule>::CollectiveOp;
   using Mainloop = W4A8Mainloop<Builder, TileN_, TileK_, LoadStages_, SplitPipelines, W4ClusterSize>;
   using Load = typename Mainloop::MainloopPipeline;
-  using Accumulate = cutlass::PipelineUmmaAsync<2, typename Mainloop::AtomThrShapeMNK>;
+  using Accumulate = cutlass::PipelineUmmaAsync<3, typename Mainloop::AtomThrShapeMNK>;
   using ScaleConfig = typename Mainloop::Sm1xxBlkScaledConfig;
   static_assert(NumWarps == 12 || NumWarps == 16);
   static_assert(LoadWarps == 1 || LoadWarps == 2);

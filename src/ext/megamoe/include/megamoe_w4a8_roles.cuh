@@ -46,9 +46,8 @@ __device__ __forceinline__ auto makeW4A8LoadPipeline(Storage& storage, int warp,
 }
 
 template <class KernelParams>
-MSCCLPP_DEVICE_INLINE bool cacheExpertWeights(const KernelParams& params, int expert) {
-  // After prepareRoutes, each cursor is the expert's total routed row count for this launch.
-  return params.workspace.cursors[expert] > KernelParams::Tiles::N;
+MSCCLPP_DEVICE_INLINE bool cacheExpertWeights(const KernelParams&, const TokenBlock& tokenBlock) {
+  return (tokenBlock.groupShift & TokenBlockCacheWeightsBit) != 0;
 }
 
 template <class P, class Storage>
@@ -57,7 +56,8 @@ __device__ __forceinline__ void runW4A8LoadRole(const P& p, Storage& s, typename
                                                 typename P::Collective::Mainloop& fc1,
                                                 typename P::Collective::Mainloop& fc2, const ProblemShape& shape1,
                                                 const ProblemShape& shape2, int hidden, int intermediate, int warp,
-                                                int lane, int cta, int cluster, int tasks) {
+                                                int lane, int cta, int cluster, int tasks, int tokenBlocks,
+                                                int localExperts) {
   using namespace cute;
   using Types = typename P::Collective;
   using Load = typename P::Collective::Load;
@@ -67,60 +67,95 @@ __device__ __forceinline__ void runW4A8LoadRole(const P& p, Storage& s, typename
   auto state = cutlass::make_producer_start_state<Load>();
   auto load1 = fc1.load_init(shape1, s.tensors);
   auto load2 = fc2.load_init(shape2, s.tensors);
-  for (int i = cluster; i < tasks; i += gridDim.x / P::Tiles::ClusterSize) {
-    Task task = taskAt(p, i, hidden, intermediate);
-    const bool cacheWeights =
-        (Types::LoadWarps == 1 || warp == Schedule::LoadWarp) && cacheExpertWeights(p, task.tokens.expert);
-    if (!task.fc1 && (Types::LoadWarps == 1 || warp == Schedule::ActivationLoadWarp)) {
-      traceKernel(KernelTracePhase::TokenReady, true, int(task.fc1));
-      if (lane == 0)
-        waitAtLeast<int, scopeDevice>(p.workspace.hiddenReady + size_t(task.block) * W4ReadyCounterStride,
-                                      fc1CompletionCount<P>(intermediate));
-      __syncwarp();
-      traceKernel(KernelTracePhase::TokenReady, false, int(task.fc1));
-    }
-    auto coord = taskCoord(p, task, cta);
-    int kTiles = taskKTiles(p, task, hidden, intermediate);
-    auto phase = task.fc1 ? KernelTracePhase::LoadFc1 : KernelTracePhase::LoadFc2;
-    traceKernel(phase, true, i);
-    auto loadTiles = [&](int first, int count) {
-      auto iterator = cute::make_coord_iterator(first, kTiles);
-      constexpr ActivationDtype ActDtype = P::Activation;
-      auto result = [&](auto& firstMainloop, auto& secondMainloop) {
-        if constexpr (Types::LoadWarps == 2) {
-          if (warp == Schedule::LoadWarp)
-            return task.fc1 ? firstMainloop.template load<1, ActDtype>(producerPipeline, state, load1, coord, iterator,
-                                                                       count, task.tokens.rows, cacheWeights)
-                            : secondMainloop.template load<1, ActDtype>(producerPipeline, state, load2, coord, iterator,
-                                                                        count, task.tokens.rows, cacheWeights);
-          return task.fc1 ? firstMainloop.template load<2, ActDtype>(producerPipeline, state, load1, coord, iterator,
-                                                                     count, task.tokens.rows, cacheWeights)
-                          : secondMainloop.template load<2, ActDtype>(producerPipeline, state, load2, coord, iterator,
-                                                                      count, task.tokens.rows, cacheWeights);
-        } else {
-          return task.fc1 ? firstMainloop.template load<0, ActDtype>(loadPipeline, state, load1, coord, iterator, count,
-                                                                     task.tokens.rows, cacheWeights)
-                          : secondMainloop.template load<0, ActDtype>(loadPipeline, state, load2, coord, iterator,
-                                                                      count, task.tokens.rows, cacheWeights);
-        }
-      }(fc1, fc2);
-      state = get<0>(result);
-    };
-    if (task.fc1 && (Types::LoadWarps == 1 || warp == Schedule::ActivationLoadWarp)) {
-      constexpr int TilesPerChunk = Types::DispatchChunk / P::Tiles::K;
-      for (int first = 0; first < kTiles; first += TilesPerChunk) {
-        traceKernel(KernelTracePhase::TokenReady, true, first / TilesPerChunk);
+  const int fc1Tiles = fc1TaskTiles<P>(intermediate);
+  const int fc2Tiles = fc2TaskTiles<P>(hidden);
+  const int numClusters = gridDim.x / P::Tiles::ClusterSize;
+  if (cluster < tasks) {
+    Task nextTask = taskAtFast(p, cluster, tokenBlocks, localExperts, fc1Tiles, fc2Tiles);
+    for (int i = cluster; i < tasks; i += numClusters) {
+      Task task = nextTask;
+      const bool hasNext = (i + numClusters) < tasks;
+      const bool cacheWeights =
+          (Types::LoadWarps == 1 || warp == Schedule::LoadWarp) && cacheExpertWeights(p, task.tokens);
+      if (!task.fc1 && (Types::LoadWarps == 1 || warp == Schedule::ActivationLoadWarp)) {
+        traceKernel(KernelTracePhase::TokenReady, true, int(task.fc1));
         if (lane == 0)
-          waitAtLeast<int, scopeDevice>(
-              w4InputChunkCounter<Types>(p.workspace, hidden, task.block, first / TilesPerChunk), task.tokens.rows);
+          waitAtLeast<int, scopeDevice>(p.workspace.hiddenReady + size_t(task.block) * W4ReadyCounterStride,
+                                        fc1CompletionCount<P>(intermediate));
         __syncwarp();
-        traceKernel(KernelTracePhase::TokenReady, false, first / TilesPerChunk);
-        loadTiles(first, min(TilesPerChunk, kTiles - first));
+        traceKernel(KernelTracePhase::TokenReady, false, int(task.fc1));
       }
-    } else {
-      loadTiles(0, kTiles);
+      auto coord = taskCoord(p, task, cta);
+      int kTiles = taskKTiles(p, task, hidden, intermediate);
+      auto phase = task.fc1 ? KernelTracePhase::LoadFc1 : KernelTracePhase::LoadFc2;
+      traceKernel(phase, true, i);
+      auto loadTiles = [&](int first, int count) {
+        auto iterator = cute::make_coord_iterator(first, kTiles);
+        constexpr ActivationDtype ActDtype = P::Activation;
+        auto result = [&](auto& firstMainloop, auto& secondMainloop) {
+          if constexpr (Types::LoadWarps == 2) {
+            if (warp == Schedule::LoadWarp)
+              return task.fc1
+                         ? firstMainloop.template load<1, ActDtype>(producerPipeline, state, load1, coord, iterator,
+                                                                    count, task.tokens.rows, cacheWeights)
+                         : secondMainloop.template load<1, ActDtype>(producerPipeline, state, load2, coord, iterator,
+                                                                     count, task.tokens.rows, cacheWeights);
+            return task.fc1 ? firstMainloop.template load<2, ActDtype>(producerPipeline, state, load1, coord, iterator,
+                                                                       count, task.tokens.rows, cacheWeights)
+                            : secondMainloop.template load<2, ActDtype>(producerPipeline, state, load2, coord, iterator,
+                                                                        count, task.tokens.rows, cacheWeights);
+          } else {
+            return task.fc1 ? firstMainloop.template load<0, ActDtype>(loadPipeline, state, load1, coord, iterator,
+                                                                       count, task.tokens.rows, cacheWeights)
+                            : secondMainloop.template load<0, ActDtype>(loadPipeline, state, load2, coord, iterator,
+                                                                        count, task.tokens.rows, cacheWeights);
+          }
+        }(fc1, fc2);
+        state = get<0>(result);
+      };
+      if (task.fc1 && (Types::LoadWarps == 1 || warp == Schedule::ActivationLoadWarp)) {
+        constexpr int TilesPerChunk = Types::DispatchChunk / P::Tiles::K;
+        for (int first = 0; first < kTiles; first += TilesPerChunk) {
+          traceKernel(KernelTracePhase::TokenReady, true, first / TilesPerChunk);
+          if (lane == 0)
+            waitAtLeast<int, scopeDevice>(
+                w4InputChunkCounter<Types>(p.workspace, hidden, task.block, first / TilesPerChunk), task.tokens.rows);
+          __syncwarp();
+          traceKernel(KernelTracePhase::TokenReady, false, first / TilesPerChunk);
+          int count = min(TilesPerChunk, kTiles - first);
+          if constexpr (Types::DispatchChunk >= 4096) {
+            if (first == 0 && hasNext && count > 1) {
+              loadTiles(0, 1);
+              nextTask = taskAtFast(p, i + numClusters, tokenBlocks, localExperts, fc1Tiles, fc2Tiles);
+              loadTiles(1, count - 1);
+            } else {
+              loadTiles(first, count);
+              if (first == 0 && hasNext)
+                nextTask = taskAtFast(p, i + numClusters, tokenBlocks, localExperts, fc1Tiles, fc2Tiles);
+            }
+          } else {
+            loadTiles(first, count);
+            if (first == 0 && hasNext)
+              nextTask = taskAtFast(p, i + numClusters, tokenBlocks, localExperts, fc1Tiles, fc2Tiles);
+          }
+        }
+      } else {
+        if constexpr (Types::DispatchChunk >= 4096) {
+          if (hasNext && kTiles > 1) {
+            loadTiles(0, 1);
+            nextTask = taskAtFast(p, i + numClusters, tokenBlocks, localExperts, fc1Tiles, fc2Tiles);
+            loadTiles(1, kTiles - 1);
+          } else {
+            loadTiles(0, kTiles);
+            if (hasNext) nextTask = taskAtFast(p, i + numClusters, tokenBlocks, localExperts, fc1Tiles, fc2Tiles);
+          }
+        } else {
+          loadTiles(0, kTiles);
+          if (hasNext) nextTask = taskAtFast(p, i + numClusters, tokenBlocks, localExperts, fc1Tiles, fc2Tiles);
+        }
+      }
+      traceKernel(phase, false, i);
     }
-    traceKernel(phase, false, i);
   }
   fc1.load_tail(producerPipeline, state);
 }

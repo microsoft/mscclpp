@@ -188,7 +188,9 @@ __device__ __forceinline__ void initDispatchStorage(Storage& s, int warp, int la
       s.dispatch.arrivals = 0;
       s.dispatch.publishedPhase = 0;
     }
-    if (lane < DispatchStages) s.dispatch.barriers[localWarp][lane].relaxedInit();
+    constexpr int NumBarriers = std::extent_v<decltype(s.dispatch.barriers), 1>;
+    static_assert(NumBarriers >= DispatchStages && NumBarriers <= 32);
+    if (lane < NumBarriers) s.dispatch.barriers[localWarp][lane].relaxedInit();
   }
 #endif
 }
@@ -202,12 +204,10 @@ __device__ __forceinline__ void stageExpertTokens(const P& p, Storage& s, int lo
   using Types = typename P::Collective;
   static_assert(Hidden >= 0);
   static_assert(DispatchBytes == sizeof(s.dispatch.tiles[0][0]));
-  static_assert(DispatchStages == std::extent_v<decltype(s.dispatch.barriers), 1>);
   static_assert((DispatchBytes / 32 + 15) / 16 * 16 <= sizeof(s.dispatch.scales[0][0]));
   const auto& w = p.workspace;
   int lane = threadIdx.x % warpSize;
   auto& barriers = s.dispatch.barriers[localWarp];
-  uint32_t loadPhases[DispatchStages] = {};
   constexpr int ElemBytes = P::Activation == ActivationDtype::Bf16 ? sizeof(__bfloat16) : sizeof(uint8_t);
   const int hidden = Hidden > 0 ? Hidden : p.config.hidden;
   const int rowBytes = hidden * ElemBytes;
@@ -216,84 +216,308 @@ __device__ __forceinline__ void stageExpertTokens(const P& p, Storage& s, int lo
   constexpr int nDispatchGroupsPerTile = (TileN + Types::DispatchWarps - 1) / Types::DispatchWarps;
   static_assert((nDispatchGroupsPerTile & (nDispatchGroupsPerTile - 1)) == 0,
                 "XOR group swizzling needs a power-of-two group count");
-  // This parity hands off the shared counter, independently of each TMA stage's parity.
-  uint32_t publicationPhase = 0;
   const int nLocalExperts = p.config.numExperts / p.config.worldSize;
   ExpertWindow window = loadExpertWindow<TileN, Types::DispatchWarps>(w, nLocalExperts, 0, 0, lane);
-  for (int dispatchGroupIdx = blockIdx.x;; dispatchGroupIdx += gridDim.x) {
-    int tile;
-    int groupIdxInTile;
-    if (!mapGroupToTile<TileN, Types::DispatchWarps>(w, nLocalExperts, window, dispatchGroupIdx, lane, tile,
-                                                     groupIdxInTile))
-      break;
-    int rows = w.blocks[tile].rows;
-    // Only full tiles are swizzled, so a tail tile's live groups stay first.
-    if (rows == TileN) groupIdxInTile ^= tile & (nDispatchGroupsPerTile - 1);
-    int firstRowIndexInGroup = groupIdxInTile * Types::DispatchWarps;
-    // A group covers one row per dispatch warp. Skip groups fully past the live rows; padded tail warps in a
-    // partially live group still arrive with hasRow=false so the shared publication counter remains convergent.
-    if (firstRowIndexInGroup >= rows) continue;
-    int rowInTile = firstRowIndexInGroup + localWarp;
-    int row = tile * TileN + rowInTile;
-    bool hasRow = rowInTile < rows;
-    Route route{};
-    if (hasRow) route = w.routes[row];
-    hasRow = hasRow && route.rank >= 0;
-    constexpr bool IsBf16 = P::Activation == ActivationDtype::Bf16;
-    const uint8_t* source = nullptr;
-    const uint8_t* sourceScale = nullptr;
-    if (hasRow) {
+
+  if constexpr (!P::WeightMxfp4) {
+    static_assert(DispatchStages == std::extent_v<decltype(s.dispatch.barriers), 1>);
+    uint32_t loadPhases[DispatchStages] = {};
+    // This parity hands off the shared counter, independently of each TMA stage's parity.
+    uint32_t publicationPhase = 0;
+    for (int dispatchGroupIdx = blockIdx.x;; dispatchGroupIdx += gridDim.x) {
+      int tile;
+      int groupIdxInTile;
+      if (!mapGroupToTile<TileN, Types::DispatchWarps>(w, nLocalExperts, window, dispatchGroupIdx, lane, tile,
+                                                       groupIdxInTile))
+        break;
+      int rows = w.blocks[tile].rows;
+      // Only full tiles are swizzled, so a tail tile's live groups stay first.
+      if (rows == TileN) groupIdxInTile ^= tile & (nDispatchGroupsPerTile - 1);
+      int firstRowIndexInGroup = groupIdxInTile * Types::DispatchWarps;
+      // A group covers one row per dispatch warp. Skip groups fully past the live rows; padded tail warps in a
+      // partially live group still arrive with hasRow=false so the shared publication counter remains convergent.
+      if (firstRowIndexInGroup >= rows) continue;
+      int rowInTile = firstRowIndexInGroup + localWarp;
+      int row = tile * TileN + rowInTile;
+      bool hasRow = rowInTile < rows;
+      Route route{};
+      if (hasRow) route = w.routes[row];
+      hasRow = hasRow && route.rank >= 0;
+      constexpr bool IsBf16 = P::Activation == ActivationDtype::Bf16;
+      const uint8_t* source = nullptr;
+      const uint8_t* sourceScale = nullptr;
+      if (hasRow) {
+        if constexpr (LocalGather)
+          resolveLocalGatherSource<IsBf16>(p, route, hidden, rowBytes, directInput, directInputScale, runtimeTokens,
+                                           source, sourceScale);
+        else
+          resolvePeerRouteSource<IsBf16>(p, route, hidden, rowBytes, source, sourceScale);
+      }
+      auto* destination = hasRow ? w.quantizedInput + size_t(w4StorageRow<typename P::Tiles>(row)) * rowBytes : nullptr;
+      auto load = [&](int chunk) {
+        int stage = chunk % DispatchStages;
+        int bytes = min(DispatchBytes, rowBytes - chunk * DispatchBytes);
+        if constexpr (P::Activation != ActivationDtype::Mxfp8) {
+          barriers[stage].arriveAndExpect(bytes);
+          bulkLoad(s.dispatch.tiles[localWarp][stage], source + chunk * DispatchBytes, bytes, barriers[stage]);
+        } else {
+          int scaleBytes = (bytes / 32 + 15) / 16 * 16;
+          barriers[stage].arriveAndExpect(bytes + scaleBytes);
+          bulkLoad(s.dispatch.tiles[localWarp][stage], source + chunk * DispatchBytes, bytes, barriers[stage]);
+          bulkLoad(s.dispatch.scales[localWarp][stage], sourceScale + chunk * (DispatchBytes / 32), scaleBytes,
+                   barriers[stage]);
+        }
+      };
+      float routeWeight = 1.0f;
+      if (lane == 0 && hasRow) {
+        bulkFence();
+#pragma unroll
+        for (int stage = 0; stage < DispatchStages; ++stage)
+          if (stage < chunks) load(stage);
+        if (!p.config.combineRouteWeights)
+          routeWeight =
+              LocalGather ? loadLocalRouteWeight(p, route, directScores, runtimeTokens) : loadRouteWeight(p, route);
+      }
+      auto process = [&](int chunk) {
+        int stage = chunk % DispatchStages;
+        int bytes = min(DispatchBytes, rowBytes - chunk * DispatchBytes);
+        if (hasRow)
+          storeDispatchChunk<DispatchBytes, DispatchStages>(p, s.dispatch, localWarp, row, chunk, destination, bytes,
+                                                            loadPhases[stage], chunk + DispatchStages < chunks,
+                                                            [&] { load(chunk + DispatchStages); });
+        if (lane == 0) {
+          auto* counter = w4InputChunkCounter<Types>(w, hidden, tile, chunk);
+          if (hasRow && chunk == chunks - 1 && !p.config.combineRouteWeights) w.routes[row].weight = routeWeight;
+          publicationPhase ^= 1u;
+          publishDispatchChunk<Types>(s.dispatch, localWarp, counter, hasRow, publicationPhase);
+        }
+        __syncwarp();
+      };
+      for (int chunk = 0; chunk < chunks; ++chunk) process(chunk);
+    }
+    if (lane == 0) {
+#pragma unroll
+      for (int stage = 0; stage < DispatchStages; ++stage) barriers[stage].invalidate();
+    }
+  } else if constexpr (Types::DispatchWarps >= 4) {
+    static_assert(DispatchStages == std::extent_v<decltype(s.dispatch.barriers), 1>);
+    uint32_t publicationPhase = 0;
+    uint32_t loadPhaseBits = 0;
+    for (int dispatchGroupIdx = blockIdx.x;; dispatchGroupIdx += gridDim.x) {
+      int tile;
+      int groupIdxInTile;
+      if (!mapGroupToTile<TileN, Types::DispatchWarps>(w, nLocalExperts, window, dispatchGroupIdx, lane, tile,
+                                                       groupIdxInTile))
+        break;
+      int rows = w.blocks[tile].rows;
+      if (rows == TileN) groupIdxInTile ^= tile & (nDispatchGroupsPerTile - 1);
+      int firstRowIndexInGroup = groupIdxInTile * Types::DispatchWarps;
+      if (firstRowIndexInGroup >= rows) continue;
+      int rowInTile = firstRowIndexInGroup + localWarp;
+      int row = tile * TileN + rowInTile;
+      bool hasRow = rowInTile < rows;
+      if (hasRow) {
+        Route route = w.routes[row];
+        if (route.rank < 0) {
+          hasRow = false;
+        } else if (lane == 0) {
+          const uint8_t* source = nullptr;
+          const uint8_t* sourceScale = nullptr;
+          if constexpr (LocalGather)
+            resolveLocalGatherSource<false>(p, route, hidden, rowBytes, directInput, directInputScale, runtimeTokens,
+                                            source, sourceScale);
+          else
+            resolvePeerRouteSource<false>(p, route, hidden, rowBytes, source, sourceScale);
+          bulkFence();
+#pragma unroll
+          for (int stage = 0; stage < DispatchStages; ++stage) {
+            if (stage < chunks) {
+              int byteOffset = stage * DispatchBytes;
+              int bytes = min(DispatchBytes, rowBytes - byteOffset);
+              if constexpr (P::Activation != ActivationDtype::Mxfp8) {
+                barriers[stage].arriveAndExpect(bytes);
+                bulkLoad(s.dispatch.tiles[localWarp][stage], source + byteOffset, bytes, barriers[stage]);
+              } else {
+                int scBytes = (bytes / 32 + 15) / 16 * 16;
+                barriers[stage].arriveAndExpect(bytes + scBytes);
+                bulkLoad(s.dispatch.tiles[localWarp][stage], source + byteOffset, bytes, barriers[stage]);
+                bulkLoad(s.dispatch.scales[localWarp][stage], sourceScale + (byteOffset / 32), scBytes,
+                         barriers[stage]);
+              }
+            }
+          }
+          if (!p.config.combineRouteWeights) {
+            w.routes[row].weight =
+                LocalGather ? loadLocalRouteWeight(p, route, directScores, runtimeTokens) : loadRouteWeight(p, route);
+          }
+        }
+        hasRow = __shfl_sync(0xffffffff, int(hasRow), 0) != 0;
+      }
+      for (int chunk = 0; chunk < chunks; ++chunk) {
+        int stage = DispatchStages == 2 ? (chunk & 1) : 0;
+        int byteOffset = chunk * DispatchBytes;
+        int bytes = min(DispatchBytes, rowBytes - byteOffset);
+        if (hasRow) {
+          const int storageRow = w4StorageRow<typename P::Tiles>(row);
+          if (lane == 0) {
+            uint32_t phase = (loadPhaseBits >> stage) & 1u;
+            barriers[stage].wait(phase, SpinLimit);
+            loadPhaseBits ^= (1u << stage);
+            bulkStore(w.quantizedInput + size_t(storageRow) * rowBytes + byteOffset, s.dispatch.tiles[localWarp][stage],
+                      bytes);
+            bulkStoreCommit();
+            bulkFence();
+          }
+          if constexpr (P::Activation == ActivationDtype::Mxfp8) {
+            __syncwarp();
+            int k = 4 * lane;
+            if (k < bytes / 32) {
+              size_t offset = p.fc1.layout_SFB(cute::make_coord(storageRow, byteOffset + k * 32, 0));
+              *reinterpret_cast<uint32_t*>(w.inputScale + offset) =
+                  *reinterpret_cast<const uint32_t*>(s.dispatch.scales[localWarp][stage] + k);
+            }
+            asm volatile("fence.proxy.async.global;" ::: "memory");
+            __syncwarp();
+          }
+          if (lane == 0) {
+            if (chunk + DispatchStages < chunks) {
+              Route route = w.routes[row];
+              const uint8_t* source = nullptr;
+              const uint8_t* sourceScale = nullptr;
+              if constexpr (LocalGather)
+                resolveLocalGatherSource<false>(p, route, hidden, rowBytes, directInput, directInputScale,
+                                                runtimeTokens, source, sourceScale);
+              else
+                resolvePeerRouteSource<false>(p, route, hidden, rowBytes, source, sourceScale);
+              int nextChunk = chunk + DispatchStages;
+              int nextStage = DispatchStages == 2 ? (nextChunk & 1) : 0;
+              int nextOffset = nextChunk * DispatchBytes;
+              int nextBytes = min(DispatchBytes, rowBytes - nextOffset);
+              bulkStoreWaitSource();
+              bulkFence();
+              if constexpr (P::Activation != ActivationDtype::Mxfp8) {
+                barriers[nextStage].arriveAndExpect(nextBytes);
+                bulkLoad(s.dispatch.tiles[localWarp][nextStage], source + nextOffset, nextBytes, barriers[nextStage]);
+              } else {
+                int scBytes = (nextBytes / 32 + 15) / 16 * 16;
+                barriers[nextStage].arriveAndExpect(nextBytes + scBytes);
+                bulkLoad(s.dispatch.tiles[localWarp][nextStage], source + nextOffset, nextBytes, barriers[nextStage]);
+                bulkLoad(s.dispatch.scales[localWarp][nextStage], sourceScale + (nextOffset / 32), scBytes,
+                         barriers[nextStage]);
+              }
+            }
+            bulkStoreWait();
+          }
+        }
+        if (lane == 0) {
+          auto* counter = w4InputChunkCounter<Types>(w, hidden, tile, chunk);
+          publicationPhase ^= 1u;
+          publishDispatchChunk<Types>(s.dispatch, localWarp, counter, hasRow, publicationPhase);
+        }
+        __syncwarp();
+      }
+    }
+    if (lane == 0) {
+#pragma unroll
+      for (int stage = 0; stage < DispatchStages; ++stage) barriers[stage].invalidate();
+    }
+  } else {
+    using DispatchStorage = std::remove_reference_t<decltype(s.dispatch)>;
+    constexpr int EffectiveStages = DispatchStorage::EffectiveDispatchStages;
+    constexpr int EffectiveBarriers = DispatchStorage::EffectiveDispatchBarriers;
+    static_assert(EffectiveStages == 1 || EffectiveStages == 2);
+    static_assert(EffectiveBarriers == EffectiveStages);
+    uint32_t loadPhaseBits = 0;
+
+    for (int dispatchGroupIdx = blockIdx.x;; dispatchGroupIdx += gridDim.x) {
+      int tile;
+      int groupIdxInTile;
+      if (!mapGroupToTile<TileN, Types::DispatchWarps>(w, nLocalExperts, window, dispatchGroupIdx, lane, tile,
+                                                       groupIdxInTile))
+        break;
+      int rows = w.blocks[tile].rows;
+      if (rows == TileN) groupIdxInTile ^= tile & (nDispatchGroupsPerTile - 1);
+      int rowInTile = groupIdxInTile * Types::DispatchWarps + localWarp;
+      if (rowInTile >= rows) continue;
+      int row = tile * TileN + rowInTile;
+      Route route = w.routes[row];
+      if (route.rank < 0) continue;
+
+      const uint8_t* source = nullptr;
+      const uint8_t* sourceScale = nullptr;
       if constexpr (LocalGather)
-        resolveLocalGatherSource<IsBf16>(p, route, hidden, rowBytes, directInput, directInputScale, runtimeTokens,
-                                         source, sourceScale);
+        resolveLocalGatherSource<false>(p, route, hidden, rowBytes, directInput, directInputScale, runtimeTokens,
+                                        source, sourceScale);
       else
-        resolvePeerRouteSource<IsBf16>(p, route, hidden, rowBytes, source, sourceScale);
-    }
-    auto* destination = hasRow ? w.quantizedInput + size_t(w4StorageRow<typename P::Tiles>(row)) * rowBytes : nullptr;
-    auto load = [&](int chunk) {
-      int stage = chunk % DispatchStages;
-      int bytes = min(DispatchBytes, rowBytes - chunk * DispatchBytes);
-      if constexpr (P::Activation != ActivationDtype::Mxfp8) {
-        barriers[stage].arriveAndExpect(bytes);
-        bulkLoad(s.dispatch.tiles[localWarp][stage], source + chunk * DispatchBytes, bytes, barriers[stage]);
-      } else {
-        int scaleBytes = (bytes / 32 + 15) / 16 * 16;
-        barriers[stage].arriveAndExpect(bytes + scaleBytes);
-        bulkLoad(s.dispatch.tiles[localWarp][stage], source + chunk * DispatchBytes, bytes, barriers[stage]);
-        bulkLoad(s.dispatch.scales[localWarp][stage], sourceScale + chunk * (DispatchBytes / 32), scaleBytes,
-                 barriers[stage]);
-      }
-    };
-    float routeWeight = 1.0f;
-    if (lane == 0 && hasRow) {
-      bulkFence();
-#pragma unroll
-      for (int stage = 0; stage < DispatchStages; ++stage)
-        if (stage < chunks) load(stage);
-      if (!p.config.combineRouteWeights)
-        routeWeight =
-            LocalGather ? loadLocalRouteWeight(p, route, directScores, runtimeTokens) : loadRouteWeight(p, route);
-    }
-    auto process = [&](int chunk) {
-      int stage = chunk % DispatchStages;
-      int bytes = min(DispatchBytes, rowBytes - chunk * DispatchBytes);
-      if (hasRow)
-        storeDispatchChunk<DispatchBytes, DispatchStages>(p, s.dispatch, localWarp, row, chunk, destination, bytes,
-                                                          loadPhases[stage], chunk + DispatchStages < chunks,
-                                                          [&] { load(chunk + DispatchStages); });
+        resolvePeerRouteSource<false>(p, route, hidden, rowBytes, source, sourceScale);
+
+      const int storageRow = w4StorageRow<typename P::Tiles>(row);
+      uint8_t* destination = w.quantizedInput + size_t(storageRow) * rowBytes;
+
+      auto issueChunk = [&](int chunk) {
+        int stage = EffectiveStages == 2 ? (chunk & 1) : 0;
+        int byteOffset = chunk * DispatchBytes;
+        int bytes = min(DispatchBytes, rowBytes - byteOffset);
+        if constexpr (P::Activation != ActivationDtype::Mxfp8) {
+          barriers[stage].arriveAndExpect(bytes);
+          bulkLoad(s.dispatch.tiles[localWarp][stage], source + byteOffset, bytes, barriers[stage]);
+        } else {
+          int scBytes = (bytes / 32 + 15) / 16 * 16;
+          barriers[stage].arriveAndExpect(bytes + scBytes);
+          bulkLoad(s.dispatch.tiles[localWarp][stage], source + byteOffset, bytes, barriers[stage]);
+          bulkLoad(s.dispatch.scales[localWarp][stage], sourceScale + (byteOffset / 32), scBytes, barriers[stage]);
+        }
+      };
       if (lane == 0) {
-        auto* counter = w4InputChunkCounter<Types>(w, hidden, tile, chunk);
-        if (hasRow && chunk == chunks - 1 && !p.config.combineRouteWeights) w.routes[row].weight = routeWeight;
-        publicationPhase ^= 1u;
-        publishDispatchChunk<Types>(s.dispatch, localWarp, counter, hasRow, publicationPhase);
-      }
-      __syncwarp();
-    };
-    for (int chunk = 0; chunk < chunks; ++chunk) process(chunk);
-  }
-  if (lane == 0) {
+        bulkFence();
 #pragma unroll
-    for (int stage = 0; stage < DispatchStages; ++stage) barriers[stage].invalidate();
+        for (int stage = 0; stage < EffectiveStages; ++stage)
+          if (stage < chunks) issueChunk(stage);
+        if (!p.config.combineRouteWeights) {
+          w.routes[row].weight =
+              LocalGather ? loadLocalRouteWeight(p, route, directScores, runtimeTokens) : loadRouteWeight(p, route);
+        }
+      }
+      for (int chunk = 0; chunk < chunks; ++chunk) {
+        int stage = EffectiveStages == 2 ? (chunk & 1) : 0;
+        int byteOffset = chunk * DispatchBytes;
+        int bytes = min(DispatchBytes, rowBytes - byteOffset);
+        if (lane == 0) {
+          uint32_t phase = (loadPhaseBits >> stage) & 1u;
+          barriers[stage].wait(phase, SpinLimit);
+          loadPhaseBits ^= (1u << stage);
+          bulkStore(destination + byteOffset, s.dispatch.tiles[localWarp][stage], bytes);
+          bulkStoreCommit();
+          bulkFence();
+        }
+        if constexpr (P::Activation == ActivationDtype::Mxfp8) {
+          __syncwarp();
+          int k = 4 * lane;
+          if (k < bytes / 32) {
+            size_t offset = p.fc1.layout_SFB(cute::make_coord(storageRow, byteOffset + k * 32, 0));
+            *reinterpret_cast<uint32_t*>(w.inputScale + offset) =
+                *reinterpret_cast<const uint32_t*>(s.dispatch.scales[localWarp][stage] + k);
+          }
+          asm volatile("fence.proxy.async.global;" ::: "memory");
+          __syncwarp();
+        }
+        if (lane == 0) {
+          if (chunk + EffectiveStages < chunks) {
+            bulkStoreWaitSource();
+            bulkFence();
+            issueChunk(chunk + EffectiveStages);
+          }
+          bulkStoreWait();
+          int* counter = w4InputChunkCounter<Types>(w, hidden, tile, chunk);
+          asm volatile("red.release.gpu.global.add.u32 [%0], 1;" ::"l"(counter) : "memory");
+        }
+        __syncwarp();
+      }
+    }
+    if (lane == 0) {
+#pragma unroll
+      for (int b = 0; b < EffectiveBarriers; ++b) barriers[b].invalidate();
+    }
   }
 #endif
 }
