@@ -49,7 +49,7 @@ auto deviceHandle = channel.deviceHandle();
 ```
 
 Host and Device owners have distinct `DeviceHandle` types; `mscclpp::deviceHandle(channel)` selects the matching
-GPU view. `PortChannelDeviceHandle` remains the Host alias.
+GPU view. The canonical types are `BasePortChannelView<Backend>` and `PortChannelView<Backend>`; `<>` selects Host.
 
 Keep the channel and application buffers alive during GPU use. Channel copies share the semaphore owner and counter;
 creating a separate semaphore creates an independent counter.
@@ -63,8 +63,8 @@ Exclusive-mode operations automatically use internal shared-memory WQE slots for
 transfer fits `device_.blueFlameLimit` (default: 512 KiB) and the calling thread has a slot:
 
 ```cpp
-__global__ void send(mscclpp::PortChannelDeviceHandleT<mscclpp::PortChannelBackend::Device> channel, size_t bytes) {
-  using Concurrency = mscclpp::PortChannelDeviceHandle::Concurrency;
+__global__ void send(mscclpp::PortChannelView<mscclpp::PortChannelBackend::Device> channel, size_t bytes) {
+  using Concurrency = mscclpp::PortChannelView<>::Concurrency;
   if (threadIdx.x != 0) return;
   channel.putWithSignal<Concurrency::Exclusive>(0, bytes);
   channel.flush<Concurrency::Exclusive>();
@@ -97,8 +97,8 @@ every submission. Keep non-inline source buffers unchanged until their transfers
 
 ### Queue pair concurrency and BlueFlame configuration
 
-Channel handles expose a nested `Concurrency` type (`mscclpp::PortChannelDeviceHandle::Concurrency`).
-The type is defined in `BasePortChannelDeviceHandle` in `port_channel_device.hpp` and shared by both backends.
+Channel handles expose a nested `Concurrency` type (`mscclpp::PortChannelView<>::Concurrency`).
+The type is defined in `BasePortChannelView<>` in `port_channel_device.hpp` and shared by both backends.
 For device-backed channels it describes concurrent access to the underlying queue pair, not ownership of the
 PortChannel object. The default is `Concurrency::Device`, allowing callers across the device. Callers may instead
 select `Concurrency::Block` for callers confined to one thread block, or `Concurrency::Exclusive` when the caller
@@ -127,7 +127,7 @@ The default slot index is the linear thread index, including all three block dim
 optional `slotIdx` (`-1` selects the default); out-of-range indices fall back to regular doorbells. For example:
 
 ```cpp
-using Concurrency = mscclpp::PortChannelDeviceHandle::Concurrency;
+using Concurrency = mscclpp::PortChannelView<>::Concurrency;
 channel.put<Concurrency::Exclusive, 8>(dstOffset, srcOffset, bytes, slotIdx);
 channel.signal<Concurrency::Exclusive, 8>(slotIdx);
 ```

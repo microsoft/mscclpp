@@ -45,7 +45,7 @@ int wait_process(int pid) {
   return -1;
 }
 
-__constant__ mscclpp::SwitchChannelDeviceHandle gConstSwitchChan;
+__constant__ mscclpp::SwitchChannelView gConstSwitchChan;
 
 __device__ mscclpp::DeviceSyncer devSyncer;
 

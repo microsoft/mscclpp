@@ -142,8 +142,8 @@ To let the application (GPU kernels) use the channels, we need to obtain the **d
 
 ```cpp
 // From gpu_ping_pong.cu, lines 90 and 100
-mscclpp::BaseMemoryChannelDeviceHandle memChanHandle0 = memChan0.deviceHandle();
-mscclpp::BaseMemoryChannelDeviceHandle memChanHandle1 = memChan1.deviceHandle();
+mscclpp::BaseMemoryChannelView memChanHandle0 = memChan0.deviceHandle();
+mscclpp::BaseMemoryChannelView memChanHandle1 = memChan1.deviceHandle();
 ```
 
 The device handles are then copied to the GPU memory and passed to the GPU kernels for execution. For example:
@@ -151,14 +151,14 @@ The device handles are then copied to the GPU memory and passed to the GPU kerne
 ```cpp
 // From gpu_ping_pong.cu, lines 91-93
 void *devHandle0;
-MSCCLPP_CUDATHROW(cudaMalloc(&devHandle0, sizeof(mscclpp::BaseMemoryChannelDeviceHandle)));
+MSCCLPP_CUDATHROW(cudaMalloc(&devHandle0, sizeof(mscclpp::BaseMemoryChannelView)));
 MSCCLPP_CUDATHROW(cudaMemcpy(devHandle0, &memChanHandle0, sizeof(memChanHandle0), cudaMemcpyHostToDevice));
 
 // From gpu_ping_pong.cu, line 108
-gpuKernel0<<<1, 1>>>(reinterpret_cast<mscclpp::BaseMemoryChannelDeviceHandle *>(devHandle0), iter);
+gpuKernel0<<<1, 1>>>(reinterpret_cast<mscclpp::BaseMemoryChannelView *>(devHandle0), iter);
 
 // From gpu_ping_pong.cu, lines 26-35
-__global__ void gpuKernel0(mscclpp::BaseMemoryChannelDeviceHandle *devHandle, int iter) {
+__global__ void gpuKernel0(mscclpp::BaseMemoryChannelView *devHandle, int iter) {
   if (threadIdx.x + blockIdx.x * gridDim.x == 0) {
     for (int i = 0; i < iter; ++i) {
       devHandle->relaxedWait();
@@ -182,11 +182,11 @@ If your application (GPU kernel) needs to access the device handle very frequent
 (channel-interfaces)=
 ## Channel Interfaces in GPU Kernels
 
-In the GPU kernels of this example, we use the `relaxedSignal()` and `relaxedWait()` methods of the `BaseMemoryChannelDeviceHandle` to synchronize operations between the two GPUs. The `relaxedWait()` method blocks the calling thread until it receives a signal from the other GPU, while `relaxedSignal()` sends a signal to the other GPU. To demonstrate the synchronization, we put a spin loop of 10 million clock cycles (which takes a few milliseconds) on one side of the ping-pong (GPU 0) and check if the elapsed time is greater than 1 millisecond on the other side (GPU 1).
+In the GPU kernels of this example, we use the `relaxedSignal()` and `relaxedWait()` methods of the `BaseMemoryChannelView` to synchronize operations between the two GPUs. The `relaxedWait()` method blocks the calling thread until it receives a signal from the other GPU, while `relaxedSignal()` sends a signal to the other GPU. To demonstrate the synchronization, we put a spin loop of 10 million clock cycles (which takes a few milliseconds) on one side of the ping-pong (GPU 0) and check if the elapsed time is greater than 1 millisecond on the other side (GPU 1).
 
 ```cpp
 // From gpu_ping_pong.cu, lines 26-44
-__global__ void gpuKernel0(mscclpp::BaseMemoryChannelDeviceHandle *devHandle, int iter) {
+__global__ void gpuKernel0(mscclpp::BaseMemoryChannelView *devHandle, int iter) {
   if (threadIdx.x + blockIdx.x * gridDim.x == 0) {
     for (int i = 0; i < iter; ++i) {
       devHandle->relaxedWait();
@@ -197,7 +197,7 @@ __global__ void gpuKernel0(mscclpp::BaseMemoryChannelDeviceHandle *devHandle, in
   }
 }
 
-__global__ void gpuKernel1(mscclpp::BaseMemoryChannelDeviceHandle *devHandle, int iter) {
+__global__ void gpuKernel1(mscclpp::BaseMemoryChannelView *devHandle, int iter) {
   if (threadIdx.x + blockIdx.x * gridDim.x == 0) {
     for (int i = 0; i < iter; ++i) {
       devHandle->relaxedSignal();

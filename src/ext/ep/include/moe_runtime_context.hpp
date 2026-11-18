@@ -119,7 +119,7 @@ struct LatencyRuntimeContext {
   std::vector<mscclpp::RegisteredMemory> peerBufferMemories_;
   void** peerMappedBufferBasesGpu_ = nullptr;
   std::vector<mscclpp::BaseMemoryChannel> baseMemoryChannels_;
-  std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> baseMemoryChannelHandles_;
+  std::shared_ptr<mscclpp::BaseMemoryChannelView> baseMemoryChannelHandles_;
 };
 
 struct ThroughputRuntimeContext {
@@ -159,7 +159,7 @@ struct ThroughputRuntimeContext {
   // Device copy of the peer pointer table, not another payload allocation.
   void** peerMappedBufferBasesGpu_ = nullptr;
   std::vector<mscclpp::BaseMemoryChannel> baseMemoryChannels_;
-  std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> baseMemoryChannelHandles_;
+  std::shared_ptr<mscclpp::BaseMemoryChannelView> baseMemoryChannelHandles_;
   DeviceContext deviceContext_{};
 };
 

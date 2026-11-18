@@ -23,7 +23,7 @@ struct SwitchChannel {
   SwitchDevice2DeviceSemaphoreDeviceHandle barrier_ = {};
 
  public:
-  using DeviceHandle = SwitchChannelDeviceHandle;
+  using DeviceHandle = SwitchChannelView;
   SwitchChannel(void* devicePtr, std::shared_ptr<void> mcPtr, size_t bufferSize)
       : devicePtr_(devicePtr), mcPtr_(mcPtr), bufferSize_(bufferSize) {}
   DeviceHandle deviceHandle() const;

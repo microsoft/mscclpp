@@ -9,8 +9,8 @@
 __device__ mscclpp::DeviceSyncer deviceSyncer;
 
 extern "C" __global__ void __launch_bounds__(1024, 1)
-    nvls_test(mscclpp::SwitchChannelDeviceHandle nvlsPtrs,
-              mscclpp::MemoryDevice2DeviceSemaphoreDeviceHandle* semaphores, int my_rank, int nranks, int nbytes) {
+    nvls_test(mscclpp::SwitchChannelView nvlsPtrs, mscclpp::MemoryDevice2DeviceSemaphoreDeviceHandle* semaphores,
+              int my_rank, int nranks, int nbytes) {
   int nelem = nbytes / sizeof(float);
   float* dev_ptr = (float*)nvlsPtrs.devicePtr;
   mscclpp::f32x4* mc_ptr = (mscclpp::f32x4*)nvlsPtrs.mcPtr;
@@ -40,8 +40,8 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
   int my_step = blockDim.x * gridDim.x;
 
   for (int idx = my_st + my_offset; idx < my_en; idx += my_step) {
-    mscclpp::f32x4 val = mscclpp::SwitchChannelDeviceHandle::multimemLoadReduce(mc_ptr + idx);
-    mscclpp::SwitchChannelDeviceHandle::multimemStore(val, mc_ptr + idx);
+    mscclpp::f32x4 val = mscclpp::SwitchChannelView::multimemLoadReduce(mc_ptr + idx);
+    mscclpp::SwitchChannelView::multimemStore(val, mc_ptr + idx);
   }
 
   deviceSyncer.sync(gridDim.x);

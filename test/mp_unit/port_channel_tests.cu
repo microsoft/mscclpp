@@ -186,8 +186,8 @@ void PortChannelOneToOneTest::setupMeshConnections(std::vector<TestPortChannel>&
 }
 
 union ConstPortChannelStorage {
-  mscclpp::PortChannelDeviceHandleT<mscclpp::PortChannelBackend::Host> host;
-  mscclpp::PortChannelDeviceHandleT<mscclpp::PortChannelBackend::Device> device;
+  mscclpp::PortChannelView<mscclpp::PortChannelBackend::Host> host;
+  mscclpp::PortChannelView<mscclpp::PortChannelBackend::Device> device;
   constexpr ConstPortChannelStorage() : host{} {}
 };
 
@@ -195,7 +195,7 @@ template <mscclpp::PortChannelBackend Backend, Concurrency Mode = Backend == msc
                                                                       ? Concurrency::Device
                                                                       : Concurrency::Exclusive>
 struct TestPortChannelHandle {
-  mscclpp::PortChannelDeviceHandleT<Backend> chan;
+  mscclpp::PortChannelView<Backend> chan;
 
   __device__ void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
     chan.template put<Mode>(dstOffset, srcOffset, size);
@@ -1034,13 +1034,13 @@ TEST(PortChannelOneToOneTest, AccumulateIbHostNoAtomicRejected) {
 
 static constexpr int kMaxQps = 4;
 __constant__ DeviceHandle<mscclpp::PortChannel<>> gMultiQpPortChans[kMaxQps];
-__constant__ mscclpp::PortChannelDeviceHandleT<mscclpp::PortChannelBackend::Device> gMultiQpDevicePortChans[kMaxQps];
+__constant__ mscclpp::PortChannelView<mscclpp::PortChannelBackend::Device> gMultiQpDevicePortChans[kMaxQps];
 
 inline void copyMultiQpChannelsToSymbol(const std::vector<TestPortChannel>& portChannels, IbMode ibMode) {
   const int numQps = static_cast<int>(portChannels.size());
   ASSERT_LE(numQps, kMaxQps);
   if (ibMode == IbMode::Device) {
-    std::vector<mscclpp::PortChannelDeviceHandleT<mscclpp::PortChannelBackend::Device>> handles;
+    std::vector<mscclpp::PortChannelView<mscclpp::PortChannelBackend::Device>> handles;
     for (const auto& ch : portChannels) {
       handles.push_back(std::get<mscclpp::PortChannel<mscclpp::PortChannelBackend::Device>>(ch).deviceHandle());
     }

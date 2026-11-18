@@ -189,7 +189,7 @@ struct PortDevice2DeviceSemaphoreDeviceHandle {
 /// multimem atomics: a single `signal()` performs one multimem add on the shared arrival counter,
 /// which the switch reflects into every participating rank's local copy. `wait()` then spins on this
 /// rank's local copy until all `nRanks` peers have arrived. It is the barrier backend for
-/// `SwitchChannelDeviceHandle` and needs no separate memory-channel semaphores or host-side barrier.
+/// `SwitchChannelView` and needs no separate memory-channel semaphores or host-side barrier.
 ///
 /// A full barrier is a `signal()`/`wait()` pair (or the relaxed variants). The protocol is monotonic
 /// and never reset: `wait()`/`relaxedWait()` advance this rank's private generation target by

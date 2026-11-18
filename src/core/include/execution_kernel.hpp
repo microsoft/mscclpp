@@ -553,8 +553,8 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(const Operation& op, uint3
       VectorType<T, 1>* srcElem = reinterpret_cast<VectorType<T, 1>*>(src + srcOffsetElem);
       VectorType<T, 1>* dstElem = reinterpret_cast<VectorType<T, 1>*>(dst + dstOffsetElem);
       for (size_t idx = threadIdx.x; idx < nElem; idx += blockDim.x) {
-        auto val = SwitchChannelDeviceHandle::multimemLoadReduce(srcElem + idx);
-        SwitchChannelDeviceHandle::multimemStore(val, dstElem + idx);
+        auto val = SwitchChannelView::multimemLoadReduce(srcElem + idx);
+        SwitchChannelView::multimemStore(val, dstElem + idx);
       }
     } else {
       // handle data in 16-byte unit
@@ -565,8 +565,8 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(const Operation& op, uint3
       Type16* src16 = reinterpret_cast<Type16*>(src) + srcOffset16;
       Type16* dst16 = reinterpret_cast<Type16*>(dst) + dstOffset16;
       for (size_t idx = threadIdx.x; idx < nType16; idx += blockDim.x) {
-        Type16 val = SwitchChannelDeviceHandle::multimemLoadReduce(src16 + idx);
-        SwitchChannelDeviceHandle::multimemStore(val, dst16 + idx);
+        Type16 val = SwitchChannelView::multimemLoadReduce(src16 + idx);
+        SwitchChannelView::multimemStore(val, dst16 + idx);
       }
       // handle rest of data
       constexpr int RedBytes = (sizeof(T) == 8) ? 8 : 4;
@@ -576,8 +576,8 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(const Operation& op, uint3
       TypeRest* srcR = reinterpret_cast<TypeRest*>(src + srcOffset + processed);
       TypeRest* dstR = reinterpret_cast<TypeRest*>(dst + dstOffset + processed);
       for (size_t idx = threadIdx.x; idx < nRest; idx += blockDim.x) {
-        TypeRest val = SwitchChannelDeviceHandle::multimemLoadReduce(srcR + idx);
-        SwitchChannelDeviceHandle::multimemStore(val, dstR + idx);
+        TypeRest val = SwitchChannelView::multimemLoadReduce(srcR + idx);
+        SwitchChannelView::multimemStore(val, dstR + idx);
       }
     }
   }
@@ -604,7 +604,7 @@ MSCCLPP_DEVICE_INLINE void handleMultiStore(const Operation& op, void* input, vo
     f32x4* src16 = reinterpret_cast<f32x4*>(srcBase);
     f32x4* dst16 = reinterpret_cast<f32x4*>(dstBase);
     for (size_t idx = threadIdx.x; idx < nf32x4; idx += blockDim.x) {
-      SwitchChannelDeviceHandle::multimemStore(src16[idx], dst16 + idx);
+      SwitchChannelView::multimemStore(src16[idx], dst16 + idx);
     }
     processed = nf32x4 * sizeof(f32x4);
   }
@@ -615,7 +615,7 @@ MSCCLPP_DEVICE_INLINE void handleMultiStore(const Operation& op, void* input, vo
   u32x1* src4 = reinterpret_cast<u32x1*>(srcBase);
   u32x1* dst4 = reinterpret_cast<u32x1*>(dstBase);
   for (size_t idx = threadIdx.x + startIdx; idx < endIdx; idx += blockDim.x) {
-    SwitchChannelDeviceHandle::multimemStore(src4[idx], dst4 + idx);
+    SwitchChannelView::multimemStore(src4[idx], dst4 + idx);
   }
 }
 #endif
@@ -638,7 +638,7 @@ MSCCLPP_DEVICE_INLINE void handleMultiStorePkt(const Operation& op, void* input,
   for (size_t idx = threadIdx.x; idx < nPackets; idx += blockDim.x) {
     PacketPayload<PacketType> data = srcPackets[idx].read(flag_);
     PacketType pkt(data, flag_);
-    mscclpp::SwitchChannelDeviceHandle::multimemStore(*(StoreVec*)(&pkt), multiPkt + idx);
+    mscclpp::SwitchChannelView::multimemStore(*(StoreVec*)(&pkt), multiPkt + idx);
   }
 }
 #endif

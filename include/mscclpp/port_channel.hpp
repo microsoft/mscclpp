@@ -144,7 +144,7 @@ struct BasePortChannel {
   BasePortChannel& operator=(const BasePortChannel& other) = default;
 
   /// Device-side handle for BasePortChannel.
-  using DeviceHandle = BasePortChannelDeviceHandleT<Backend>;
+  using DeviceHandle = BasePortChannelView<Backend>;
 
   /// Returns the device-side handle.
   /// User should make sure the BasePortChannel is not released when using the returned handle.
@@ -206,7 +206,7 @@ struct PortChannel : public BasePortChannel<Backend> {
   PortChannel& operator=(const PortChannel& other) = default;
 
   /// Device-side handle for PortChannel.
-  using DeviceHandle = PortChannelDeviceHandleT<Backend>;
+  using DeviceHandle = PortChannelView<Backend>;
 
   /// Returns the device-side handle.
   /// User should make sure the PortChannel is not released when using the returned handle.

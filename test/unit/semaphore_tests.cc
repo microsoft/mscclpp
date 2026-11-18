@@ -1,7 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#include <mscclpp/memory_channel.hpp>
 #include <mscclpp/port_channel.hpp>
+#include <mscclpp/switch_channel.hpp>
 #include <type_traits>
 #include <utility>
 
@@ -14,8 +16,14 @@ using Backend = mscclpp::PortChannelBackend;
 using Host = mscclpp::PortChannel<Backend::Host>;
 using Device = mscclpp::PortChannel<Backend::Device>;
 using PortSemaphore = mscclpp::PortDevice2DeviceSemaphore;
-static_assert(std::is_same_v<mscclpp::DeviceHandle<Host>, mscclpp::PortChannelDeviceHandle>);
-static_assert(std::is_same_v<mscclpp::DeviceHandle<Device>, mscclpp::PortChannelDeviceHandleT<Backend::Device>>);
+static_assert(std::is_same_v<mscclpp::BasePortChannel<>::DeviceHandle, mscclpp::BasePortChannelView<>>);
+static_assert(std::is_same_v<mscclpp::BasePortChannel<Backend::Device>::DeviceHandle,
+                             mscclpp::BasePortChannelView<Backend::Device>>);
+static_assert(std::is_same_v<mscclpp::BaseMemoryChannel::DeviceHandle, mscclpp::BaseMemoryChannelView>);
+static_assert(std::is_same_v<mscclpp::MemoryChannel::DeviceHandle, mscclpp::MemoryChannelView>);
+static_assert(std::is_same_v<mscclpp::SwitchChannel::DeviceHandle, mscclpp::SwitchChannelView>);
+static_assert(std::is_same_v<mscclpp::DeviceHandle<Host>, mscclpp::PortChannelView<>>);
+static_assert(std::is_same_v<mscclpp::DeviceHandle<Device>, mscclpp::PortChannelView<Backend::Device>>);
 static_assert(std::is_same_v<decltype(mscclpp::deviceHandle(std::declval<Device&>())), Device::DeviceHandle>);
 static_assert(std::is_same_v<decltype(mscclpp::PortChannel(std::declval<std::shared_ptr<PortSemaphore>>(),
                                                            std::declval<mscclpp::RegisteredMemory>(),
@@ -27,6 +35,31 @@ static_assert(
     !std::is_constructible_v<Device, const mscclpp::Semaphore&, mscclpp::RegisteredMemory, mscclpp::RegisteredMemory>);
 static_assert(!std::is_assignable_v<Host&, Device>);
 static_assert(!std::is_copy_constructible_v<PortSemaphore> && std::is_move_constructible_v<PortSemaphore>);
+
+template <class Old, class View>
+constexpr bool sameView = std::is_same_v<Old, View> && sizeof(Old) == sizeof(View) && alignof(Old) == alignof(View) &&
+                          std::is_trivially_copyable_v<View>;
+
+// Compatibility-only references: production and normal test code use canonical View names.
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+static_assert(
+    sameView<mscclpp::BasePortChannelDeviceHandleT<Backend::Host>, mscclpp::BasePortChannelView<Backend::Host>>);
+static_assert(
+    sameView<mscclpp::BasePortChannelDeviceHandleT<Backend::Device>, mscclpp::BasePortChannelView<Backend::Device>>);
+static_assert(sameView<mscclpp::PortChannelDeviceHandleT<Backend::Host>, mscclpp::PortChannelView<Backend::Host>>);
+static_assert(sameView<mscclpp::PortChannelDeviceHandleT<Backend::Device>, mscclpp::PortChannelView<Backend::Device>>);
+static_assert(sameView<mscclpp::BasePortChannelDeviceHandle, mscclpp::BasePortChannelView<>>);
+static_assert(sameView<mscclpp::PortChannelDeviceHandle, mscclpp::PortChannelView<>>);
+static_assert(sameView<mscclpp::BaseMemoryChannelDeviceHandle, mscclpp::BaseMemoryChannelView>);
+static_assert(sameView<mscclpp::MemoryChannelDeviceHandle, mscclpp::MemoryChannelView>);
+static_assert(sameView<mscclpp::SwitchChannelDeviceHandle, mscclpp::SwitchChannelView>);
+static_assert(sameView<mscclpp::SmChannelDeviceHandle, mscclpp::MemoryChannelView>);
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 template <class Func>
 bool rejectsInvalidUsage(Func&& func) {

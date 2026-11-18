@@ -99,7 +99,7 @@ MSCCLPP_HOST_DEVICE_INLINE int64_t rowOffset(int src, int token) {
 // Launched as its own kernel rather than folded into the pattern kernels: the ranks have to agree on
 // a point that every block has passed, and kernel completion already provides exactly that. Doing it
 // inside a kernel would need a cooperative grid launch.
-__global__ void kernelPeerBarrier(mscclpp::BaseMemoryChannelDeviceHandle* chans, int nPeers) {
+__global__ void kernelPeerBarrier(mscclpp::BaseMemoryChannelView* chans, int nPeers) {
   if ((int)threadIdx.x < nPeers) {
     chans[threadIdx.x].signal();
     chans[threadIdx.x].wait();

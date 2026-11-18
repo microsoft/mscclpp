@@ -23,8 +23,8 @@ namespace mscclpp {
 template <class>
 constexpr bool dependentFalse = false;  // workaround before CWG2518/P2593R1
 
-/// Device-side handle for SwitchChannel.
-struct SwitchChannelDeviceHandle {
+/// Non-owning GPU view of a SwitchChannel.
+struct SwitchChannelView {
   void* devicePtr;
   void* mcPtr;
   size_t bufferSize;
@@ -55,12 +55,12 @@ struct SwitchChannelDeviceHandle {
 
   template <typename T>
   MSCCLPP_DEVICE_INLINE T reduce(uint64_t index) {
-    return SwitchChannelDeviceHandle::multimemLoadReduce(reinterpret_cast<T*>(mcPtr) + index);
+    return SwitchChannelView::multimemLoadReduce(reinterpret_cast<T*>(mcPtr) + index);
   }
 
   template <typename T>
   MSCCLPP_DEVICE_INLINE void broadcast(uint64_t index, const T& val) {
-    SwitchChannelDeviceHandle::multimemStore(val, reinterpret_cast<T*>(mcPtr) + index);
+    SwitchChannelView::multimemStore(val, reinterpret_cast<T*>(mcPtr) + index);
   }
 
   /// Vectorized multimem load+reduce. The optional `AccumT` template parameter selects the
@@ -278,6 +278,9 @@ struct SwitchChannelDeviceHandle {
   };
 #endif  // defined(MSCCLPP_DEVICE_CUDA)
 };
+
+/// @deprecated Use SwitchChannelView instead.
+using SwitchChannelDeviceHandle [[deprecated("Use SwitchChannelView instead.")]] = SwitchChannelView;
 
 }  // namespace mscclpp
 

@@ -17,15 +17,18 @@ TEST(CompileTest, Assert) { assert(true); }
 
 namespace port_channel_compile_test {
 using Backend = mscclpp::PortChannelBackend;
-using HostHandle = mscclpp::PortChannelDeviceHandle;
-using DeviceHandle = mscclpp::PortChannelDeviceHandleT<Backend::Device>;
-using DeviceBase = mscclpp::BasePortChannelDeviceHandleT<Backend::Device>;
+using HostHandle = mscclpp::PortChannelView<>;
+using DeviceHandle = mscclpp::PortChannelView<Backend::Device>;
+using DeviceBase = mscclpp::BasePortChannelView<Backend::Device>;
 using C = HostHandle::Concurrency;
 constexpr HostHandle defaultHost;
 constexpr DeviceHandle defaultDevice;
+constexpr mscclpp::BasePortChannelView<> defaultHostBase;
+constexpr DeviceBase defaultDeviceBase;
 static_assert(defaultHost.src_ == 0 && defaultDevice.srcMemory_.addr == 0);
-static_assert(!std::is_assignable_v<mscclpp::BasePortChannelDeviceHandle&, DeviceBase>);
-static_assert(!std::is_assignable_v<DeviceBase&, mscclpp::BasePortChannelDeviceHandle>);
+static_assert(defaultHostBase.semaphoreId_ == 0 && defaultDeviceBase.device_.qp == nullptr);
+static_assert(!std::is_assignable_v<mscclpp::BasePortChannelView<>&, DeviceBase>);
+static_assert(!std::is_assignable_v<DeviceBase&, mscclpp::BasePortChannelView<>>);
 
 template <class Handle>
 concept HasCombinedPut = requires(Handle channel) { channel.putWithAccumulate(0, 0, 8, 0, 1); };
@@ -34,10 +37,12 @@ concept HasMemoryIdPut = requires(Handle channel) {
   channel.put(mscclpp::MemoryId{}, uint64_t{}, mscclpp::MemoryId{}, uint64_t{}, uint64_t{});
 };
 static_assert(!HasCombinedPut<HostHandle> && HasCombinedPut<DeviceHandle>);
-static_assert(HasMemoryIdPut<mscclpp::BasePortChannelDeviceHandle> && !HasMemoryIdPut<DeviceBase>);
+static_assert(HasMemoryIdPut<mscclpp::BasePortChannelView<>> && !HasMemoryIdPut<DeviceBase>);
 
 __constant__ HostHandle constantHost;
 __constant__ DeviceHandle constantDevice;
+__constant__ mscclpp::BasePortChannelView<> constantHostBase;
+__constant__ DeviceBase constantDeviceBase;
 
 // Compiled but not launched by the test runner; these operations require live channels.
 template <class Handle>

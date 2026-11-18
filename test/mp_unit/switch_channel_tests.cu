@@ -23,9 +23,9 @@ void SwitchChannelTest::SetUp() {
 
 void SwitchChannelTest::TearDown() { CommunicatorTestBase::TearDown(); }
 
-__constant__ mscclpp::SwitchChannelDeviceHandle gConstSwitchChan;
-__constant__ mscclpp::SwitchChannelDeviceHandle gConstSwitchChan1;
-__constant__ mscclpp::SwitchChannelDeviceHandle gConstSwitchChan2;
+__constant__ mscclpp::SwitchChannelView gConstSwitchChan;
+__constant__ mscclpp::SwitchChannelView gConstSwitchChan1;
+__constant__ mscclpp::SwitchChannelView gConstSwitchChan2;
 
 __global__ void kernelSwitchReduce() {
 #if (CUDA_NVLS_API_AVAILABLE) && (__CUDA_ARCH__ >= 900)

@@ -79,7 +79,7 @@ MSCCLPP_DEVICE_INLINE bool isActiveThroughputRow(int row, const int* recvCounts,
 }
 
 // All block threads participate; one thread publishes to and waits for each peer.
-MSCCLPP_DEVICE_INLINE void blockPeerBarrier(BaseMemoryChannelDeviceHandle* channels, int rank, int numRanks) {
+MSCCLPP_DEVICE_INLINE void blockPeerBarrier(BaseMemoryChannelView* channels, int rank, int numRanks) {
   constexpr int64_t MaxSpinCount = 100'000'000;
   const int peer = static_cast<int>(threadIdx.x);
   EP_DEVICE_ASSERT(numRanks > 0 && numRanks <= static_cast<int>(blockDim.x));

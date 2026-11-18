@@ -230,33 +230,47 @@ These device-side handle structures provide GPU kernel interfaces for MSCCL++ co
 Channel Device Interfaces
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. doxygenstruct:: mscclpp::BaseMemoryChannelDeviceHandle
+Channel GPU types use ``View`` names to distinguish non-owning GPU state from CPU owners.
+The nested ``DeviceHandle`` alias, ``deviceHandle()`` method, generic extraction helper,
+header filenames and Python API names are unchanged. Port views default to the Host backend.
+
+The following old C++ names remain deprecated aliases, not separate implementations:
+
+* ``BasePortChannelDeviceHandleT<B>`` / ``PortChannelDeviceHandleT<B>``:
+  use ``BasePortChannelView<B>`` / ``PortChannelView<B>``.
+* ``BasePortChannelDeviceHandle`` / ``PortChannelDeviceHandle``:
+  use ``BasePortChannelView<>`` / ``PortChannelView<>``.
+* ``BaseMemoryChannelDeviceHandle`` / ``MemoryChannelDeviceHandle``:
+  use ``BaseMemoryChannelView`` / ``MemoryChannelView``.
+* ``SwitchChannelDeviceHandle``: use ``SwitchChannelView``.
+* ``SmChannelDeviceHandle``: use ``MemoryChannelView`` directly.
+
+This is best-effort source compatibility, not a binary-compatibility guarantee. Rebuild consumers;
+external class forward declarations or specializations must migrate to the canonical names.
+
+.. doxygenstruct:: mscclpp::BaseMemoryChannelView
    :members:
 
-.. doxygentypedef:: mscclpp::BasePortChannelDeviceHandle
-
-.. doxygenstruct:: mscclpp::BasePortChannelDeviceHandleT< PortChannelBackend::Host >
+.. doxygenstruct:: mscclpp::BasePortChannelView< PortChannelBackend::Host >
    :members:
 
-.. doxygenstruct:: mscclpp::BasePortChannelDeviceHandleT< PortChannelBackend::Device >
+.. doxygenstruct:: mscclpp::BasePortChannelView< PortChannelBackend::Device >
    :members:
 
 .. doxygenunion:: mscclpp::LL16Packet
 
 .. doxygenunion:: mscclpp::LL8Packet
 
-.. doxygenstruct:: mscclpp::MemoryChannelDeviceHandle
+.. doxygenstruct:: mscclpp::MemoryChannelView
    :members:
 
-.. doxygentypedef:: mscclpp::PortChannelDeviceHandle
-
-.. doxygenstruct:: mscclpp::PortChannelDeviceHandleT< PortChannelBackend::Host >
+.. doxygenstruct:: mscclpp::PortChannelView< PortChannelBackend::Host >
    :members:
 
-.. doxygenstruct:: mscclpp::PortChannelDeviceHandleT< PortChannelBackend::Device >
+.. doxygenstruct:: mscclpp::PortChannelView< PortChannelBackend::Device >
    :members:
 
-.. doxygenstruct:: mscclpp::SwitchChannelDeviceHandle
+.. doxygenstruct:: mscclpp::SwitchChannelView
    :members:
 
 .. doxygentypedef:: mscclpp::LLPacket
