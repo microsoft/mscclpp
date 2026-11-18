@@ -293,12 +293,13 @@ def test_config_resolution_at_construction(ep_group, mode):
     assert runtime.num_blocks == config.num_blocks
 
 
-def token_routes(rank, world_size, token, num_tokens, num_topk=NUM_TOPK):
+def token_routes(rank, world_size, token, num_tokens, num_topk=NUM_TOPK, expert_stride=NUM_LOCAL_EXPERTS):
     if token == num_tokens - 1:
         return [-1] * num_topk
     num_experts = NUM_LOCAL_EXPERTS * world_size
     base = (rank * NUM_LOCAL_EXPERTS + token * 7) % num_experts
-    routes = [(base + topk * 5) % num_experts for topk in range(num_topk)]
+    # Advance the local expert after wrapping ranks to keep top-k experts distinct.
+    routes = [(base + topk * expert_stride + topk // world_size) % num_experts for topk in range(num_topk)]
     if token == 1:
         routes[1] = -1
     return routes
@@ -373,6 +374,7 @@ def _run_dispatch_combine_case(
     input_mode=QuantConfig.InputMode.PREQUANTIZED,
     combine_format=DispatchDataType.BF16,
     num_topk=NUM_TOPK,
+    expert_stride=NUM_LOCAL_EXPERTS,
 ):
     num_tokens, capacity, active_capacity = 5, 8, 6
     num_experts = NUM_LOCAL_EXPERTS * ep_group.nranks
@@ -394,7 +396,7 @@ def _run_dispatch_combine_case(
         with torch.cuda.stream(stream):
             routes = torch.tensor(
                 [
-                    token_routes(ep_group.my_rank, ep_group.nranks, token, num_tokens, num_topk)
+                    token_routes(ep_group.my_rank, ep_group.nranks, token, num_tokens, num_topk, expert_stride)
                     for token in range(num_tokens)
                 ],
                 dtype=torch.int64,
@@ -579,7 +581,9 @@ def _run_dispatch_combine_case(
                 for source in range(ep_group.nranks):
                     expected_values = []
                     for token in range(num_tokens):
-                        source_routes = token_routes(source, ep_group.nranks, token, num_tokens, num_topk)
+                        source_routes = token_routes(
+                            source, ep_group.nranks, token, num_tokens, num_topk, expert_stride
+                        )
                         if any(
                             expert >= 0 and expert // NUM_LOCAL_EXPERTS == ep_group.my_rank for expert in source_routes
                         ):
@@ -600,7 +604,7 @@ def _run_dispatch_combine_case(
             for source in range(ep_group.nranks):
                 rank_row = 0
                 for token in range(num_tokens):
-                    all_routes = token_routes(source, ep_group.nranks, token, num_tokens, num_topk)
+                    all_routes = token_routes(source, ep_group.nranks, token, num_tokens, num_topk, expert_stride)
                     local_routes = [
                         expert
                         for expert in all_routes
@@ -672,6 +676,27 @@ def test_dispatch_combine_correctness(ep_group, apply_router_weights, hidden_siz
                 num_topk=num_topk,
             )
             ep_group.barrier()
+
+
+@pytest.mark.nranks(16)
+@pytest.mark.parametrize("num_topk", [9, 16])
+@pytest.mark.parametrize("layout", [DispatchLayout.TOKEN_MAJOR, DispatchLayout.RANK_MAJOR])
+@pytest.mark.parametrize("data_type", [DispatchDataType.BF16, DispatchDataType.FP8_E4M3])
+@pytest.mark.parametrize("prepared", [False, True])
+def test_throughput_combine_two_rounds(ep_group, num_topk, layout, data_type, prepared):
+    routes = token_routes(ep_group.my_rank, ep_group.nranks, 0, 5, num_topk)
+    assert len({expert // NUM_LOCAL_EXPERTS for expert in routes if expert >= 0}) == num_topk > 8
+    _run_dispatch_combine_case(
+        ep_group,
+        MoEMode.THROUGHPUT,
+        layout,
+        data_type,
+        CombineMode.RANK_LOCAL_REDUCE,
+        prepared,
+        apply_router_weights=None,
+        hidden_size=1024,
+        num_topk=num_topk,
+    )
 
 
 def test_fused_static_fp8_matches_prequantized_payload(ep_group):
