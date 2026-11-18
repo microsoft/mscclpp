@@ -4,45 +4,76 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
+#include <exception>
 #include <mscclpp/errors.hpp>
 #include <thread>
 
 #include "connection.hpp"
 #include "mp_unit_tests.hpp"
-#include "mrc.hpp"
 
-class MrcPeerToPeerTest : public MultiProcessTest {
+namespace {
+
+template <typename T>
+T exchangeWithPeer(const T& local) {
+  std::array<T, 2> peers;
+  MPI_Allgather(&local, sizeof(T), MPI_BYTE, peers.data(), sizeof(T), MPI_BYTE, MPI_COMM_WORLD);
+  return peers[1 - gEnv->rank];
+}
+
+}  // namespace
+
+void MrcTestBase::SetUp() {
+  if (gEnv->worldSize != 2) SKIP_TEST() << "Requires two ranks.";
+  mrcDevice = std::getenv("MSCCLPP_TEST_MRC_DEVICE");
+  int configured = mrcDevice != nullptr && mrcDevice[0] != '\0';
+  int peerConfigured = exchangeWithPeer(configured);
+  if (!configured && !peerConfigured) SKIP_TEST() << "Requires MSCCLPP_TEST_MRC_DEVICE naming an MRC-capable NIC.";
+  if (!configured || !peerConfigured) FAIL() << "MSCCLPP_TEST_MRC_DEVICE must be configured on both ranks.";
+}
+
+void MrcTestBase::runOnBothRanks(const char* phase, const std::function<void()>& run) {
+  // Agree before either rank throws; otherwise the other rank could enter the next collective alone.
+  std::exception_ptr error;
+  try {
+    run();
+  } catch (...) {
+    error = std::current_exception();
+  }
+  int peerFailed = exchangeWithPeer(static_cast<int>(error != nullptr));
+  if (error) std::rethrow_exception(error);
+  if (peerFailed) FAIL() << phase << " failed on the peer.";
+}
+
+mscclpp::MrcMrInfo MrcTestBase::connectPeer(mscclpp::MrcQp& qp, const mscclpp::MrcMr& destination) {
+  auto peer = exchangeWithPeer(qp.getInfo());
+  runOnBothRanks("native QP connection", [&] {
+    qp.rtr(peer);
+    qp.rts();
+  });
+  return exchangeWithPeer(destination.getInfo());
+}
+
+class MrcPeerToPeerTest : public MrcTestBase {
  protected:
   void SetUp() override {
-    const char* device = std::getenv("MSCCLPP_TEST_MRC_DEVICE");
-    if (device == nullptr || gEnv->worldSize != 2) {
-      SKIP_TEST() << "Requires two ranks and MSCCLPP_TEST_MRC_DEVICE naming an MRC-capable NIC.";
-    }
-    context = std::make_unique<mscclpp::MrcCtx>(device);
-    buffer.resize(4096);
-    mr = context->registerMr(buffer.data(), buffer.size());
-    qp = context->createQp(1, std::stoi(gEnv->args["ib_gid_index"]), 0, 8, 8, 8);
-    auto info = qp->getInfo();
-    std::array<mscclpp::MrcQpInfo, 2> peers;
-    MPI_Allgather(&info, sizeof(info), MPI_BYTE, peers.data(), sizeof(info), MPI_BYTE, MPI_COMM_WORLD);
-    qp->rtr(peers[1 - gEnv->rank]);
-    qp->rts();
-    auto localMr = mr->getInfo();
-    std::array<mscclpp::MrcMrInfo, 2> memories;
-    MPI_Allgather(&localMr, sizeof(localMr), MPI_BYTE, memories.data(), sizeof(localMr), MPI_BYTE, MPI_COMM_WORLD);
-    remoteMr = memories[1 - gEnv->rank];
+    MrcTestBase::SetUp();
+    runOnBothRanks("native resource creation", [&] {
+      context = std::make_unique<mscclpp::MrcCtx>(mrcDevice);
+      buffer.resize(4096);
+      mr = context->registerMr(buffer.data(), buffer.size());
+      qp = context->createQp(1, std::stoi(gEnv->args["ib_gid_index"]), 0, queueDepth, queueDepth, queueDepth);
+    });
+    remoteMr = connectPeer(*qp, *mr);
   }
 
   template <typename F>
-  void expectInvalid(F function) {
-    bool caught = false;
+  bool rejectsInvalidUsage(F function) {
     try {
       function();
     } catch (const mscclpp::Error& error) {
-      EXPECT_TRUE(error.getErrorCode() == mscclpp::ErrorCode::InvalidUsage);
-      caught = true;
+      return error.getErrorCode() == mscclpp::ErrorCode::InvalidUsage;
     }
-    EXPECT_TRUE(caught);
+    return false;
   }
 
   void drain(int expectedReceives, int expectedSends, const std::vector<unsigned int>& immediates) {
@@ -82,9 +113,9 @@ class MrcPeerToPeerTest : public MultiProcessTest {
 
 void MrcPeerToPeerTest::testImmediateNotifications(bool precedingWrite) {
   const unsigned int tokens[] = {0, 0x01020304, 0xffffffff, 0x80000000};
-  expectInvalid([&] { qp->stageSendWriteWithImm(nullptr, remoteMr, 1, 0, 0, 0, true, 0); });
-  expectInvalid([&] { qp->getRecvWcStatus(0); });
-  expectInvalid([&] { qp->getRecvWcImmData(0); });
+  EXPECT_TRUE(rejectsInvalidUsage([&] { qp->stageSendWriteWithImm(nullptr, remoteMr, 1, 0, 0, 0, true, 0); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { qp->getRecvWcStatus(0); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { qp->getRecvWcImmData(0); }));
   qp->postRecv();
   for (int round = 0; round < 8; ++round) {
     std::fill(buffer.begin(), buffer.end(), 0x5a);
@@ -123,9 +154,9 @@ TEST(MrcPeerToPeerTest, WriteThenZeroByteNotification) { testImmediateNotificati
 TEST(MrcPeerToPeerTest, ReceiveCapacityAndReplenishment) {
   for (int round = 0; round < 3; ++round) {
     for (int i = 0; i < 8; ++i) qp->stageRecv(round * 8 + i);
-    expectInvalid([&] { qp->stageRecv(100); });
+    EXPECT_TRUE(rejectsInvalidUsage([&] { qp->stageRecv(100); }));
     qp->postRecv();
-    expectInvalid([&] { qp->stageRecv(100); });
+    EXPECT_TRUE(rejectsInvalidUsage([&] { qp->stageRecv(100); }));
     MPI_Barrier(MPI_COMM_WORLD);
     std::vector<unsigned int> immediates;
     for (int i = 0; i < 8; ++i) {
@@ -137,6 +168,67 @@ TEST(MrcPeerToPeerTest, ReceiveCapacityAndReplenishment) {
     qp->postSend();
     drain(8, 8, immediates);
     MPI_Barrier(MPI_COMM_WORLD);
+  }
+}
+
+TEST(MrcPeerToPeerTest, ReceiveCreditsWithDelayedReceiver) {
+  constexpr int rounds = 64;
+  runOnBothRanks("initial receive credit acknowledgement", [&] {
+    for (int i = 0; i < queueDepth; ++i) qp->stageRecv(i);
+    qp->postRecv();
+  });
+  for (int round = 0; round < rounds; ++round) {
+    const unsigned int first = round * queueDepth;
+    runOnBothRanks("send completion without receive replenishment", [&] {
+      for (int i = 0; i < queueDepth; ++i) {
+        qp->stageSendWriteWithImm(nullptr, remoteMr, 0, first + i, 0, 0, true, first + i);
+      }
+      qp->postSend();
+      ASSERT_TRUE(rejectsInvalidUsage([&] { qp->stageSendWriteWithImm(nullptr, remoteMr, 0, 0, 0, 0, true, 0); }));
+      int completed = 0;
+      auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
+      while (completed < queueDepth) {
+        int count = qp->pollSendCq();
+        ASSERT_GE(count, 0);
+        for (int i = 0; i < count; ++i) {
+          ASSERT_EQ(qp->getSendWcStatus(i), 0);
+        }
+        completed += count;
+        ASSERT_TRUE(std::chrono::steady_clock::now() < deadline);
+        std::this_thread::yield();
+      }
+      ASSERT_EQ(completed, queueDepth);
+      ASSERT_EQ(qp->getNumSendCqItems(), 0);
+      ASSERT_TRUE(rejectsInvalidUsage([&] { qp->stageRecv(0); }));
+    });
+
+    // Both send CQs are empty, but neither peer has polled or reposted a receive.
+    // Only the following explicit test-side repost acknowledgement grants the next batch.
+    runOnBothRanks("receive replenishment acknowledgement", [&] {
+      if (gEnv->rank == 1) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+      std::array<bool, queueDepth> seen{};
+      int received = 0;
+      auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
+      while (received < queueDepth) {
+        int count = qp->pollRecvCq();
+        ASSERT_GE(count, 0);
+        for (int i = 0; i < count; ++i) {
+          ASSERT_EQ(qp->getRecvWcStatus(i), 0);
+          unsigned int value = qp->getRecvWcImmData(i);
+          ASSERT_GE(value, first);
+          ASSERT_LT(value, first + queueDepth);
+          unsigned int index = value - first;
+          ASSERT_FALSE(seen[index]);
+          seen[index] = true;
+          ++received;
+          if (round + 1 < rounds) qp->stageRecv(value + queueDepth);
+        }
+        ASSERT_TRUE(std::chrono::steady_clock::now() < deadline);
+        std::this_thread::yield();
+      }
+      ASSERT_EQ(received, queueDepth);
+      if (round + 1 < rounds) qp->postRecv();
+    });
   }
 }
 
