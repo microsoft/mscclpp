@@ -8,6 +8,24 @@ namespace mscclpp::ep {
 
 #if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS) && MSCCLPP_BULK_AVAILABLE
 
+template <int StageSlots>
+struct HybridCombineGroup {
+  uint8_t* sharedTokens;
+  HybridCombineGroupControl<StageSlots>& control;
+  uint32_t& phase;
+  int warpIdx;
+  int threadIdx;
+  int barrierId;
+
+  MSCCLPP_DEVICE_INLINE void sync() const { syncNamedBarrier(barrierId, HybridCombineGroupThreads); }
+};
+
+struct IntraDomainRoute {
+  int peerRank = -1;
+  int slotIdx = -1;
+  float weight = 1.0f;
+};
+
 MSCCLPP_DEVICE_INLINE bool useBf16InterDomainCombine(const HybridDeviceContext& hybridCtx) {
   return hybridCtx.combineInterDomainDtype_ == mscclpp::DataType::BFLOAT16;
 }
@@ -36,19 +54,66 @@ MSCCLPP_DEVICE_INLINE void combineStoreFinalVector(void* output, mscclpp::f32x8 
       mscclpp::to<mscclpp::bf16x8>(sum);
 }
 
-template <int Hidden>
+template <int Hidden, int MaxVectorsPerThread>
+MSCCLPP_DEVICE_INLINE void combineStoreFinalToken(void* output, const mscclpp::f32x8 (&tokenSum)[MaxVectorsPerThread],
+                                                  int tokenIdx, int remoteTokenIdx, const DeviceContext* context,
+                                                  int groupThreadIdx) {
+  constexpr int NHiddenVectors = Hidden / mscclpp::f32x8::Size;
+#pragma unroll
+  for (int stepIdx = 0; stepIdx < MaxVectorsPerThread; ++stepIdx) {
+    const int vectorIdx = groupThreadIdx + stepIdx * HybridCombineGroupThreads;
+    if (vectorIdx < NHiddenVectors) {
+      combineStoreFinalVector<Hidden>(output, tokenSum[stepIdx], tokenIdx, remoteTokenIdx, vectorIdx, context);
+    }
+  }
+}
+
+template <int Hidden, int StageSlots>
 MSCCLPP_DEVICE_INLINE void combineFinalize(void* output, int tokenIdx, const DeviceContext* context,
-                                           const Gateway& gateway, int groupThreadIdx, int groupBarrierId) {
+                                           const Gateway& gateway, const HybridCombineGroup<StageSlots>& group) {
   constexpr int NHiddenVectors = Hidden / mscclpp::f32x8::Size;
   const auto& hybridCtx = context->hybridCtx_;
   const int remoteTokenIdx = hybridCtx.combineRemoteTokenIndices_[tokenIdx];
-  if (groupThreadIdx == 0 && remoteTokenIdx >= 0) gateway.wait(remoteTokenIdx);
-  syncNamedBarrier(groupBarrierId, HybridCombineGroupThreads);
+  if (group.threadIdx == 0 && remoteTokenIdx >= 0) gateway.wait(remoteTokenIdx);
+  group.sync();
   const auto* local =
       reinterpret_cast<const mscclpp::f32x8*>(hybridCtx.combineLocalBuffer_ + static_cast<size_t>(tokenIdx) * Hidden);
-  for (int vectorIdx = groupThreadIdx; vectorIdx < NHiddenVectors; vectorIdx += HybridCombineGroupThreads) {
+  for (int vectorIdx = group.threadIdx; vectorIdx < NHiddenVectors; vectorIdx += HybridCombineGroupThreads) {
     combineStoreFinalVector<Hidden>(output, local[vectorIdx], tokenIdx, remoteTokenIdx, vectorIdx, context);
   }
+}
+
+template <CombineMode Mode>
+MSCCLPP_DEVICE_INLINE IntraDomainRoute resolveGatewayRoute(int tokenIdx, int laneIdx, const Workload& workload,
+                                                           const DeviceContext* context) {
+  constexpr bool IsDirectSend = Mode == CombineMode::DIRECT_SEND;
+  const int nTopk = workload.numTopk_;
+  if (laneIdx >= nTopk) return {};
+  const auto* cached = context->hybridCtx_.combineRoutes_ + static_cast<size_t>(tokenIdx) * 3 * nTopk;
+  const int expertIdx = cached[laneIdx];
+  const int nLocalExperts = workload.numExperts_ / context->numRanks_;
+  const int peerRank = expertIdx >= 0 && expertIdx < workload.numExperts_ ? expertIdx / nLocalExperts : -1;
+  const float weight = (IsDirectSend && workload.applyRouterWeights_)
+                           ? reinterpret_cast<const float*>(cached + 2 * nTopk)[laneIdx]
+                           : 1.0f;
+  return {peerRank, cached[nTopk + laneIdx], weight};
+}
+
+template <CombineMode Mode>
+MSCCLPP_DEVICE_INLINE IntraDomainRoute resolveLocalRoute(int tokenIdx, int laneIdx, const int64_t* topkIndices,
+                                                         const float* topkWeights, const Workload& workload,
+                                                         const DeviceContext* context, const WorkspaceView& workspace) {
+  constexpr bool IsDirectSend = Mode == CombineMode::DIRECT_SEND;
+  const int nTopk = workload.numTopk_;
+  if (laneIdx >= nTopk) return {};
+  const size_t routeOffset = static_cast<size_t>(tokenIdx) * nTopk + laneIdx;
+  const int64_t expertIdx = topkIndices[routeOffset];
+  const int nLocalExperts = workload.numExperts_ / context->numRanks_;
+  const int peerRank =
+      expertIdx >= 0 && expertIdx < workload.numExperts_ ? static_cast<int>(expertIdx) / nLocalExperts : -1;
+  const float weight =
+      (IsDirectSend && workload.applyRouterWeights_ && topkWeights != nullptr) ? topkWeights[routeOffset] : 1.0f;
+  return {peerRank, workspace.rankMajorSendIndices_[routeOffset], weight};
 }
 
 template <CombineMode Mode, int Hidden, DispatchDataType DispatchType, int StageSlots>
@@ -85,68 +150,35 @@ MSCCLPP_DEVICE_INLINE void accumulateHybridVector(mscclpp::f32x8& sum, int vecto
   }
 }
 
-template <CombineMode Mode, int Hidden, DispatchDataType DispatchType, int MaxNTopk, bool IsGateway,
-          bool FuseFinal = false, typename LoadReadyFn = void (*)()>
-MSCCLPP_DEVICE_INLINE void combineReduceToken(void* destination, const void* expertOutput, const int64_t* topkIndices,
-                                              const float* topkWeights, int tokenIdx, const Workload& workload,
-                                              const DeviceContext* context, const TransportView& transport,
-                                              const Gateway& gateway, const WorkspaceView& workspace, uint32_t flag,
-                                              uint8_t* groupShared, uint32_t& phase, float dequantScale,
-                                              int groupWarpIdx, int groupThreadIdx, int groupBarrierId,
-                                              LoadReadyFn&& loadReady, int localWorkerIdx = 0, int nLocalWorkers = 1,
-                                              int waveIdx = 0) {
-  static_assert(!(IsGateway && FuseFinal));
+// Gather intra-domain expert outputs over TMA in StageSlots-sized rounds and accumulate FP32 into tokenSum.
+template <CombineMode Mode, int Hidden, DispatchDataType DispatchType, int MaxNTopk, int StageSlots,
+          typename OnLastLoadFn>
+MSCCLPP_DEVICE_INLINE void reduceIntraDomainToken(
+    mscclpp::f32x8 (&tokenSum)[configCellDiv(Hidden / mscclpp::f32x8::Size, HybridCombineGroupThreads)], int ownerRank,
+    const IntraDomainRoute& laneRoute, const void* expertOutput, const Workload& workload,
+    const TransportView& transport, const WorkspaceView& workspace, uint32_t flag, float dequantScale,
+    const HybridCombineGroup<StageSlots>& group, OnLastLoadFn&& onLastLoad) {
   constexpr bool IsDirectSend = Mode == CombineMode::DIRECT_SEND;
   using ElementType = DispatchElementType<DispatchType>;
   constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(ElementType);
   constexpr int NHiddenVectors = Hidden / mscclpp::f32x8::Size;
   constexpr int MaxVectorsPerThread = configCellDiv(NHiddenVectors, HybridCombineGroupThreads);
   constexpr int NPairsPerVector = mscclpp::f32x8::Size / mscclpp::f32x2::Size;
-  constexpr int StageSlots = hybridCombineGroupStageSlots<Hidden, DispatchType, MaxNTopk>();
   constexpr bool SingleRound = StageSlots >= MaxNTopk;
-  constexpr size_t TokensBytes = static_cast<size_t>(StageSlots) * HiddenBytes;
-  const auto& hybridCtx = context->hybridCtx_;
   const int laneIdx = getLaneId();
-  const int nTopk = workload.numTopk_;
-  const int nLocalExperts = workload.numExperts_ / context->numRanks_;
-  const int ownerRank = IsGateway ? gateway.peerRank() : context->rank_;
-  auto& groupControl = *reinterpret_cast<HybridCombineGroupControl<StageSlots>*>(groupShared + TokensBytes);
 
-  int lanePeerIdx = -1;
-  int laneSlotIdx = -1;
-  float laneWeight = 1.0f;
   bool active = false;
-  uint32_t validRouteMask = 0;
   int nActiveRoutes = 0;
   int compactIdx = 0;
-  if (groupWarpIdx == 0) {
-    int64_t expertIdx = -1;
-    if (laneIdx < nTopk) {
-      if constexpr (IsGateway) {
-        const auto* cached = hybridCtx.combineRoutes_ + static_cast<size_t>(tokenIdx) * 3 * nTopk;
-        expertIdx = cached[laneIdx];
-        laneSlotIdx = cached[nTopk + laneIdx];
-        if (IsDirectSend && workload.applyRouterWeights_) {
-          laneWeight = reinterpret_cast<const float*>(cached + 2 * nTopk)[laneIdx];
-        }
-      } else {
-        expertIdx = topkIndices[tokenIdx * nTopk + laneIdx];
-        laneSlotIdx = workspace.rankMajorSendIndices_[tokenIdx * nTopk + laneIdx];
-        if (IsDirectSend && workload.applyRouterWeights_ && topkWeights != nullptr) {
-          laneWeight = topkWeights[tokenIdx * nTopk + laneIdx];
-        }
-      }
-    }
-    lanePeerIdx = expertIdx >= 0 && expertIdx < workload.numExperts_ ? static_cast<int>(expertIdx) / nLocalExperts : -1;
-    const bool isLeader = isFirstLaneForRank(lanePeerIdx, laneIdx);
-    active = laneIdx < MaxNTopk && lanePeerIdx >= 0 && (IsDirectSend || isLeader) &&
-             transport.isIntraDomainPeer(lanePeerIdx);
-    validRouteMask = __ballot_sync(0xffffffff, active);
+  if (group.warpIdx == 0) {
+    const bool isLeader = isFirstLaneForRank(laneRoute.peerRank, laneIdx);
+    active = laneIdx < MaxNTopk && laneRoute.peerRank >= 0 && (IsDirectSend || isLeader) &&
+             transport.isIntraDomainPeer(laneRoute.peerRank);
+    const uint32_t validRouteMask = __ballot_sync(0xffffffff, active);
     nActiveRoutes = __popc(validRouteMask);
     compactIdx = laneIdx < MaxNTopk ? __popc(validRouteMask & ((1u << laneIdx) - 1u)) : 0;
   }
 
-  mscclpp::f32x8 tokenSum[MaxVectorsPerThread];
 #pragma unroll
   for (int stepIdx = 0; stepIdx < MaxVectorsPerThread; ++stepIdx) {
     auto* sumPairs = reinterpret_cast<mscclpp::f32x2*>(&tokenSum[stepIdx]);
@@ -159,7 +191,7 @@ MSCCLPP_DEVICE_INLINE void combineReduceToken(void* destination, const void* exp
   int roundIdx = 0;
   int nTotalRounds = 1;
   do {
-    if (groupWarpIdx == 0) {
+    if (group.warpIdx == 0) {
       const int nRounds = SingleRound ? 1 : max(1, configCellDiv(nActiveRoutes, StageSlots));
       const int routeBegin = roundIdx * StageSlots;
       const int nRoundRoutes = SingleRound ? nActiveRoutes : max(0, min(StageSlots, nActiveRoutes - routeBegin));
@@ -167,124 +199,163 @@ MSCCLPP_DEVICE_INLINE void combineReduceToken(void* destination, const void* exp
           SingleRound ? active : (active && compactIdx >= routeBegin && compactIdx < routeBegin + StageSlots);
       const int stageIdx = SingleRound ? compactIdx : (compactIdx - routeBegin);
       if (roundActive) {
-        if constexpr (IsDirectSend) groupControl.routeWeights[stageIdx] = laneWeight;
+        if constexpr (IsDirectSend) group.control.routeWeights[stageIdx] = laneRoute.weight;
       }
       if (laneIdx == 0) {
-        groupControl.nRoundRoutes = nRoundRoutes;
-        if constexpr (!SingleRound) groupControl.nTotalRounds = nRounds;
+        group.control.nRoundRoutes = nRoundRoutes;
+        if constexpr (!SingleRound) group.control.nTotalRounds = nRounds;
         if (nRoundRoutes > 0) {
-          groupControl.barrier.arriveAndExpect(static_cast<uint32_t>(nRoundRoutes * HiddenBytes));
+          group.control.barrier.arriveAndExpect(static_cast<uint32_t>(nRoundRoutes * HiddenBytes));
         }
       }
       __syncwarp();
       if (nRoundRoutes > 0) {
         bool pending = roundActive;
         while (__any_sync(0xffffffff, pending)) {
-          if (pending && mscclpp::atomicLoad<uint32_t, mscclpp::scopeDevice>(
-                             workspace.combineRankReadyFlags_ + lanePeerIdx, mscclpp::memoryOrderAcquire) == flag) {
-            EP_DEVICE_ASSERT(laneSlotIdx >= 0 && laneSlotIdx < workload.maxTokensPerRank_);
-            const auto* peerOutput =
-                static_cast<const uint8_t*>(transport.mappedBuffer(const_cast<void*>(expertOutput), lanePeerIdx));
-            const size_t sourceTokenIdx = static_cast<size_t>(ownerRank) * workload.maxTokensPerRank_ + laneSlotIdx;
-            const size_t inputTokenIdx = IsDirectSend ? sourceTokenIdx * nTopk + laneIdx : sourceTokenIdx;
-            mscclpp::bulkLoad(groupShared + static_cast<size_t>(stageIdx) * HiddenBytes,
-                              peerOutput + inputTokenIdx * HiddenBytes, HiddenBytes, groupControl.barrier);
+          if (pending &&
+              mscclpp::atomicLoad<uint32_t, mscclpp::scopeDevice>(workspace.combineRankReadyFlags_ + laneRoute.peerRank,
+                                                                  mscclpp::memoryOrderAcquire) == flag) {
+            EP_DEVICE_ASSERT(laneRoute.slotIdx >= 0 && laneRoute.slotIdx < workload.maxTokensPerRank_);
+            const auto* peerOutput = static_cast<const uint8_t*>(
+                transport.mappedBuffer(const_cast<void*>(expertOutput), laneRoute.peerRank));
+            const size_t sourceTokenIdx =
+                static_cast<size_t>(ownerRank) * workload.maxTokensPerRank_ + laneRoute.slotIdx;
+            const size_t inputTokenIdx = IsDirectSend ? sourceTokenIdx * workload.numTopk_ + laneIdx : sourceTokenIdx;
+            mscclpp::bulkLoad(group.sharedTokens + static_cast<size_t>(stageIdx) * HiddenBytes,
+                              peerOutput + inputTokenIdx * HiddenBytes, HiddenBytes, group.control.barrier);
             pending = false;
           }
         }
         if (laneIdx == 0) {
-          groupControl.barrier.wait(phase);
+          group.control.barrier.wait(group.phase);
           mscclpp::bulkFence();
         }
         __syncwarp();
       }
-      if (laneIdx == 0 && roundIdx == nRounds - 1) {
-        if constexpr (IsGateway) {
-          loadReady();
-        } else if constexpr (!FuseFinal) {
-          const int remoteTokenIdx = hybridCtx.combineRemoteTokenIndices_[tokenIdx];
-          const bool ready = waveIdx < 64 && (remoteTokenIdx < 0 || gateway.poll(remoteTokenIdx));
-          groupControl.remoteReady = ready;
-          if (ready) groupControl.finalizedMask |= (uint64_t{1} << waveIdx);
-        }
-      }
+      if (laneIdx == 0 && roundIdx == nRounds - 1) onLastLoad();
     }
-    syncNamedBarrier(groupBarrierId, HybridCombineGroupThreads);
+    group.sync();
 
-    if constexpr (!SingleRound) nTotalRounds = groupControl.nTotalRounds;
-    const int nRoundRoutes = groupControl.nRoundRoutes;
+    if constexpr (!SingleRound) nTotalRounds = group.control.nTotalRounds;
+    const int nRoundRoutes = group.control.nRoundRoutes;
     if (nRoundRoutes > 0) {
 #pragma unroll
       for (int stepIdx = 0; stepIdx < MaxVectorsPerThread; ++stepIdx) {
-        const int vectorIdx = groupThreadIdx + stepIdx * HybridCombineGroupThreads;
+        const int vectorIdx = group.threadIdx + stepIdx * HybridCombineGroupThreads;
         if (vectorIdx < NHiddenVectors) {
           accumulateHybridVector<Mode, Hidden, DispatchType, StageSlots>(
-              tokenSum[stepIdx], vectorIdx, groupShared, groupControl.routeWeights, nRoundRoutes, dequantScale);
+              tokenSum[stepIdx], vectorIdx, group.sharedTokens, group.control.routeWeights, nRoundRoutes, dequantScale);
         }
       }
     }
     ++roundIdx;
     if constexpr (!SingleRound) {
-      if (roundIdx < nTotalRounds) syncNamedBarrier(groupBarrierId, HybridCombineGroupThreads);
+      if (roundIdx < nTotalRounds) group.sync();
     }
   } while (!SingleRound && roundIdx < nTotalRounds);
+}
 
-  if constexpr (FuseFinal) {
-    // Keep the last token's local sum in registers while finalizing any unfinalized earlier tokens from scratch.
-    const uint64_t finalizedMask = groupControl.finalizedMask;
-    for (int prevIdx = localWorkerIdx, prevWave = 0; prevIdx < tokenIdx; prevIdx += nLocalWorkers, ++prevWave) {
-      if (prevWave < 64 && ((finalizedMask >> prevWave) & uint64_t{1}) != 0) continue;
-      combineFinalize<Hidden>(destination, prevIdx, context, gateway, groupThreadIdx, groupBarrierId);
-    }
-    const int remoteTokenIdx = hybridCtx.combineRemoteTokenIndices_[tokenIdx];
-    if (remoteTokenIdx >= 0) {
-      if (groupThreadIdx == 0) gateway.wait(remoteTokenIdx);
-      syncNamedBarrier(groupBarrierId, HybridCombineGroupThreads);
-    }
+// Gateway path: reduce local-domain contributions for a paired remote token and write into combineSendBuffer_.
+template <CombineMode Mode, int Hidden, DispatchDataType DispatchType, int MaxNTopk, int StageSlots,
+          typename LoadReadyFn>
+MSCCLPP_DEVICE_INLINE void combineGatewayToken(void* dst, const void* expertOutput, int tokenIdx,
+                                               const Workload& workload, const DeviceContext* context,
+                                               const TransportView& transport, const Gateway& gateway,
+                                               const WorkspaceView& workspace, uint32_t flag, float dequantScale,
+                                               const HybridCombineGroup<StageSlots>& group, LoadReadyFn&& loadReady) {
+  constexpr int NHiddenVectors = Hidden / mscclpp::f32x8::Size;
+  constexpr int MaxVectorsPerThread = configCellDiv(NHiddenVectors, HybridCombineGroupThreads);
+  const IntraDomainRoute laneRoute =
+      group.warpIdx == 0 ? resolveGatewayRoute<Mode>(tokenIdx, getLaneId(), workload, context) : IntraDomainRoute{};
+  mscclpp::f32x8 tokenSum[MaxVectorsPerThread];
+  reduceIntraDomainToken<Mode, Hidden, DispatchType, MaxNTopk>(tokenSum, gateway.peerRank(), laneRoute, expertOutput,
+                                                               workload, transport, workspace, flag, dequantScale,
+                                                               group, loadReady);
+
+  const bool bf16InterDomain = useBf16InterDomainCombine(context->hybridCtx_);
 #pragma unroll
-    for (int stepIdx = 0; stepIdx < MaxVectorsPerThread; ++stepIdx) {
-      const int vectorIdx = groupThreadIdx + stepIdx * HybridCombineGroupThreads;
-      if (vectorIdx < NHiddenVectors) {
-        combineStoreFinalVector<Hidden>(destination, tokenSum[stepIdx], tokenIdx, remoteTokenIdx, vectorIdx, context);
+  for (int stepIdx = 0; stepIdx < MaxVectorsPerThread; ++stepIdx) {
+    const int vectorIdx = group.threadIdx + stepIdx * HybridCombineGroupThreads;
+    if (vectorIdx < NHiddenVectors) {
+      if (bf16InterDomain) {
+        static_cast<mscclpp::bf16x8*>(dst)[vectorIdx] = mscclpp::to<mscclpp::bf16x8>(tokenSum[stepIdx]);
+      } else {
+        static_cast<mscclpp::f32x8*>(dst)[vectorIdx] = tokenSum[stepIdx];
       }
     }
-  } else if constexpr (IsGateway) {
-    const bool bf16InterDomain = useBf16InterDomainCombine(hybridCtx);
+  }
+  // Join every writer before thread 0 publishes chunk readiness and protect sharedTokens reuse.
+  group.sync();
+}
+
+// Local path: reduce own intra-domain contributions; overlap in-flight remote RDMA partials across multiple tokens.
+template <CombineMode Mode, int Hidden, DispatchDataType DispatchType, int MaxNTopk, int StageSlots>
+MSCCLPP_DEVICE_INLINE void combineLocalTokens(void* output, const void* expertOutput, const int64_t* topkIndices,
+                                              const float* topkWeights, const Workload& workload,
+                                              const DeviceContext* context, const TransportView& transport,
+                                              const Gateway& gateway, const WorkspaceView& workspace, uint32_t flag,
+                                              float dequantScale, const HybridCombineGroup<StageSlots>& group,
+                                              int localWorkerIdx, int nLocalWorkers) {
+  constexpr int NHiddenVectors = Hidden / mscclpp::f32x8::Size;
+  constexpr int MaxVectorsPerThread = configCellDiv(NHiddenVectors, HybridCombineGroupThreads);
+  const auto& hybridCtx = context->hybridCtx_;
+  const int laneIdx = getLaneId();
+
+  for (int tokenIdx = localWorkerIdx, stepIdx = 0; tokenIdx < workload.numTokens_;
+       tokenIdx += nLocalWorkers, ++stepIdx) {
+    const bool isLastToken = tokenIdx + nLocalWorkers >= workload.numTokens_;
+    const IntraDomainRoute laneRoute =
+        group.warpIdx == 0
+            ? resolveLocalRoute<Mode>(tokenIdx, laneIdx, topkIndices, topkWeights, workload, context, workspace)
+            : IntraDomainRoute{};
+    mscclpp::f32x8 tokenSum[MaxVectorsPerThread];
+    reduceIntraDomainToken<Mode, Hidden, DispatchType, MaxNTopk>(
+        tokenSum, context->rank_, laneRoute, expertOutput, workload, transport, workspace, flag, dequantScale, group,
+        [&] {
+          if (!isLastToken) {
+            const int remoteTokenIdx = hybridCtx.combineRemoteTokenIndices_[tokenIdx];
+            const bool ready = stepIdx < 64 && (remoteTokenIdx < 0 || gateway.poll(remoteTokenIdx));
+            group.control.remoteReady = ready;
+            if (!ready && stepIdx < 64) group.control.pendingMask |= (uint64_t{1} << stepIdx);
+          }
+        });
+
+    if (!isLastToken) {
+      if (group.control.remoteReady) {
+        const int remoteTokenIdx = hybridCtx.combineRemoteTokenIndices_[tokenIdx];
+        combineStoreFinalToken<Hidden>(output, tokenSum, tokenIdx, remoteTokenIdx, context, group.threadIdx);
+      } else if (stepIdx >= 64) {
+        const int remoteTokenIdx = hybridCtx.combineRemoteTokenIndices_[tokenIdx];
+        if (remoteTokenIdx >= 0) {
+          if (group.threadIdx == 0) gateway.wait(remoteTokenIdx);
+          group.sync();
+        }
+        combineStoreFinalToken<Hidden>(output, tokenSum, tokenIdx, remoteTokenIdx, context, group.threadIdx);
+      } else {
+        auto* localScratch =
+            reinterpret_cast<mscclpp::f32x8*>(hybridCtx.combineLocalBuffer_ + static_cast<size_t>(tokenIdx) * Hidden);
 #pragma unroll
-    for (int stepIdx = 0; stepIdx < MaxVectorsPerThread; ++stepIdx) {
-      const int vectorIdx = groupThreadIdx + stepIdx * HybridCombineGroupThreads;
-      if (vectorIdx < NHiddenVectors) {
-        if (bf16InterDomain) {
-          reinterpret_cast<mscclpp::bf16x8*>(destination)[vectorIdx] = mscclpp::to<mscclpp::bf16x8>(tokenSum[stepIdx]);
-        } else {
-          reinterpret_cast<mscclpp::f32x8*>(destination)[vectorIdx] = tokenSum[stepIdx];
+        for (int vecStep = 0; vecStep < MaxVectorsPerThread; ++vecStep) {
+          const int vectorIdx = group.threadIdx + vecStep * HybridCombineGroupThreads;
+          if (vectorIdx < NHiddenVectors) localScratch[vectorIdx] = tokenSum[vecStep];
         }
       }
-    }
-    // The group barrier joins every writer into group thread 0's release counter and protects sharedMemory reuse.
-    syncNamedBarrier(groupBarrierId, HybridCombineGroupThreads);
-  } else {
-    if (groupControl.remoteReady) {
-      const int remoteTokenIdx = hybridCtx.combineRemoteTokenIndices_[tokenIdx];
-#pragma unroll
-      for (int stepIdx = 0; stepIdx < MaxVectorsPerThread; ++stepIdx) {
-        const int vectorIdx = groupThreadIdx + stepIdx * HybridCombineGroupThreads;
-        if (vectorIdx < NHiddenVectors) {
-          combineStoreFinalVector<Hidden>(destination, tokenSum[stepIdx], tokenIdx, remoteTokenIdx, vectorIdx, context);
-        }
-      }
+      group.sync();
     } else {
-      auto* localScratch =
-          reinterpret_cast<mscclpp::f32x8*>(hybridCtx.combineLocalBuffer_ + static_cast<size_t>(tokenIdx) * Hidden);
-#pragma unroll
-      for (int stepIdx = 0; stepIdx < MaxVectorsPerThread; ++stepIdx) {
-        const int vectorIdx = groupThreadIdx + stepIdx * HybridCombineGroupThreads;
-        if (vectorIdx < NHiddenVectors) {
-          localScratch[vectorIdx] = tokenSum[stepIdx];
-        }
+      // Keep the last token's sum in registers while finalizing any earlier tokens whose RDMA partials were pending.
+      uint64_t pendingMask = group.control.pendingMask;
+      while (pendingMask != 0) {
+        const int pendingStep = __ffsll(pendingMask) - 1;
+        pendingMask &= pendingMask - 1;
+        combineFinalize<Hidden>(output, localWorkerIdx + pendingStep * nLocalWorkers, context, gateway, group);
       }
+      const int remoteTokenIdx = hybridCtx.combineRemoteTokenIndices_[tokenIdx];
+      if (remoteTokenIdx >= 0) {
+        if (group.threadIdx == 0) gateway.wait(remoteTokenIdx);
+        group.sync();
+      }
+      combineStoreFinalToken<Hidden>(output, tokenSum, tokenIdx, remoteTokenIdx, context, group.threadIdx);
     }
-    syncNamedBarrier(groupBarrierId, HybridCombineGroupThreads);
   }
 }
 
@@ -353,13 +424,15 @@ __global__ __launch_bounds__(CombineNThreads,
     auto& groupControl = *reinterpret_cast<HybridCombineGroupControl<StageSlots>*>(groupShared + TokensBytes);
     const float dequantScale = DispatchType == DispatchDataType::FP8_E4M3_STATIC ? 1.0f / workload.combineScale_ : 1.0f;
     uint32_t phase = 0;
+    const HybridCombineGroup<StageSlots> group{groupShared,  groupControl,   phase,
+                                               groupWarpIdx, groupThreadIdx, groupBarrierId};
 
-    if (groupThreadIdx == 0) {
-      groupControl.barrier.init();
-      groupControl.finalizedMask = 0;
-      groupControl.remoteReady = false;
+    if (group.threadIdx == 0) {
+      group.control.barrier.init();
+      group.control.pendingMask = 0;
+      group.control.remoteReady = false;
     }
-    syncNamedBarrier(groupBarrierId, HybridCombineGroupThreads);
+    group.sync();
 
     if (blockIdx.x == 0) {
       combineControl(context, transport, workspace, flag);
@@ -368,9 +441,9 @@ __global__ __launch_bounds__(CombineNThreads,
     gateway.reduceAndSend<HybridCombineNWarpGroups, HybridCombineGroupThreads>(
         *hybridCtx.nIncomingTokens_, hybridCtx.combineChunkLoadReady_, posterQueueIdx, groupIdx, groupThreadIdx,
         groupBarrierId, [&](uint8_t* dst, int tokenIdx, auto&& loadReady) {
-          combineReduceToken<Mode, Hidden, DispatchType, MaxNTopk, true>(
-              dst, expertOutput, topkIndices, topkWeights, tokenIdx, workload, context, transport, gateway, workspace,
-              flag, groupShared, phase, dequantScale, groupWarpIdx, groupThreadIdx, groupBarrierId, loadReady);
+          combineGatewayToken<Mode, Hidden, DispatchType, MaxNTopk>(dst, expertOutput, tokenIdx, workload, context,
+                                                                    transport, gateway, workspace, flag, dequantScale,
+                                                                    group, loadReady);
         });
     if (blockIdx.x == 0) {
       __syncthreads();
@@ -382,22 +455,11 @@ __global__ __launch_bounds__(CombineNThreads,
     const int nLocalWorkers = nLocalBlocks * HybridCombineNWarpGroups;
     const int revBlockIdx = blockIdx.x == 0 ? nLocalBlocks - 1 : nLocalBlocks - 1 - static_cast<int>(blockIdx.x);
     const int localWorkerIdx = (HybridCombineNWarpGroups - 1 - groupIdx) * nLocalBlocks + revBlockIdx;
-    for (int tokenIdx = localWorkerIdx, waveIdx = 0; tokenIdx < workload.numTokens_;
-         tokenIdx += nLocalWorkers, ++waveIdx) {
-      if (tokenIdx + nLocalWorkers < workload.numTokens_) {
-        combineReduceToken<Mode, Hidden, DispatchType, MaxNTopk, false, false>(
-            output, expertOutput, topkIndices, topkWeights, tokenIdx, workload, context, transport, gateway, workspace,
-            flag, groupShared, phase, dequantScale, groupWarpIdx, groupThreadIdx, groupBarrierId, [] {}, localWorkerIdx,
-            nLocalWorkers, waveIdx);
-      } else {
-        combineReduceToken<Mode, Hidden, DispatchType, MaxNTopk, false, true>(
-            output, expertOutput, topkIndices, topkWeights, tokenIdx, workload, context, transport, gateway, workspace,
-            flag, groupShared, phase, dequantScale, groupWarpIdx, groupThreadIdx, groupBarrierId, [] {}, localWorkerIdx,
-            nLocalWorkers, waveIdx);
-      }
-    }
+    combineLocalTokens<Mode, Hidden, DispatchType, MaxNTopk>(output, expertOutput, topkIndices, topkWeights, workload,
+                                                             context, transport, gateway, workspace, flag, dequantScale,
+                                                             group, localWorkerIdx, nLocalWorkers);
     __syncthreads();
-    if (groupThreadIdx == 0) groupControl.barrier.invalidate();
+    if (group.threadIdx == 0) group.control.barrier.invalidate();
   }
 #endif
 }

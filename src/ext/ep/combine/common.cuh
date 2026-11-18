@@ -56,7 +56,7 @@ template <int NSlots>
 struct alignas(16) HybridCombineGroupControl {
   mscclpp::BulkBarrier barrier;
   float routeWeights[NSlots];
-  uint64_t finalizedMask;
+  uint64_t pendingMask;
   int nRoundRoutes;
   int nTotalRounds;
   bool remoteReady;
