@@ -230,47 +230,45 @@ These device-side handle structures provide GPU kernel interfaces for MSCCL++ co
 Channel Device Interfaces
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Channel GPU types use ``View`` names to distinguish non-owning GPU state from CPU owners.
-The nested ``DeviceHandle`` alias, ``deviceHandle()`` method, generic extraction helper,
-header filenames and Python API names are unchanged. Port views default to the Host backend.
+GPU channel types consistently use ``DeviceHandle`` names for non-owning state.
+``BasePortChannelDeviceHandle<Backend>`` and ``PortChannelDeviceHandle<Backend>`` default to Host;
+the Memory and Switch handle types remain concrete. Owner names, nested ``DeviceHandle`` aliases,
+``deviceHandle()`` methods, generic extraction, header filenames and Python API names are unchanged.
 
-The following old C++ names remain deprecated aliases, not separate implementations:
+``BasePortChannelDeviceHandleT<B>`` and ``PortChannelDeviceHandleT<B>`` are deprecated direct
+aliases to the corresponding canonical templates without the ``T`` suffix.
+``SmChannelDeviceHandle`` remains a deprecated direct alias to ``MemoryChannelDeviceHandle``.
 
-* ``BasePortChannelDeviceHandleT<B>`` / ``PortChannelDeviceHandleT<B>``:
-  use ``BasePortChannelView<B>`` / ``PortChannelView<B>``.
-* ``BasePortChannelDeviceHandle`` / ``PortChannelDeviceHandle``:
-  use ``BasePortChannelView<>`` / ``PortChannelView<>``.
-* ``BaseMemoryChannelDeviceHandle`` / ``MemoryChannelDeviceHandle``:
-  use ``BaseMemoryChannelView`` / ``MemoryChannelView``.
-* ``SwitchChannelDeviceHandle``: use ``SwitchChannelView``.
-* ``SmChannelDeviceHandle``: use ``MemoryChannelView`` directly.
+The former plain Host Port aliases cannot coexist with the canonical templates. In type positions,
+use ``PortChannelDeviceHandle<>*`` rather than ``PortChannelDeviceHandle*``, and likewise for the
+base handle, or use ``Owner::DeviceHandle``. Do not rely on every old form being accepted by class
+template argument deduction. This is a limited source-compatibility break and not a binary-compatibility
+guarantee. Rebuild consumers; external declarations/specializations of the former ``T`` classes
+must migrate to the canonical templates.
 
-This is best-effort source compatibility, not a binary-compatibility guarantee. Rebuild consumers;
-external class forward declarations or specializations must migrate to the canonical names.
-
-.. doxygenstruct:: mscclpp::BaseMemoryChannelView
+.. doxygenstruct:: mscclpp::BaseMemoryChannelDeviceHandle
    :members:
 
-.. doxygenstruct:: mscclpp::BasePortChannelView< PortChannelBackend::Host >
+.. doxygenstruct:: mscclpp::BasePortChannelDeviceHandle< PortChannelBackend::Host >
    :members:
 
-.. doxygenstruct:: mscclpp::BasePortChannelView< PortChannelBackend::Device >
+.. doxygenstruct:: mscclpp::BasePortChannelDeviceHandle< PortChannelBackend::Device >
    :members:
 
 .. doxygenunion:: mscclpp::LL16Packet
 
 .. doxygenunion:: mscclpp::LL8Packet
 
-.. doxygenstruct:: mscclpp::MemoryChannelView
+.. doxygenstruct:: mscclpp::MemoryChannelDeviceHandle
    :members:
 
-.. doxygenstruct:: mscclpp::PortChannelView< PortChannelBackend::Host >
+.. doxygenstruct:: mscclpp::PortChannelDeviceHandle< PortChannelBackend::Host >
    :members:
 
-.. doxygenstruct:: mscclpp::PortChannelView< PortChannelBackend::Device >
+.. doxygenstruct:: mscclpp::PortChannelDeviceHandle< PortChannelBackend::Device >
    :members:
 
-.. doxygenstruct:: mscclpp::SwitchChannelView
+.. doxygenstruct:: mscclpp::SwitchChannelDeviceHandle
    :members:
 
 .. doxygentypedef:: mscclpp::LLPacket

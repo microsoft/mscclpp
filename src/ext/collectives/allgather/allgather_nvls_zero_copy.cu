@@ -24,13 +24,13 @@ MSCCLPP_DEVICE_INLINE void multimemBroadcast(const char* src, char* mcDst, size_
   const size_t nVec = size / vecBytes;
   for (size_t i = tid; i < nVec; i += nThreads) {
     f32x4 val = *(reinterpret_cast<const f32x4*>(src) + i);
-    SwitchChannelView::multimemStore(val, reinterpret_cast<f32x4*>(mcDst) + i);
+    SwitchChannelDeviceHandle::multimemStore(val, reinterpret_cast<f32x4*>(mcDst) + i);
   }
   const size_t tailStart = nVec * vecBytes;
   const size_t nTail = (size - tailStart) / sizeof(f32x1);
   for (size_t i = tid; i < nTail; i += nThreads) {
     f32x1 val = *(reinterpret_cast<const f32x1*>(src + tailStart) + i);
-    SwitchChannelView::multimemStore(val, reinterpret_cast<f32x1*>(mcDst + tailStart) + i);
+    SwitchChannelDeviceHandle::multimemStore(val, reinterpret_cast<f32x1*>(mcDst + tailStart) + i);
   }
 }
 #endif

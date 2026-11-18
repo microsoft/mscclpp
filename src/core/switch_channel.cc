@@ -222,7 +222,7 @@ SwitchChannel NvlsConnection::bindAllocatedMemory(CUdeviceptr devicePtr, size_t 
   auto mcPtr = pimpl_->bindMemory(devicePtr, size);
   SwitchChannel channel((void*)devicePtr, mcPtr, size);
   // Stamp the shared barrier resource (if any) onto the channel so that
-  // SwitchChannelView::barrier() works without separate semaphores.
+  // SwitchChannelDeviceHandle::barrier() works without separate semaphores.
   if (barrierSem_.localBarrierFlag != nullptr) {
     channel.barrier_ = barrierSem_;
   }

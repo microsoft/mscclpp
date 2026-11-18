@@ -124,7 +124,7 @@ __forceinline__ __device__ void vectorSum(TYPE* dst, TYPE* src, size_t nElem) {
 // -------------------------------------------
 
 template <int READ_ONLY>
-__device__ void allreduce1_helper(mscclpp::MemoryChannelView* memChans, TYPE* buff, int rank, int nranks,
+__device__ void allreduce1_helper(mscclpp::MemoryChannelDeviceHandle* memChans, TYPE* buff, int rank, int nranks,
                                   size_t nelems) {
   const size_t chunkSize = nelems / nranks;
   if (nranks == 1) return;
@@ -208,7 +208,8 @@ __device__ void allreduce1_helper(mscclpp::MemoryChannelView* memChans, TYPE* bu
 }
 
 extern "C" __global__ void __launch_bounds__(1024, 1)
-    allreduce1(mscclpp::MemoryChannelView* memChans, TYPE* buff, int rank, int nranks, size_t nelems, int read_only) {
+    allreduce1(mscclpp::MemoryChannelDeviceHandle* memChans, TYPE* buff, int rank, int nranks, size_t nelems,
+               int read_only) {
   if (read_only)
     allreduce1_helper<1>(memChans, buff, rank, nranks, nelems);
   else
@@ -222,7 +223,7 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
 __device__ uint64_t globalFlag = 1;
 
 extern "C" __global__ void __launch_bounds__(1024, 1)
-    allreduce2(mscclpp::MemoryChannelView* memChans, TYPE* buff, TYPE* scratch, void* resultBuff, int rank,
+    allreduce2(mscclpp::MemoryChannelDeviceHandle* memChans, TYPE* buff, TYPE* scratch, void* resultBuff, int rank,
                int worldSize, size_t nelems) {
   nelems = nelems / (sizeof(int) / sizeof(TYPE));
   // This version of allreduce only works for single nodes
@@ -237,7 +238,7 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
   const int localBlockIdx = blockIdx.x % nBlocksPerPeer;
   const int peerIdx = blockIdx.x / nBlocksPerPeer;
   const int remoteRank = peerIdx < rank ? peerIdx : peerIdx + 1;
-  mscclpp::MemoryChannelView memChan = memChans[peerIdx];
+  mscclpp::MemoryChannelDeviceHandle memChan = memChans[peerIdx];
   const int tid = threadIdx.x + localBlockIdx * blockDim.x;
   // double buffering
   size_t scratchBaseOffset = (flag & 1) ? 0 : nPkts * sizeof(mscclpp::LLPacket);
@@ -292,8 +293,8 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
 // -------------------------------------------
 
 extern "C" __global__ void __launch_bounds__(1024, 1)
-    allreduce3(mscclpp::PortChannelView<>* fstRoundChans, mscclpp::PortChannelView<>* sndRoundChans, TYPE* buff,
-               TYPE* scratch, int rank, int worldSize, size_t nelems) {
+    allreduce3(mscclpp::PortChannelDeviceHandle<>* fstRoundChans, mscclpp::PortChannelDeviceHandle<>* sndRoundChans,
+               TYPE* buff, TYPE* scratch, int rank, int worldSize, size_t nelems) {
   nelems = nelems / (sizeof(int) / sizeof(TYPE));
 
   int isComm = (threadIdx.x == 0) && (blockIdx.x == 0);
@@ -302,10 +303,10 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
   int peerSendId = (remoteSendRank < rank) ? remoteSendRank : remoteSendRank - 1;
   int peerRecvId = (remoteRecvRank < rank) ? remoteRecvRank : remoteRecvRank - 1;
 
-  mscclpp::PortChannelView<>& devFstSendChan = fstRoundChans[peerSendId];
-  mscclpp::PortChannelView<>& devFstRecvChan = fstRoundChans[peerRecvId];
-  mscclpp::PortChannelView<>& devSndSendChan = sndRoundChans[peerSendId];
-  mscclpp::PortChannelView<>& devSndRecvChan = sndRoundChans[peerRecvId];
+  mscclpp::PortChannelDeviceHandle<>& devFstSendChan = fstRoundChans[peerSendId];
+  mscclpp::PortChannelDeviceHandle<>& devFstRecvChan = fstRoundChans[peerRecvId];
+  mscclpp::PortChannelDeviceHandle<>& devSndSendChan = sndRoundChans[peerSendId];
+  mscclpp::PortChannelDeviceHandle<>& devSndRecvChan = sndRoundChans[peerRecvId];
 
   // Step 1
   size_t chunkIndex = (rank + worldSize - 1) % worldSize;
@@ -410,9 +411,9 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
 // AllReduce4
 // 2-node
 // -------------------------------------------
-__device__ void localReduceScatterMem(mscclpp::MemoryChannelView* memChans, TYPE* buff, int rank, int nRanksPerNode,
-                                      int startChunkIndex, size_t offsetInChunk, size_t chunkSize, size_t nelems,
-                                      int nBlocks) {
+__device__ void localReduceScatterMem(mscclpp::MemoryChannelDeviceHandle* memChans, TYPE* buff, int rank,
+                                      int nRanksPerNode, int startChunkIndex, size_t offsetInChunk, size_t chunkSize,
+                                      size_t nelems, int nBlocks) {
   if (nRanksPerNode == 1) return;
   if (blockIdx.x >= nBlocks) return;
   const int nPeer = nRanksPerNode - 1;
@@ -448,7 +449,7 @@ __device__ void localReduceScatterMem(mscclpp::MemoryChannelView* memChans, TYPE
 }
 
 // This kernel is the most performant when the number of blocks is a multiple of (nRanksPerNode - 1).
-__device__ void localAllGatherMem(mscclpp::MemoryChannelView* memChans, int rank, int nRanksPerNode,
+__device__ void localAllGatherMem(mscclpp::MemoryChannelDeviceHandle* memChans, int rank, int nRanksPerNode,
                                   int startRankChunkIndex, uint64_t offsetInRankChunk, uint64_t rankChunkSize,
                                   uint64_t size, size_t nBlocks) {
   if (nRanksPerNode == 1) return;
@@ -494,7 +495,7 @@ __device__ void localAllGatherMem(mscclpp::MemoryChannelView* memChans, int rank
   memChans[peerIdx].get(offset + offsetForThisBlock, sizeForThisBlock, threadIdx.x, blockDim.x);
 }
 
-__device__ void localAllGatherAllPairsMem(mscclpp::MemoryChannelView* memChans, int rank, int nRanksPerNode,
+__device__ void localAllGatherAllPairsMem(mscclpp::MemoryChannelDeviceHandle* memChans, int rank, int nRanksPerNode,
                                           uint64_t size, size_t nBlocks) {
   if (nRanksPerNode == 1) return;
   if (blockIdx.x >= nBlocks) return;
@@ -519,8 +520,9 @@ __device__ void localAllGatherAllPairsMem(mscclpp::MemoryChannelView* memChans, 
 }
 
 // This is an allgather4 equivalent
-__device__ void allGatherMem(mscclpp::MemoryChannelView* memChans, mscclpp::PortChannelView<>* portChans, int rank,
-                             int worldSize, int nRanksPerNode, size_t nelemsPerGPU, int pipelineDepth) {
+__device__ void allGatherMem(mscclpp::MemoryChannelDeviceHandle* memChans,
+                             mscclpp::PortChannelDeviceHandle<>* portChans, int rank, int worldSize, int nRanksPerNode,
+                             size_t nelemsPerGPU, int pipelineDepth) {
   // this allgather is a pipelined and hierarchical one and only works for two nodes
   // it is implemented as follows:
   // Step 1: each node does a local allgather and concurrently,
@@ -535,7 +537,7 @@ __device__ void allGatherMem(mscclpp::MemoryChannelView* memChans, mscclpp::Port
   int peerRank = (rank + nRanksPerNode) % worldSize;
   int peerNodeId = peerRank / nRanksPerNode;
   int peer = (peerRank < rank) ? peerRank : peerRank - 1;
-  mscclpp::PortChannelView<> portChan = portChans[peer];
+  mscclpp::PortChannelDeviceHandle<> portChan = portChans[peer];
   const size_t nBlocksForLocalAllGather = gridDim.x / (nRanksPerNode - 1) * (nRanksPerNode - 1);
   const size_t rankChunkSize = nelemsPerGPU * sizeof(int);
   const int startRankIndexInLocalNode = (rank / nRanksPerNode) * nRanksPerNode;
@@ -579,8 +581,9 @@ __device__ void allGatherMem(mscclpp::MemoryChannelView* memChans, mscclpp::Port
                     nBlocksForLocalAllGather);
 }
 
-__device__ void reduceScatterMem(mscclpp::MemoryChannelView* memChans, mscclpp::PortChannelView<>* portChans,
-                                 TYPE* buff, TYPE* scratch, int rank, int nRanksPerNode, int worldSize,
+__device__ void reduceScatterMem(mscclpp::MemoryChannelDeviceHandle* memChans,
+                                 mscclpp::PortChannelDeviceHandle<>* portChans, TYPE* buff, TYPE* scratch, int rank,
+                                 int nRanksPerNode, int worldSize,
                                  size_t nelems,  // must be divisible by 3
                                  int pipelineDepth) {
   // this reduce-scatter algorithm works as follows:
@@ -603,7 +606,7 @@ __device__ void reduceScatterMem(mscclpp::MemoryChannelView* memChans, mscclpp::
   int isComm = (threadIdx.x == 0) && (blockIdx.x == nBlocksForReduceScatter);
   int peer = (peerRank < rank) ? peerRank : peerRank - 1;
   int nBlocksRemain = gridDim.x - nBlocksForReduceScatter;
-  mscclpp::PortChannelView<> portChan = portChans[peer];
+  mscclpp::PortChannelDeviceHandle<> portChan = portChans[peer];
   if (peerNodeId == rank / nRanksPerNode) {
     localReduceScatterMem(memChans, buff, rank, nRanksPerNode, 0, 0, chunkSize, chunkSize, gridDim.x);
     return;
@@ -663,9 +666,9 @@ __device__ void reduceScatterMem(mscclpp::MemoryChannelView* memChans, mscclpp::
 }
 
 extern "C" __global__ void __launch_bounds__(1024, 1) __global__
-    allreduce4(mscclpp::MemoryChannelView* memChans, mscclpp::PortChannelView<>* reduceScatterPortChans,
-               mscclpp::PortChannelView<>* allGatherPortChans, TYPE* buff, TYPE* scratch, int rank, int nRanksPerNode,
-               int worldSize, size_t nelems, int pipelineDepth) {
+    allreduce4(mscclpp::MemoryChannelDeviceHandle* memChans, mscclpp::PortChannelDeviceHandle<>* reduceScatterPortChans,
+               mscclpp::PortChannelDeviceHandle<>* allGatherPortChans, TYPE* buff, TYPE* scratch, int rank,
+               int nRanksPerNode, int worldSize, size_t nelems, int pipelineDepth) {
   nelems = nelems / (sizeof(int) / sizeof(TYPE));
   reduceScatterMem(memChans, reduceScatterPortChans, buff, scratch, rank, nRanksPerNode, worldSize, nelems,
                    pipelineDepth);
@@ -675,8 +678,9 @@ extern "C" __global__ void __launch_bounds__(1024, 1) __global__
 
 // allreduce 5 for 2-nodes
 extern "C" __global__ void __launch_bounds__(1024, 1)
-    allreduce5(mscclpp::MemoryChannelView* memChans, mscclpp::PortChannelView<>* portChans, TYPE* buff, TYPE* scratch,
-               TYPE* putBuff, TYPE* resultBuff, int rank, int nRanksPerNode, int worldSize, size_t nelems) {
+    allreduce5(mscclpp::MemoryChannelDeviceHandle* memChans, mscclpp::PortChannelDeviceHandle<>* portChans, TYPE* buff,
+               TYPE* scratch, TYPE* putBuff, TYPE* resultBuff, int rank, int nRanksPerNode, int worldSize,
+               size_t nelems) {
   nelems = nelems / (sizeof(int) / sizeof(TYPE));
   // This version of allreduce only works for single nodes
   const int nPeersInNode = nRanksPerNode - 1;
@@ -691,8 +695,8 @@ extern "C" __global__ void __launch_bounds__(1024, 1)
   const int localBlockIdx = blockIdx.x % nBlocksPerPeer;
   const int peerIdx = blockIdx.x / nBlocksPerPeer;
   const int remoteRankIdx = peerIdx < localRankId ? peerIdx : peerIdx + 1;
-  mscclpp::MemoryChannelView memChan = memChans[peerIdx];
-  mscclpp::PortChannelView<> portChan = portChans[localRankId];
+  mscclpp::MemoryChannelDeviceHandle memChan = memChans[peerIdx];
+  mscclpp::PortChannelDeviceHandle<> portChan = portChans[localRankId];
   const int tid = threadIdx.x + localBlockIdx * blockDim.x;
   // double buffering
   size_t scratchBaseOffset = (flag & 1) ? 0 : nPkts * sizeof(mscclpp::LLPacket);
@@ -795,7 +799,7 @@ __forceinline__ __device__ void barrier(mscclpp::MemoryDevice2DeviceSemaphoreDev
 // Assumes kVecSize is 1, 2, 4, or 8
 template <typename DataType, int kVecSize>
 MSCCLPP_DEVICE_INLINE void allreduce6_helper(mscclpp::MemoryDevice2DeviceSemaphoreDeviceHandle* semaphores,
-                                             mscclpp::SwitchChannelView switchChan, int my_rank, int num_ranks,
+                                             mscclpp::SwitchChannelDeviceHandle switchChan, int my_rank, int num_ranks,
                                              size_t num_elements) {
   using VectorType = mscclpp::VectorType<DataType, kVecSize>;
   int tid = threadIdx.x;
@@ -828,8 +832,9 @@ MSCCLPP_DEVICE_INLINE void allreduce6_helper(mscclpp::MemoryDevice2DeviceSemapho
 }
 
 extern "C" __global__ void __launch_bounds__(1024, 1)
-    allreduce6(mscclpp::MemoryDevice2DeviceSemaphoreDeviceHandle* semaphores, mscclpp::SwitchChannelView switchChan,
-               int my_rank, int num_ranks, size_t num_elements, size_t vector_size) {
+    allreduce6(mscclpp::MemoryDevice2DeviceSemaphoreDeviceHandle* semaphores,
+               mscclpp::SwitchChannelDeviceHandle switchChan, int my_rank, int num_ranks, size_t num_elements,
+               size_t vector_size) {
   if constexpr (sizeof(TYPE) == 4) {
     if (vector_size == 4) {
       allreduce6_helper<TYPE, 4>(semaphores, switchChan, my_rank, num_ranks, num_elements);

@@ -36,7 +36,7 @@ struct BaseMemoryChannel {
   BaseMemoryChannel& operator=(BaseMemoryChannel& other) = default;
 
   /// Device-side handle for BaseMemoryChannel.
-  using DeviceHandle = BaseMemoryChannelView;
+  using DeviceHandle = BaseMemoryChannelDeviceHandle;
 
   /// Returns the device-side handle.
   /// User should make sure the BaseMemoryChannel is not released when using the returned handle.
@@ -73,7 +73,7 @@ struct MemoryChannel : public BaseMemoryChannel {
   MemoryChannel(const Semaphore& semaphore, RegisteredMemory dst, RegisteredMemory src, void* packetBuffer = nullptr);
 
   /// Device-side handle for MemoryChannel.
-  using DeviceHandle = MemoryChannelView;
+  using DeviceHandle = MemoryChannelDeviceHandle;
 
   /// Returns the device-side handle.
   /// User should make sure the MemoryChannel is not released when using the returned handle.

@@ -50,7 +50,7 @@ __device__ void spin_cycles(unsigned long long cycles) {
   }
 }
 
-__global__ void gpuKernel0(mscclpp::BaseMemoryChannelView* devHandle, int iter) {
+__global__ void gpuKernel0(mscclpp::BaseMemoryChannelDeviceHandle* devHandle, int iter) {
   if (threadIdx.x + blockIdx.x * blockDim.x == 0) {
     for (int i = 0; i < iter; ++i) {
       devHandle->relaxedWait();
@@ -61,7 +61,7 @@ __global__ void gpuKernel0(mscclpp::BaseMemoryChannelView* devHandle, int iter) 
   }
 }
 
-__global__ void gpuKernel1(mscclpp::BaseMemoryChannelView* devHandle, int iter) {
+__global__ void gpuKernel1(mscclpp::BaseMemoryChannelDeviceHandle* devHandle, int iter) {
   if (threadIdx.x + blockIdx.x * blockDim.x == 0) {
     for (int i = 0; i < iter; ++i) {
       devHandle->relaxedSignal();
@@ -122,7 +122,7 @@ void worker(int gpuId) {
   log("GPU ", gpuId, ": Launching a GPU kernel ...");
 
   if (gpuId == 0) {
-    gpuKernel0<<<1, 1>>>(reinterpret_cast<mscclpp::BaseMemoryChannelView*>(devHandle), iter);
+    gpuKernel0<<<1, 1>>>(reinterpret_cast<mscclpp::BaseMemoryChannelDeviceHandle*>(devHandle), iter);
     MSCCLPP_CUDATHROW(cudaGetLastError());
     MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
   } else {
@@ -130,7 +130,7 @@ void worker(int gpuId) {
     MSCCLPP_CUDATHROW(cudaEventCreate(&start));
     MSCCLPP_CUDATHROW(cudaEventCreate(&end));
     MSCCLPP_CUDATHROW(cudaEventRecord(start));
-    gpuKernel1<<<1, 1>>>(reinterpret_cast<mscclpp::BaseMemoryChannelView*>(devHandle), iter);
+    gpuKernel1<<<1, 1>>>(reinterpret_cast<mscclpp::BaseMemoryChannelDeviceHandle*>(devHandle), iter);
     MSCCLPP_CUDATHROW(cudaGetLastError());
     MSCCLPP_CUDATHROW(cudaEventRecord(end));
     MSCCLPP_CUDATHROW(cudaEventSynchronize(end));

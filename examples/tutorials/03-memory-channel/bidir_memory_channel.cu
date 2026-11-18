@@ -47,7 +47,7 @@ int wait_process(int pid) {
 
 __device__ mscclpp::DeviceSyncer devSyncer;
 
-__global__ void bidirPutKernel(mscclpp::MemoryChannelView* devHandle, size_t copyBytes, int myRank) {
+__global__ void bidirPutKernel(mscclpp::MemoryChannelDeviceHandle* devHandle, size_t copyBytes, int myRank) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid == 0) {
     devHandle->relaxedSignal();
@@ -65,7 +65,7 @@ __global__ void bidirPutKernel(mscclpp::MemoryChannelView* devHandle, size_t cop
   }
 }
 
-__global__ void bidirGetKernel(mscclpp::MemoryChannelView* devHandle, size_t copyBytes, int myRank) {
+__global__ void bidirGetKernel(mscclpp::MemoryChannelDeviceHandle* devHandle, size_t copyBytes, int myRank) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid == 0) {
     devHandle->relaxedSignal();
@@ -79,7 +79,7 @@ __global__ void bidirGetKernel(mscclpp::MemoryChannelView* devHandle, size_t cop
   devHandle->get(srcOffset, dstOffset, copyBytes, /*threadId*/ tid, /*numThreads*/ blockDim.x * gridDim.x);
 }
 
-__global__ void bidirPutPacketKernel(mscclpp::MemoryChannelView* devHandle, size_t copyBytes, int myRank,
+__global__ void bidirPutPacketKernel(mscclpp::MemoryChannelDeviceHandle* devHandle, size_t copyBytes, int myRank,
                                      uint32_t flag) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid == 0) {
@@ -145,18 +145,18 @@ void worker(int myRank, int gpuId, const std::string& ipPort) {
   std::function<void(size_t)> kernels[3];
 
   kernels[0] = [&](size_t copyBytes) {
-    bidirPutKernel<<<32, 1024, 0, stream>>>(reinterpret_cast<mscclpp::MemoryChannelView*>(devHandle), copyBytes,
+    bidirPutKernel<<<32, 1024, 0, stream>>>(reinterpret_cast<mscclpp::MemoryChannelDeviceHandle*>(devHandle), copyBytes,
                                             myRank);
   };
 
   kernels[1] = [&](size_t copyBytes) {
-    bidirGetKernel<<<32, 1024, 0, stream>>>(reinterpret_cast<mscclpp::MemoryChannelView*>(devHandle), copyBytes,
+    bidirGetKernel<<<32, 1024, 0, stream>>>(reinterpret_cast<mscclpp::MemoryChannelDeviceHandle*>(devHandle), copyBytes,
                                             myRank);
   };
 
   kernels[2] = [&](size_t copyBytes) {
     static uint32_t flag = 1;
-    bidirPutPacketKernel<<<32, 1024, 0, stream>>>(reinterpret_cast<mscclpp::MemoryChannelView*>(devPktHandle),
+    bidirPutPacketKernel<<<32, 1024, 0, stream>>>(reinterpret_cast<mscclpp::MemoryChannelDeviceHandle*>(devPktHandle),
                                                   copyBytes, myRank, flag++);
   };
 

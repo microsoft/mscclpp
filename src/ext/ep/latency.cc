@@ -89,7 +89,7 @@ void LatencyRuntimeContext::initialize() {
 
   peerMappedBufferBases_.assign(numRanks_, nullptr);
   peerMappedBufferBases_[rank_] = symmetricBuffer_.get();
-  std::vector<mscclpp::BaseMemoryChannelView> baseMemoryChannelHandles(numRanks_);
+  std::vector<mscclpp::BaseMemoryChannelDeviceHandle> baseMemoryChannelHandles(numRanks_);
   for (int r = 0; r < numRanks_; ++r) {
     if (!isMappedPeer(r)) continue;
     peerBufferMemories_[r] = remoteFutures[r].get();
@@ -103,9 +103,9 @@ void LatencyRuntimeContext::initialize() {
       static_cast<void**>(mscclpp::detail::gpuCalloc(sizeof(void*) * static_cast<size_t>(numRanks_)));
   mscclpp::gpuMemcpy<void*>(peerMappedBufferBasesGpu_, peerMappedBufferBases_.data(), numRanks_,
                             cudaMemcpyHostToDevice);
-  baseMemoryChannelHandles_ = mscclpp::detail::gpuCallocShared<mscclpp::BaseMemoryChannelView>(numRanks_);
-  mscclpp::gpuMemcpy<mscclpp::BaseMemoryChannelView>(baseMemoryChannelHandles_.get(), baseMemoryChannelHandles.data(),
-                                                     numRanks_, cudaMemcpyHostToDevice);
+  baseMemoryChannelHandles_ = mscclpp::detail::gpuCallocShared<mscclpp::BaseMemoryChannelDeviceHandle>(numRanks_);
+  mscclpp::gpuMemcpy<mscclpp::BaseMemoryChannelDeviceHandle>(
+      baseMemoryChannelHandles_.get(), baseMemoryChannelHandles.data(), numRanks_, cudaMemcpyHostToDevice);
 
   int maxSharedMemoryPerBlock;
   int numSms;

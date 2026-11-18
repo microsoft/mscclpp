@@ -44,8 +44,8 @@ TEST(ProxyServiceTest, UnassignedChannels) {
 }
 
 TEST(ProxyServiceTest, PlainHandleDefaults) {
-  using Host = mscclpp::PortChannelView<>;
-  using Device = mscclpp::PortChannelView<mscclpp::PortChannelBackend::Device>;
+  using Host = mscclpp::PortChannelDeviceHandle<>;
+  using Device = mscclpp::PortChannelDeviceHandle<mscclpp::PortChannelBackend::Device>;
   static_assert(std::is_trivially_copyable_v<Host> && std::is_trivially_copyable_v<Device>);
   Host host;
   Device device;
@@ -63,7 +63,7 @@ TEST(ProxyServiceTest, PlainHandleDefaults) {
   EXPECT_EQ(copy.src_, 0u);
 }
 
-__global__ void kernelProxyServiceTransfer(mscclpp::PortChannelView<> channel, size_t bytes) {
+__global__ void kernelProxyServiceTransfer(mscclpp::PortChannelDeviceHandle<> channel, size_t bytes) {
   channel.putWithSignalAndFlush(0, 0, bytes);
   channel.wait();
 }

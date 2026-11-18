@@ -30,7 +30,7 @@ __global__ void __launch_bounds__(1024, 1)
   mscclpp::LL8Packet* scratchPkt = (mscclpp::LL8Packet*)((char*)scratch + scratchBaseOffset);
   for (uint32_t i = tid; i < nPktPerRank * worldSize; i += blockDim.x * gridDim.x) {
     mscclpp::LL8Packet pkt(src[i], flag);
-    mscclpp::SwitchChannelView::multimemStore(*(mscclpp::f32x2*)(&pkt), multiPkt + i);
+    mscclpp::SwitchChannelDeviceHandle::multimemStore(*(mscclpp::f32x2*)(&pkt), multiPkt + i);
   }
   for (uint32_t i = tid; i < nPktPerRank * worldSize; i += blockDim.x * gridDim.x) {
     // When T == AccumT, stay with raw uint to avoid type mismatch in identity path.

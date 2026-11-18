@@ -37,14 +37,14 @@ MSCCLPP_DEVICE_INLINE void waitFlush(uint64_t* flushDonePos, uint64_t fifoPos, [
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 }  // namespace detail
 
-/// Non-owning GPU view of a BasePortChannel. Backend is the only type specialization axis.
+/// Non-owning GPU handle of a BasePortChannel. Backend is the only type specialization axis.
 template <PortChannelBackend Backend = PortChannelBackend::Host>
-struct BasePortChannelView;
+struct BasePortChannelDeviceHandle;
 
-/// Host-backend specialization of BasePortChannelView.
+/// Host-backend specialization of BasePortChannelDeviceHandle.
 /// Posting and flush methods only support Concurrency::Device, enforced at compile time.
 template <>
-struct BasePortChannelView<PortChannelBackend::Host> {
+struct BasePortChannelDeviceHandle<PortChannelBackend::Host> {
   /// Scope of concurrent callers posting and flushing through a PortChannel.
   enum class Concurrency : uint8_t {
     /// Only one thread accesses the queue pair at a time; the caller serializes access.
@@ -67,11 +67,12 @@ struct BasePortChannelView<PortChannelBackend::Host> {
   // Host-pinned: proxy writes after CQ drain, GPU reads in waitFlush().
   uint64_t* flushDonePos_;
 
-  MSCCLPP_HOST_DEVICE_INLINE constexpr BasePortChannelView() noexcept
+  MSCCLPP_HOST_DEVICE_INLINE constexpr BasePortChannelDeviceHandle() noexcept
       : semaphoreId_(0), semaphore_(), fifo_(), flushDonePos_(nullptr) {}
 
-  MSCCLPP_HOST_DEVICE_INLINE BasePortChannelView(SemaphoreId semaphoreId, Host2DeviceSemaphoreDeviceHandle semaphore,
-                                                 FifoDeviceHandle fifo, uint64_t* flushDonePos)
+  MSCCLPP_HOST_DEVICE_INLINE BasePortChannelDeviceHandle(SemaphoreId semaphoreId,
+                                                         Host2DeviceSemaphoreDeviceHandle semaphore,
+                                                         FifoDeviceHandle fifo, uint64_t* flushDonePos)
       : semaphoreId_(semaphoreId), semaphore_(semaphore), fifo_(fifo), flushDonePos_(flushDonePos) {}
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
@@ -190,20 +191,20 @@ struct BasePortChannelView<PortChannelBackend::Host> {
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 
-/// Device-backend specialization of BasePortChannelView.
+/// Device-backend specialization of BasePortChannelDeviceHandle.
 template <>
-struct BasePortChannelView<PortChannelBackend::Device> {
+struct BasePortChannelDeviceHandle<PortChannelBackend::Device> {
   /// Scope of concurrent callers posting and flushing through a PortChannel.
-  using Concurrency = BasePortChannelView<PortChannelBackend::Host>::Concurrency;
+  using Concurrency = BasePortChannelDeviceHandle<PortChannelBackend::Host>::Concurrency;
 
   PortDevice2DeviceSemaphoreDeviceHandle semaphore_;
 
   DeviceBackendHandle device_;
 
-  MSCCLPP_HOST_DEVICE_INLINE constexpr BasePortChannelView() noexcept : semaphore_(), device_() {}
+  MSCCLPP_HOST_DEVICE_INLINE constexpr BasePortChannelDeviceHandle() noexcept : semaphore_(), device_() {}
 
-  MSCCLPP_HOST_DEVICE_INLINE BasePortChannelView(PortDevice2DeviceSemaphoreDeviceHandle semaphore,
-                                                 DeviceBackendHandle device)
+  MSCCLPP_HOST_DEVICE_INLINE BasePortChannelDeviceHandle(PortDevice2DeviceSemaphoreDeviceHandle semaphore,
+                                                         DeviceBackendHandle device)
       : semaphore_(semaphore), device_(device) {}
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
@@ -392,23 +393,25 @@ struct BasePortChannelView<PortChannelBackend::Device> {
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 
-/// Non-owning GPU view of a PortChannel with bound source/destination regions.
+/// Non-owning GPU handle of a PortChannel with bound source/destination regions.
 template <PortChannelBackend Backend = PortChannelBackend::Host>
-struct PortChannelView;
+struct PortChannelDeviceHandle;
 
-/// Host-backend specialization of PortChannelView.
+/// Host-backend specialization of PortChannelDeviceHandle.
 /// Posting and flush methods only support Concurrency::Device, enforced at compile time.
 template <>
-struct PortChannelView<PortChannelBackend::Host> : public BasePortChannelView<PortChannelBackend::Host> {
+struct PortChannelDeviceHandle<PortChannelBackend::Host>
+    : public BasePortChannelDeviceHandle<PortChannelBackend::Host> {
   MemoryId dst_;
   MemoryId src_;
 
-  MSCCLPP_HOST_DEVICE_INLINE constexpr PortChannelView() noexcept
-      : BasePortChannelView<PortChannelBackend::Host>(), dst_(0), src_(0) {}
+  MSCCLPP_HOST_DEVICE_INLINE constexpr PortChannelDeviceHandle() noexcept
+      : BasePortChannelDeviceHandle<PortChannelBackend::Host>(), dst_(0), src_(0) {}
 
-  MSCCLPP_HOST_DEVICE_INLINE PortChannelView(SemaphoreId semaphoreId, Host2DeviceSemaphoreDeviceHandle semaphore,
-                                             FifoDeviceHandle fifo, MemoryId dst, MemoryId src, uint64_t* flushDonePos)
-      : BasePortChannelView<PortChannelBackend::Host>(semaphoreId, semaphore, fifo, flushDonePos),
+  MSCCLPP_HOST_DEVICE_INLINE PortChannelDeviceHandle(SemaphoreId semaphoreId,
+                                                     Host2DeviceSemaphoreDeviceHandle semaphore, FifoDeviceHandle fifo,
+                                                     MemoryId dst, MemoryId src, uint64_t* flushDonePos)
+      : BasePortChannelDeviceHandle<PortChannelBackend::Host>(semaphoreId, semaphore, fifo, flushDonePos),
         dst_(dst),
         src_(src) {}
 
@@ -419,7 +422,7 @@ struct PortChannelView<PortChannelBackend::Host> : public BasePortChannelView<Po
   /// @param size The size of the transfer.
   template <Concurrency Mode = Concurrency::Device>
   MSCCLPP_DEVICE_INLINE void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
-    BasePortChannelView<PortChannelBackend::Host>::put<Mode>(dst_, dstOffset, src_, srcOffset, size);
+    BasePortChannelDeviceHandle<PortChannelBackend::Host>::put<Mode>(dst_, dstOffset, src_, srcOffset, size);
   }
 
   /// Push a TriggerPut to the FIFO.
@@ -436,7 +439,7 @@ struct PortChannelView<PortChannelBackend::Host> : public BasePortChannelView<Po
   /// @param size The size of the transfer.
   template <Concurrency Mode = Concurrency::Device>
   MSCCLPP_DEVICE_INLINE void putWithSignal(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
-    BasePortChannelView<PortChannelBackend::Host>::putWithSignal<Mode>(dst_, dstOffset, src_, srcOffset, size);
+    BasePortChannelDeviceHandle<PortChannelBackend::Host>::putWithSignal<Mode>(dst_, dstOffset, src_, srcOffset, size);
   }
 
   /// Push a TriggerPutWithSignal to the FIFO.
@@ -455,8 +458,8 @@ struct PortChannelView<PortChannelBackend::Host> : public BasePortChannelView<Po
   template <Concurrency Mode = Concurrency::Device>
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
                                                    int64_t maxSpinCount = 1000000) {
-    BasePortChannelView<PortChannelBackend::Host>::putWithSignalAndFlush<Mode>(dst_, dstOffset, src_, srcOffset, size,
-                                                                               maxSpinCount);
+    BasePortChannelDeviceHandle<PortChannelBackend::Host>::putWithSignalAndFlush<Mode>(dst_, dstOffset, src_, srcOffset,
+                                                                                       size, maxSpinCount);
   }
 
   /// Push a TriggerPutWithSignalAndFlush to the FIFO.
@@ -473,27 +476,28 @@ struct PortChannelView<PortChannelBackend::Host> : public BasePortChannelView<Po
   /// @param value The 64-bit signed value to add.
   template <Concurrency Mode = Concurrency::Device>
   MSCCLPP_DEVICE_INLINE void accumulate(uint64_t dstOffset, int64_t value) {
-    BasePortChannelView<PortChannelBackend::Host>::accumulate<Mode>(dst_, dstOffset, value);
+    BasePortChannelDeviceHandle<PortChannelBackend::Host>::accumulate<Mode>(dst_, dstOffset, value);
   }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 
-/// Device-backend specialization of PortChannelView.
+/// Device-backend specialization of PortChannelDeviceHandle.
 template <>
-struct PortChannelView<PortChannelBackend::Device> : public BasePortChannelView<PortChannelBackend::Device> {
+struct PortChannelDeviceHandle<PortChannelBackend::Device>
+    : public BasePortChannelDeviceHandle<PortChannelBackend::Device> {
   /// Scope of concurrent callers accessing this channel's queue pair.
-  using Concurrency = BasePortChannelView<PortChannelBackend::Device>::Concurrency;
+  using Concurrency = BasePortChannelDeviceHandle<PortChannelBackend::Device>::Concurrency;
 
   DeviceMemoryHandle dstMemory_;
   DeviceMemoryHandle srcMemory_;
 
-  MSCCLPP_HOST_DEVICE_INLINE constexpr PortChannelView() noexcept
-      : BasePortChannelView<PortChannelBackend::Device>(), dstMemory_(), srcMemory_() {}
+  MSCCLPP_HOST_DEVICE_INLINE constexpr PortChannelDeviceHandle() noexcept
+      : BasePortChannelDeviceHandle<PortChannelBackend::Device>(), dstMemory_(), srcMemory_() {}
 
-  MSCCLPP_HOST_DEVICE_INLINE PortChannelView(PortDevice2DeviceSemaphoreDeviceHandle semaphore,
-                                             DeviceBackendHandle device, DeviceMemoryHandle dstMemory,
-                                             DeviceMemoryHandle srcMemory)
-      : BasePortChannelView<PortChannelBackend::Device>(semaphore, device),
+  MSCCLPP_HOST_DEVICE_INLINE PortChannelDeviceHandle(PortDevice2DeviceSemaphoreDeviceHandle semaphore,
+                                                     DeviceBackendHandle device, DeviceMemoryHandle dstMemory,
+                                                     DeviceMemoryHandle srcMemory)
+      : BasePortChannelDeviceHandle<PortChannelBackend::Device>(semaphore, device),
         dstMemory_(dstMemory),
         srcMemory_(srcMemory) {}
 
@@ -510,7 +514,7 @@ struct PortChannelView<PortChannelBackend::Device> : public BasePortChannelView<
   template <Concurrency Mode = Concurrency::Device,
             uint32_t MaxExclusiveThreadsPerBlock = DeviceBackendHandle::kDefaultMaxExclusiveThreadsPerBlock>
   MSCCLPP_DEVICE_INLINE void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, int slotIdx = -1) {
-    BasePortChannelView<PortChannelBackend::Device>::put<Mode, MaxExclusiveThreadsPerBlock>(
+    BasePortChannelDeviceHandle<PortChannelBackend::Device>::put<Mode, MaxExclusiveThreadsPerBlock>(
         dstMemory_, dstOffset, srcMemory_, srcOffset, size, slotIdx);
   }
 
@@ -538,7 +542,7 @@ struct PortChannelView<PortChannelBackend::Device> : public BasePortChannelView<
   template <Concurrency Mode = Concurrency::Device,
             uint32_t MaxExclusiveThreadsPerBlock = DeviceBackendHandle::kDefaultMaxExclusiveThreadsPerBlock>
   MSCCLPP_DEVICE_INLINE void putWithSignal(uint64_t dstOffset, uint64_t srcOffset, uint64_t size, int slotIdx = -1) {
-    BasePortChannelView<PortChannelBackend::Device>::putWithSignal<Mode, MaxExclusiveThreadsPerBlock>(
+    BasePortChannelDeviceHandle<PortChannelBackend::Device>::putWithSignal<Mode, MaxExclusiveThreadsPerBlock>(
         dstMemory_, dstOffset, srcMemory_, srcOffset, size, slotIdx);
   }
 
@@ -568,7 +572,7 @@ struct PortChannelView<PortChannelBackend::Device> : public BasePortChannelView<
             uint32_t MaxExclusiveThreadsPerBlock = DeviceBackendHandle::kDefaultMaxExclusiveThreadsPerBlock>
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
                                                    int64_t maxSpinCount = 1000000, int slotIdx = -1) {
-    BasePortChannelView<PortChannelBackend::Device>::putWithSignalAndFlush<Mode, MaxExclusiveThreadsPerBlock>(
+    BasePortChannelDeviceHandle<PortChannelBackend::Device>::putWithSignalAndFlush<Mode, MaxExclusiveThreadsPerBlock>(
         dstMemory_, dstOffset, srcMemory_, srcOffset, size, maxSpinCount, slotIdx);
   }
 
@@ -595,7 +599,7 @@ struct PortChannelView<PortChannelBackend::Device> : public BasePortChannelView<
   template <Concurrency Mode = Concurrency::Device,
             uint32_t MaxExclusiveThreadsPerBlock = DeviceBackendHandle::kDefaultMaxExclusiveThreadsPerBlock>
   MSCCLPP_DEVICE_INLINE void accumulate(uint64_t dstOffset, int64_t value, int slotIdx = -1) {
-    BasePortChannelView<PortChannelBackend::Device>::accumulate<Mode, MaxExclusiveThreadsPerBlock>(
+    BasePortChannelDeviceHandle<PortChannelBackend::Device>::accumulate<Mode, MaxExclusiveThreadsPerBlock>(
         dstMemory_, dstOffset, value, slotIdx);
   }
 
@@ -615,25 +619,20 @@ struct PortChannelView<PortChannelBackend::Device> : public BasePortChannelView<
             uint32_t MaxExclusiveThreadsPerBlock = DeviceBackendHandle::kDefaultMaxExclusiveThreadsPerBlock>
   MSCCLPP_DEVICE_INLINE void putWithAccumulate(uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
                                                uint64_t accOffset, int64_t value, int slotIdx = -1) {
-    BasePortChannelView<PortChannelBackend::Device>::putWithAccumulate<Mode, MaxExclusiveThreadsPerBlock>(
+    BasePortChannelDeviceHandle<PortChannelBackend::Device>::putWithAccumulate<Mode, MaxExclusiveThreadsPerBlock>(
         dstMemory_, dstOffset, srcMemory_, srcOffset, size, dstMemory_, accOffset, value, slotIdx);
   }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 
-/// @deprecated Use BasePortChannelView<Backend> instead.
+/// @deprecated Use BasePortChannelDeviceHandle<Backend> instead.
 template <PortChannelBackend Backend = PortChannelBackend::Host>
-using BasePortChannelDeviceHandleT [[deprecated("Use BasePortChannelView<Backend> instead.")]] =
-    BasePortChannelView<Backend>;
-/// @deprecated Use PortChannelView<Backend> instead.
+using BasePortChannelDeviceHandleT [[deprecated("Use BasePortChannelDeviceHandle<Backend> instead.")]] =
+    BasePortChannelDeviceHandle<Backend>;
+/// @deprecated Use PortChannelDeviceHandle<Backend> instead.
 template <PortChannelBackend Backend = PortChannelBackend::Host>
-using PortChannelDeviceHandleT [[deprecated("Use PortChannelView<Backend> instead.")]] = PortChannelView<Backend>;
-/// @deprecated Use BasePortChannelView<> for the Host backend.
-using BasePortChannelDeviceHandle [[deprecated("Use BasePortChannelView<> instead.")]] =
-    BasePortChannelView<PortChannelBackend::Host>;
-/// @deprecated Use PortChannelView<> for the Host backend.
-using PortChannelDeviceHandle [[deprecated("Use PortChannelView<> instead.")]] =
-    PortChannelView<PortChannelBackend::Host>;
+using PortChannelDeviceHandleT [[deprecated("Use PortChannelDeviceHandle<Backend> instead.")]] =
+    PortChannelDeviceHandle<Backend>;
 
 }  // namespace mscclpp
 

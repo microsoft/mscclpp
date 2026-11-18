@@ -22,7 +22,7 @@ void SwitchChannelPerfTest::SetUp() {
 
 void SwitchChannelPerfTest::TearDown() { CommunicatorTestBase::TearDown(); }
 
-__constant__ mscclpp::SwitchChannelView gPerfSwitchChan;
+__constant__ mscclpp::SwitchChannelDeviceHandle gPerfSwitchChan;
 
 // Back-to-back ordered barriers; one thread per rank drives the group barrier.
 __global__ void kernelSwitchBarrierLatency(int nIters) {

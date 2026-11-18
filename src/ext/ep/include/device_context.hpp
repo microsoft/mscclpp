@@ -15,7 +15,7 @@ struct DeviceContext {
   /// Peer mappings of the same symmetric allocation.
   void* const* peerBufferBases_;
   /// Peer synchronization channels.
-  mscclpp::BaseMemoryChannelView* channels_;
+  mscclpp::BaseMemoryChannelDeviceHandle* channels_;
   /// Optional algorithm workspace.
   void* workspace_;
   /// Maximum dynamic shared memory available to one block.
@@ -35,7 +35,7 @@ struct DeviceContext {
 struct TransportView {
   void* symmetricBufferBase_;
   void* const* peerMappedBufferBases_;
-  mscclpp::BaseMemoryChannelView* baseMemoryChannels_;
+  mscclpp::BaseMemoryChannelDeviceHandle* baseMemoryChannels_;
   int rank_;
 
   MSCCLPP_HOST_DEVICE_INLINE explicit TransportView(const DeviceContext* context)

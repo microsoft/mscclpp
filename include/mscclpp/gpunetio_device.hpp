@@ -383,7 +383,7 @@ struct GpuNetIoDeviceHandle {
 /// Device-side memory handle used by PortChannel device-mode operations.
 using DeviceMemoryHandle = detail::GpuNetIoMemoryDeviceHandle;
 
-/// Device-side backend handle used by BasePortChannelView.
+/// Device-side backend handle used by BasePortChannelDeviceHandle.
 using DeviceBackendHandle = detail::GpuNetIoDeviceHandle;
 
 }  // namespace mscclpp

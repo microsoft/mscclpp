@@ -119,7 +119,7 @@ flowchart TD
 The example code demonstrates a bidirectional data copy between two GPUs using `MemoryChannel` interfaces. Below is the GPU kernel code that performs the data copy using the `put()` method:
 
 ```cpp
-__global__ void bidirPutKernel(mscclpp::MemoryChannelView *devHandle, size_t copyBytes, int myRank) {
+__global__ void bidirPutKernel(mscclpp::MemoryChannelDeviceHandle *devHandle, size_t copyBytes, int myRank) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid == 0) {
     devHandle->relaxedSignal();
@@ -149,7 +149,7 @@ The example code assumes there may be following computation that consumes the re
 While `put()` writes to the remote memory, `get()` reads from the remote memory. The example code demonstrates a bidirectional data copy using the `get()` method, which is similar to `put()`, but reads data from the remote memory region and writes it to the local memory region. The following code shows how to use `get()` in a GPU kernel:
 
 ```cpp
-__global__ void bidirGetKernel(mscclpp::MemoryChannelView *devHandle, size_t copyBytes, int myRank) {
+__global__ void bidirGetKernel(mscclpp::MemoryChannelDeviceHandle *devHandle, size_t copyBytes, int myRank) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid == 0) {
     devHandle->relaxedSignal();
@@ -198,7 +198,7 @@ block-beta
 The `putPackets()` method reads data from the source memory region, converts it into packets, and writes the packets to the destination memory region. The `memPktChan` channel sets the destination memory region to the packet buffer of the remote GPU, so that the remote GPU can use the `unpackPackets()` method, which reads packets from the local packet buffer and writes the data to the source memory region locally. The example code demonstrates how to use `putPackets()` and `unpackPackets()` in a GPU kernel:
 
 ```cpp
-__global__ void bidirPutPacketKernel(mscclpp::MemoryChannelView *devHandle, size_t copyBytes, int myRank,
+__global__ void bidirPutPacketKernel(mscclpp::MemoryChannelDeviceHandle *devHandle, size_t copyBytes, int myRank,
                                      uint32_t flag) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid == 0) {

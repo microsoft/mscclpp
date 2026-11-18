@@ -11,13 +11,13 @@
 
 namespace mscclpp {
 
-/// Non-owning GPU view of a MemoryChannel without specific source and destination.
-struct BaseMemoryChannelView {
+/// Device-side handle of a MemoryChannel without specific source and destination.
+struct BaseMemoryChannelDeviceHandle {
   MemoryDevice2DeviceSemaphoreDeviceHandle semaphore_;
 
-  MSCCLPP_INLINE BaseMemoryChannelView() = default;
+  MSCCLPP_INLINE BaseMemoryChannelDeviceHandle() = default;
 
-  MSCCLPP_HOST_DEVICE_INLINE BaseMemoryChannelView(MemoryDevice2DeviceSemaphoreDeviceHandle semaphore)
+  MSCCLPP_HOST_DEVICE_INLINE BaseMemoryChannelDeviceHandle(MemoryDevice2DeviceSemaphoreDeviceHandle semaphore)
       : semaphore_(semaphore) {}
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
@@ -53,17 +53,17 @@ struct BaseMemoryChannelView {
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 
-/// Non-owning GPU view of a MemoryChannel.
-struct MemoryChannelView : public BaseMemoryChannelView {
+/// Device-side handle of a MemoryChannel.
+struct MemoryChannelDeviceHandle : public BaseMemoryChannelDeviceHandle {
   void* dst_;
   void* src_;
   void* packetBuffer_;
 
-  MSCCLPP_INLINE MemoryChannelView() = default;
+  MSCCLPP_INLINE MemoryChannelDeviceHandle() = default;
 
-  MSCCLPP_HOST_DEVICE_INLINE MemoryChannelView(MemoryDevice2DeviceSemaphoreDeviceHandle semaphore, void* dst, void* src,
-                                               void* packetBuffer)
-      : BaseMemoryChannelView(semaphore), dst_(dst), src_(src), packetBuffer_(packetBuffer) {}
+  MSCCLPP_HOST_DEVICE_INLINE MemoryChannelDeviceHandle(MemoryDevice2DeviceSemaphoreDeviceHandle semaphore, void* dst,
+                                                       void* src, void* packetBuffer)
+      : BaseMemoryChannelDeviceHandle(semaphore), dst_(dst), src_(src), packetBuffer_(packetBuffer) {}
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Load a value from the remote memory.
@@ -223,12 +223,8 @@ struct MemoryChannelView : public BaseMemoryChannelView {
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 
-/// @deprecated Use BaseMemoryChannelView instead.
-using BaseMemoryChannelDeviceHandle [[deprecated("Use BaseMemoryChannelView instead.")]] = BaseMemoryChannelView;
-/// @deprecated Use MemoryChannelView instead.
-using MemoryChannelDeviceHandle [[deprecated("Use MemoryChannelView instead.")]] = MemoryChannelView;
-/// @deprecated Use MemoryChannelView instead.
-using SmChannelDeviceHandle [[deprecated("Use MemoryChannelView instead.")]] = MemoryChannelView;
+/// @deprecated Use MemoryChannelDeviceHandle instead.
+[[deprecated("Use MemoryChannelDeviceHandle instead.")]] typedef MemoryChannelDeviceHandle SmChannelDeviceHandle;
 
 }  // namespace mscclpp
 

@@ -61,8 +61,8 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* src, T* dst, size_t src
     vectorType* src4 = (vectorType*)src;
     vectorType* dst4 = (vectorType*)dst;
     for (size_t idx = tid; idx < nVec; idx += nThreads) {
-      auto val = mscclpp::SwitchChannelView::multimemLoadReduce<vectorType, AccumT>(src4 + srcOffset4 + idx);
-      mscclpp::SwitchChannelView::multimemStore(val, dst4 + dstOffset4 + idx);
+      auto val = mscclpp::SwitchChannelDeviceHandle::multimemLoadReduce<vectorType, AccumT>(src4 + srcOffset4 + idx);
+      mscclpp::SwitchChannelDeviceHandle::multimemStore(val, dst4 + dstOffset4 + idx);
     }
     // handle rest of data
     size_t processed = nVec * sizeof(vectorType);
@@ -71,8 +71,9 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* src, T* dst, size_t src
     const size_t startIdx = (srcOffset + processed) / sizeof(restVectorType);
     const size_t endIdx = (srcOffset + size) / sizeof(restVectorType);
     for (size_t idx = tid + startIdx; idx < endIdx; idx += nThreads) {
-      auto val = mscclpp::SwitchChannelView::multimemLoadReduce<restVectorType, AccumT>((restVectorType*)src + idx);
-      mscclpp::SwitchChannelView::multimemStore(val, (restVectorType*)dst + idx);
+      auto val =
+          mscclpp::SwitchChannelDeviceHandle::multimemLoadReduce<restVectorType, AccumT>((restVectorType*)src + idx);
+      mscclpp::SwitchChannelDeviceHandle::multimemStore(val, (restVectorType*)dst + idx);
     }
   }
 }

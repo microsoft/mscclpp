@@ -256,7 +256,7 @@ ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger trigger) {
 }
 
 template <PortChannelBackend Backend>
-MSCCLPP_API_CPP BasePortChannelView<Backend> BasePortChannel<Backend>::deviceHandle() const {
+MSCCLPP_API_CPP BasePortChannelDeviceHandle<Backend> BasePortChannel<Backend>::deviceHandle() const {
   if constexpr (Backend == PortChannelBackend::Device) {
     if (!semaphore_) {
       THROW(CONN, Error, ErrorCode::InvalidUsage,
@@ -264,26 +264,27 @@ MSCCLPP_API_CPP BasePortChannelView<Backend> BasePortChannel<Backend>::deviceHan
     }
     const auto semaphoreHandle = semaphore_->deviceHandle();
     auto& conn = BaseConnection::getImpl(semaphore_->connection());
-    return BasePortChannelView<Backend>(semaphoreHandle, conn->getDeviceBackendInfo());
+    return BasePortChannelDeviceHandle<Backend>(semaphoreHandle, conn->getDeviceBackendInfo());
   } else {
     if (!semaphore_) {
       THROW(CONN, Error, ErrorCode::InvalidUsage, "BasePortChannel::deviceHandle() requires a Host2DeviceSemaphore");
     }
     auto& conn = BaseConnection::getImpl(semaphore_->connection());
-    return BasePortChannelView<Backend>(semaphoreId_, semaphore_->deviceHandle(), proxy_->fifo()->deviceHandle(),
-                                        conn->getFlushDonePtr());
+    return BasePortChannelDeviceHandle<Backend>(semaphoreId_, semaphore_->deviceHandle(),
+                                                proxy_->fifo()->deviceHandle(), conn->getFlushDonePtr());
   }
 }
 
 template <PortChannelBackend Backend>
-MSCCLPP_API_CPP PortChannelView<Backend> PortChannel<Backend>::deviceHandle() const {
-  BasePortChannelView<Backend> base = BasePortChannel<Backend>::deviceHandle();
+MSCCLPP_API_CPP PortChannelDeviceHandle<Backend> PortChannel<Backend>::deviceHandle() const {
+  BasePortChannelDeviceHandle<Backend> base = BasePortChannel<Backend>::deviceHandle();
   if constexpr (Backend == PortChannelBackend::Device) {
     auto& conn = BaseConnection::getImpl(this->semaphore_->connection());
-    return PortChannelView<Backend>(base.semaphore_, base.device_, conn->getDeviceMemoryInfo(dstMemory_),
-                                    conn->getDeviceMemoryInfo(srcMemory_));
+    return PortChannelDeviceHandle<Backend>(base.semaphore_, base.device_, conn->getDeviceMemoryInfo(dstMemory_),
+                                            conn->getDeviceMemoryInfo(srcMemory_));
   } else {
-    return PortChannelView<Backend>(base.semaphoreId_, base.semaphore_, base.fifo_, dst_, src_, base.flushDonePos_);
+    return PortChannelDeviceHandle<Backend>(base.semaphoreId_, base.semaphore_, base.fifo_, dst_, src_,
+                                            base.flushDonePos_);
   }
 }
 
