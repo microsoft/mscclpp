@@ -64,7 +64,7 @@ class Gateway {
     constexpr auto kExclusive = PortChannelDeviceHandle::Concurrency::Exclusive;
     channel.put<kExclusive, MaxQpsPerPeer>(transport_.symmetricOffset(dstHeader), transport_.symmetricOffset(srcHeader),
                                            headerBytes, queueIdx);
-    markQpDrained(queueIdx);
+    clearQpFlush(queueIdx);
   }
 
   // Stream ready chunks striped across QPs.
@@ -75,11 +75,11 @@ class Gateway {
     const uint64_t dstOffset = transport_.symmetricOffset(recvBuffer_);
     const uint64_t srcOffset = transport_.symmetricOffset(sendBuffer_);
     const uint64_t flagOffset = transport_.symmetricOffset(qpSignals_ + queueIdx);
-    if (!isQpDrained(queueIdx) && queueIdx * nTokensPerChunk_ < nTokens) {
+    if (requireQpFlush(queueIdx, nTokens)) {
       // Drain prior-round SQ completions while producers/reducers prepare the first chunk.
       channel.flush<kExclusive>(-1);
     }
-    markQpDrained(queueIdx);
+    clearQpFlush(queueIdx);
     for (int chunkIdx = queueIdx, tokenBegin = queueIdx * nTokensPerChunk_; tokenBegin < nTokens;
          chunkIdx += nQps, tokenBegin += nQps * nTokensPerChunk_) {
       const int nChunkTokens = min(nTokensPerChunk_, nTokens - tokenBegin);
@@ -310,9 +310,11 @@ class Gateway {
     return cachedChannel_;
   }
 
-  MSCCLPP_DEVICE_INLINE bool isQpDrained(int queueIdx) const { return (qpDrainedMask_ & (1u << queueIdx)) != 0; }
+  MSCCLPP_DEVICE_INLINE bool requireQpFlush(int queueIdx, int nTokens) const {
+    return (needQpFlushMask_ & (1u << queueIdx)) != 0 && queueIdx * nTokensPerChunk_ < nTokens;
+  }
 
-  MSCCLPP_DEVICE_INLINE void markQpDrained(int queueIdx) { qpDrainedMask_ |= (1u << queueIdx); }
+  MSCCLPP_DEVICE_INLINE void clearQpFlush(int queueIdx) { needQpFlushMask_ &= ~(1u << queueIdx); }
 
   MSCCLPP_DEVICE_INLINE void resetRecvSignals() const {
     const int nQps = transport_.portChannels_->numQpsPerPeer;
@@ -346,7 +348,7 @@ class Gateway {
   uint64_t* completionSignal_;
   PortChannelDeviceHandle cachedChannel_{};
   int cachedQueueIdx_ = -1;
-  uint32_t qpDrainedMask_ = 0;
+  uint32_t needQpFlushMask_ = ~0u;
 };
 
 #endif  // defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS) && MSCCLPP_BULK_AVAILABLE
