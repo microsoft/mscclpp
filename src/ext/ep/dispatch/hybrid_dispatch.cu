@@ -245,7 +245,8 @@ MSCCLPP_DEVICE_INLINE void dispatchControl(const int64_t* routes, const Workload
 
   for (int peerIdx = threadIdx.x; peerIdx < nRanks; peerIdx += blockDim.x) rankTokenCounts[peerIdx] = 0;
   if (threadIdx.x == 0) nRemoteTokens = 0;
-  combineGateway.reset(hybridCtx.maxTokensPerRank_, true, hybridCtx.combineChunkLoadReady_);
+  combineGateway.reset(hybridCtx.maxTokensPerRank_, static_cast<int>(threadIdx.x), static_cast<int>(blockDim.x), true,
+                       hybridCtx.combineChunkLoadReady_);
   __syncthreads();
   dispatchCountRoutes(routes, workload, transport, rankTokenCounts, nRemoteTokens);
   __syncthreads();
@@ -289,6 +290,7 @@ MSCCLPP_DEVICE_INLINE void dispatchForward(void* output, void* outputScales, int
   auto* base = sharedMemory + dispatchSharedControlBytes(context->numRanks_, true);
 
   __shared__ int nIncomingTokens;
+  __shared__ bool isLastForwarder;
   if (threadIdx.x == 0) {
     nIncomingTokens = state->recvHeader.nRemoteTokens.read(flag, -1);
     if (forwarderIdx == 0) *hybridCtx.nIncomingTokens_ = nIncomingTokens;
@@ -303,39 +305,47 @@ MSCCLPP_DEVICE_INLINE void dispatchForward(void* output, void* outputScales, int
   }
   __syncthreads();
 
-  int expertIdx = -1;
-  int slotIdx = -1;
-  float weight = 0.0f;
-  gateway.forward<HiddenBytes, Stride, HybridForwardWarps, ScaleBytes>(
-      base, output, outputScales, nIncomingTokens, forwarderIdx, nForwarders,
-      [&](int tokenIdx, void* landing) {
-        const InterDomainDispatchPayload payload(landing, Hidden, nTopk, sizeof(ElementType), ScaleBytes);
-        expertIdx = laneIdx < nTopk ? payload.expertIds_[laneIdx] : -1;
-        slotIdx = laneIdx < nTopk ? payload.dstSlots_[laneIdx] : -1;
-        weight = laneIdx < nTopk ? payload.topkWeights_[laneIdx] : 0.0f;
-        if (laneIdx < nTopk) {
-          // Preserve routes for combine before releasing recvBuffer for the next dispatch round.
-          auto* cached = hybridCtx.combineRoutes_ + static_cast<size_t>(tokenIdx) * 3 * nTopk;
-          cached[laneIdx] = expertIdx;
-          cached[nTopk + laneIdx] = slotIdx;
-          reinterpret_cast<float*>(cached + 2 * nTopk)[laneIdx] = weight;
-        }
-        const int dstRank = expertIdx >= 0 ? expertIdx / nLocalExperts : -1;
-        EP_DEVICE_ASSERT(dstRank < 0 || !transport.isIntraDomainPeer(dstRank) ||
-                         (slotIdx >= 0 && slotIdx < workload.maxTokensPerRank_));
-        const size_t dstSlotIndex =
-            static_cast<size_t>(gateway.peerRank()) * workload.maxTokensPerRank_ + max(0, slotIdx);
-        return Gateway::ForwardRoute{dstRank, dstSlotIndex};
-      },
-      [&](int, const Gateway::ForwardRoute& route, unsigned int leaderMask) {
-        const int outputExpertIdx =
-            workload.emitLocalExpertIds_ && expertIdx >= 0 ? expertIdx % nLocalExperts : expertIdx;
-        writeRankMajorMetadataIntraDomain(transport, outputIds, outputWeights, gateway.peerRank(), route.dstRank,
-                                          slotIdx, outputExpertIdx, weight, leaderMask, nTopk,
-                                          workload.maxTokensPerRank_, workload.invalidTokenExpertId_);
-      });
-  gateway.signalIntraDomain(&hybridCtx.dispatchScratch_->nCompletedForwarders, nForwarders,
-                            &hybridCtx.dispatchScratch_->forwardComplete, state->payloadReady, flag);
+  constexpr int NWarpGroupThreads = HybridForwardWarps * WARP_SIZE;
+  static_assert(NWarpGroupThreads <= DispatchNThreads);
+  static_assert(NWarpGroupThreads >= MaxNumRanks);
+  const int warpGroupThreadIdx = static_cast<int>(threadIdx.x);
+  if (warpGroupThreadIdx < NWarpGroupThreads) {
+    constexpr int warpGroupBarrierId = DispatchWarpGroupBarrierBase;
+    int expertIdx = -1;
+    int slotIdx = -1;
+    float weight = 0.0f;
+    gateway.forward<HiddenBytes, Stride, HybridForwardWarps, ScaleBytes>(
+        base, output, outputScales, nIncomingTokens, forwarderIdx, nForwarders, warpGroupThreadIdx, warpGroupBarrierId,
+        [&](int tokenIdx, void* landing) {
+          const InterDomainDispatchPayload payload(landing, Hidden, nTopk, sizeof(ElementType), ScaleBytes);
+          expertIdx = laneIdx < nTopk ? payload.expertIds_[laneIdx] : -1;
+          slotIdx = laneIdx < nTopk ? payload.dstSlots_[laneIdx] : -1;
+          weight = laneIdx < nTopk ? payload.topkWeights_[laneIdx] : 0.0f;
+          if (laneIdx < nTopk) {
+            // Preserve routes for combine before releasing recvBuffer for the next dispatch round.
+            auto* cached = hybridCtx.combineRoutes_ + static_cast<size_t>(tokenIdx) * 3 * nTopk;
+            cached[laneIdx] = expertIdx;
+            cached[nTopk + laneIdx] = slotIdx;
+            reinterpret_cast<float*>(cached + 2 * nTopk)[laneIdx] = weight;
+          }
+          const int dstRank = expertIdx >= 0 ? expertIdx / nLocalExperts : -1;
+          EP_DEVICE_ASSERT(dstRank < 0 || !transport.isIntraDomainPeer(dstRank) ||
+                           (slotIdx >= 0 && slotIdx < workload.maxTokensPerRank_));
+          const size_t dstSlotIndex =
+              static_cast<size_t>(gateway.peerRank()) * workload.maxTokensPerRank_ + max(0, slotIdx);
+          return Gateway::ForwardRoute{dstRank, dstSlotIndex};
+        },
+        [&](int, const Gateway::ForwardRoute& route, unsigned int leaderMask) {
+          const int outputExpertIdx =
+              workload.emitLocalExpertIds_ && expertIdx >= 0 ? expertIdx % nLocalExperts : expertIdx;
+          writeRankMajorMetadataIntraDomain(transport, outputIds, outputWeights, gateway.peerRank(), route.dstRank,
+                                            slotIdx, outputExpertIdx, weight, leaderMask, nTopk,
+                                            workload.maxTokensPerRank_, workload.invalidTokenExpertId_);
+        });
+    gateway.signalIntraDomain(&hybridCtx.dispatchScratch_->nCompletedForwarders, nForwarders,
+                              &hybridCtx.dispatchScratch_->forwardComplete, state->payloadReady, flag, &isLastForwarder,
+                              warpGroupThreadIdx, NWarpGroupThreads, warpGroupBarrierId);
+  }
 }
 
 #endif

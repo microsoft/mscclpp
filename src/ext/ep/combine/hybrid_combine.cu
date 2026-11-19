@@ -270,8 +270,6 @@ MSCCLPP_DEVICE_INLINE void combineGatewayToken(void* dst, const void* expertOutp
       }
     }
   }
-  // Join every writer before thread 0 publishes chunk readiness and protect sharedTokens reuse.
-  group.sync();
 }
 
 // Local path: reduce own intra-domain contributions; overlap in-flight remote RDMA partials across multiple tokens.
@@ -375,7 +373,8 @@ MSCCLPP_DEVICE_INLINE void combineControl(const DeviceContext* context, const Tr
                                 hybridCtx.dispatchSendBuffer_, hybridCtx.dispatchRecvBuffer_,
                                 hybridCtx.dispatchControl_->qpSignals, hybridCtx.dispatchScratch_->chunkReadySignals,
                                 &hybridCtx.dispatchControl_->completionSignal);
-  dispatchGateway.reset(hybridCtx.maxTokensPerRank_, /*resetRecv=*/false);
+  dispatchGateway.reset(hybridCtx.maxTokensPerRank_, static_cast<int>(threadIdx.x), static_cast<int>(blockDim.x),
+                        /*resetRecv=*/false);
   if (threadIdx.x == 0) dispatchGateway.waitComplete();
 }
 
@@ -395,10 +394,16 @@ __global__ __launch_bounds__(CombineNThreads,
     extern __shared__ __align__(128) uint8_t sharedMemory[];
     const TransportView transport(context);
     const auto& hybridCtx = context->hybridCtx_;
+    const int nGatewayBlocks = static_cast<int>(gridDim.x) - 1;
+    const Gateway::ReduceConfig reduceConfig{
+        .nWorkerBlocks = nGatewayBlocks,
+        .nWorkers = nGatewayBlocks * HybridCombineNWarpGroups,
+    };
     const size_t wireElemBytes = useBf16InterDomainCombine(hybridCtx) ? sizeof(Bf16) : sizeof(float);
     Gateway gateway(transport, hybridCtx.gatewayRank_, hybridCtx.nTokensPerChunk_,
                     static_cast<size_t>(Hidden) * wireElemBytes, hybridCtx.combineSendBuffer_,
-                    hybridCtx.combineRecvBuffer_, hybridCtx.combineControl_->qpSignals, hybridCtx.combineChunkReady_);
+                    hybridCtx.combineRecvBuffer_, hybridCtx.combineControl_->qpSignals, hybridCtx.combineChunkReady_,
+                    reduceConfig);
     const WorkspaceView workspace(context->workspace_, context->numRanks_, workload.numExperts_);
     const uint32_t flag = getDispatchFlag(workspace);
     constexpr int StageSlots = hybridCombineGroupStageSlots<Hidden, DispatchType, MaxNTopk>();
@@ -407,14 +412,14 @@ __global__ __launch_bounds__(CombineNThreads,
     const int warpIdx = static_cast<int>(threadIdx.x) / WARP_SIZE;
     const int groupIdx = warpIdx / HybridCombineGroupWarps;
     const int groupWarpIdx = warpIdx % HybridCombineGroupWarps;
-    const int groupThreadIdx = groupWarpIdx * WARP_SIZE + getLaneId();
-    const int groupBarrierId = HybridCombineGroupBarrierBase + groupIdx;
+    const int warpGroupThreadIdx = groupWarpIdx * WARP_SIZE + getLaneId();
+    const int warpGroupBarrierId = HybridCombineGroupBarrierBase + groupIdx;
     uint8_t* groupShared = sharedMemory + static_cast<size_t>(groupIdx) * GroupSharedBytes;
     auto& groupControl = *reinterpret_cast<HybridCombineGroupControl<StageSlots>*>(groupShared + TokensBytes);
     const float dequantScale = DispatchType == DispatchDataType::FP8_E4M3_STATIC ? 1.0f / workload.combineScale_ : 1.0f;
     uint32_t phase = 0;
-    const HybridCombineGroup<StageSlots> group{groupShared,  groupControl,   phase,
-                                               groupWarpIdx, groupThreadIdx, groupBarrierId};
+    const HybridCombineGroup<StageSlots> group{groupShared,  groupControl,       phase,
+                                               groupWarpIdx, warpGroupThreadIdx, warpGroupBarrierId};
 
     if (group.threadIdx == 0) {
       group.control.barrier.init();
@@ -426,10 +431,13 @@ __global__ __launch_bounds__(CombineNThreads,
     if (blockIdx.x == 0) {
       combineControl(context, transport, workspace, flag);
     }
+    // Reserve block 0 for control and QP posting; stripe each warp group across the remaining blocks first.
+    const bool isPoster = blockIdx.x == 0;
+    const int workerIdx = groupIdx * nGatewayBlocks + (static_cast<int>(blockIdx.x) - 1);
     const int posterQueueIdx = warpIdx - configCellDiv(context->numRanks_, WARP_SIZE);
-    gateway.reduceAndSend<HybridCombineNWarpGroups, HybridCombineGroupThreads>(
-        *hybridCtx.nIncomingTokens_, hybridCtx.combineChunkLoadReady_, posterQueueIdx, groupIdx, groupThreadIdx,
-        groupBarrierId, [&](uint8_t* dst, int tokenIdx, auto&& loadReady) {
+    gateway.reduceAndSend<HybridCombineGroupThreads>(
+        *hybridCtx.nIncomingTokens_, hybridCtx.combineChunkLoadReady_, isPoster, workerIdx, posterQueueIdx,
+        warpGroupThreadIdx, warpGroupBarrierId, [&](uint8_t* dst, int tokenIdx, auto&& loadReady) {
           combineGatewayToken<Mode, Hidden, DispatchType, MaxNTopk>(dst, expertOutput, tokenIdx, workload, context,
                                                                     transport, gateway, workspace, flag, dequantScale,
                                                                     group, loadReady);
