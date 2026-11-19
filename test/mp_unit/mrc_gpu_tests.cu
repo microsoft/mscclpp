@@ -212,7 +212,7 @@ class MrcGpuVisibilityTest : public MrcTestBase {
   std::unique_ptr<const mscclpp::MrcMr> sourceMr;
   std::unique_ptr<const mscclpp::MrcMr> destinationMr;
   std::shared_ptr<mscclpp::MrcQp> qp;
-  mscclpp::MrcMrInfo remoteMr;
+  mscclpp::MrcBuffer remoteMr;
   MrcGpuResult* deviceResult = nullptr;
   mscclpp::CudaStreamWithFlags stream;
   bool kernelStarted = false;

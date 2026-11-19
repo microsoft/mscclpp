@@ -91,7 +91,7 @@ static void checkGpuDmaTopology(CUdevice device, const std::string& dmaDevicePat
 #endif
 
 MrcMr::MrcMr(ibv_pd* pd, void* buff, std::size_t size, [[maybe_unused]] const std::string& dataDirectPath)
-    : mr_(nullptr), buff_(buff) {
+    : mr_(nullptr), buff_(buff), size_(size) {
   if (buff == nullptr || size == 0) {
     throw Error("Native MRC requires a nonnull MR buffer and positive size", ErrorCode::InvalidUsage);
   }
@@ -103,7 +103,8 @@ MrcMr::MrcMr(ibv_pd* pd, void* buff, std::size_t size, [[maybe_unused]] const st
   }
   uintptr_t bufferAddress = reinterpret_cast<uintptr_t>(buff);
   std::size_t offset = bufferAddress % pageSize;
-  if (size > std::numeric_limits<std::size_t>::max() - offset - (pageSize - 1)) {
+  if (size > std::numeric_limits<uintptr_t>::max() - bufferAddress ||
+      size > std::numeric_limits<std::size_t>::max() - offset - (pageSize - 1)) {
     throw Error("Native MRC registration range is too large", ErrorCode::InvalidUsage);
   }
   uintptr_t address = bufferAddress - offset;
@@ -186,15 +187,12 @@ MrcMr::MrcMr(ibv_pd* pd, void* buff, std::size_t size, [[maybe_unused]] const st
 
 MrcMr::~MrcMr() { ibv_dereg_mr(mr_); }
 
-MrcMrInfo MrcMr::getInfo() const { return {reinterpret_cast<uint64_t>(buff_), mr_->rkey}; }
-
-const void* MrcMr::getBuff() const { return buff_; }
-
-uint32_t MrcMr::getLkey() const { return mr_->lkey; }
+MrcBuffer MrcMr::getBuffer() const { return {{reinterpret_cast<uint64_t>(buff_), mr_->rkey}, size_}; }
 
 MrcQp::MrcQp(ibv_context* context, mrc_context* mrcContext, ibv_pd* pd, int port, int gidIndex, uint64_t evProfileId,
              int maxSendCqSize, int maxSendWr, int maxRecvWr)
-    : portNum_(port),
+    : pd_(pd),
+      portNum_(port),
       gidIndex_(gidIndex),
       info_{},
       sendCq_(nullptr),
@@ -354,22 +352,31 @@ void MrcQp::rts() {
   }
 }
 
-void MrcQp::stageSendWrite(const MrcMr* mr, const MrcMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
+void MrcQp::stageSendWrite(const MrcMr* mr, const MrcBuffer& dst, uint64_t size, uint64_t wrId, uint64_t srcOffset,
                            uint64_t dstOffset, bool signaled) {
   if (mr == nullptr) {
     throw Error("Native MRC WRITE requires an MR", ErrorCode::InvalidUsage);
   }
-  stageSend(mr, info, size, wrId, srcOffset, dstOffset, signaled);
+  stageSend(mr, dst, size, wrId, srcOffset, dstOffset, signaled);
 }
 
-void MrcQp::stageSendWriteWithImm(const MrcMr* mr, const MrcMrInfo& info, uint32_t size, uint64_t wrId,
+void MrcQp::stageSendWriteWithImm(const MrcMr* mr, const MrcBuffer& dst, uint64_t size, uint64_t wrId,
                                   uint64_t srcOffset, uint64_t dstOffset, bool signaled, unsigned int immData) {
-  auto& wr = stageSend(mr, info, size, wrId, srcOffset, dstOffset, signaled);
+  auto& wr = stageSend(mr, dst, size, wrId, srcOffset, dstOffset, signaled);
   wr.opcode = IBV_WR_RDMA_WRITE_WITH_IMM;
   wr.imm_data = htonl(immData);
 }
 
-ibv_send_wr& MrcQp::stageSend(const MrcMr* mr, const MrcMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
+static uint64_t checkedWriteAddress(const MrcBuffer& buffer, uint64_t offset, uint64_t size) {
+  if (buffer.info.addr == 0 || buffer.size == 0 ||
+      buffer.size > std::numeric_limits<uint64_t>::max() - buffer.info.addr || offset > buffer.size ||
+      size > buffer.size - offset) {
+    throw Error("Native MRC WRITE outside logical memory range", ErrorCode::InvalidUsage);
+  }
+  return buffer.info.addr + offset;
+}
+
+ibv_send_wr& MrcQp::stageSend(const MrcMr* mr, const MrcBuffer& dst, uint64_t size, uint64_t wrId, uint64_t srcOffset,
                               uint64_t dstOffset, bool signaled) {
   if (sendFailed_) {
     throw Error("Native MRC send posting previously failed; create a new QP", ErrorCode::InvalidUsage);
@@ -381,21 +388,29 @@ ibv_send_wr& MrcQp::stageSend(const MrcMr* mr, const MrcMrInfo& info, uint32_t s
   if (signaled && numPostedSignaledSend_ + numStagedSignaledSend_ >= maxSendCqSize_) {
     throw Error("Native MRC send CQ is full; poll completions before staging another signal", ErrorCode::InvalidUsage);
   }
+  if (size > std::numeric_limits<uint32_t>::max()) {
+    throw Error("Native MRC WRITE exceeds the maximum SGE length", ErrorCode::InvalidUsage);
+  }
+  if (mr && mr->mr_->pd != pd_) {
+    throw Error("Native MRC WRITE source and QP belong to different protection domains", ErrorCode::InvalidUsage);
+  }
+  const uint64_t dstAddress = checkedWriteAddress(dst, dstOffset, size);
+  const uint64_t srcAddress = mr ? checkedWriteAddress(mr->getBuffer(), srcOffset, size) : 0;
   auto& wr = sendWrs_[numStagedSend_];
   auto& sge = sendSges_[numStagedSend_];
   wr = {};
   if (mr != nullptr) {
-    sge.addr = reinterpret_cast<uint64_t>(mr->getBuff()) + srcOffset;
-    sge.length = size;
-    sge.lkey = mr->getLkey();
+    sge.addr = srcAddress;
+    sge.length = static_cast<uint32_t>(size);
+    sge.lkey = mr->mr_->lkey;
   }
   wr.wr_id = wrId;
   wr.sg_list = mr != nullptr ? &sge : nullptr;
   wr.num_sge = mr != nullptr ? 1 : 0;
   wr.opcode = IBV_WR_RDMA_WRITE;
   wr.send_flags = signaled ? IBV_SEND_SIGNALED : 0;
-  wr.wr.rdma.remote_addr = info.addr + dstOffset;
-  wr.wr.rdma.rkey = info.rkey;
+  wr.wr.rdma.remote_addr = dstAddress;
+  wr.wr.rdma.rkey = dst.info.rkey;
   if (numStagedSend_ > 0) {
     sendWrs_[numStagedSend_ - 1].next = &wr;
   }
@@ -613,14 +628,15 @@ void validateMrcConfig(const EndpointConfig& config) {
 }  // namespace
 
 MrcMemory::MrcMemory(std::shared_ptr<RdmaProvider> provider, std::unique_ptr<const MrcMr> mr)
-    : RdmaMemory(std::move(provider)), mr_(std::move(mr)), info_(mr_->getInfo()) {}
+    : RdmaMemory(std::move(provider)), mr_(std::move(mr)), buffer_(mr_->getBuffer()) {}
 
-MrcMemory::MrcMemory(const MrcMrInfo& info) {
+MrcMemory::MrcMemory(const MrcMrInfo& info, size_t size) : buffer_{} {
   // Preserve padding too: existing metadata uses the raw object representation.
-  std::memcpy(&info_, &info, sizeof(info_));
+  std::memcpy(&buffer_.info, &info, sizeof(info));
+  buffer_.size = size;
 }
 
-void MrcMemory::serialize(std::vector<char>& data) const { detail::serialize(data, info_); }
+void MrcMemory::serialize(std::vector<char>& data) const { detail::serialize(data, buffer_.info); }
 
 MrcEndpoint::MrcEndpoint(std::shared_ptr<RdmaProvider> provider, MrcCtx& context, EndpointConfig& config)
     : RdmaEndpoint(std::move(provider)) {
@@ -693,7 +709,7 @@ std::shared_ptr<RdmaMemory> deserializeMrcMemory(Transport transport, std::vecto
     throw Error("Invalid native MRC memory range", ErrorCode::InvalidUsage);
   }
   seen |= transport;
-  return std::make_shared<MrcMemory>(info);
+  return std::make_shared<MrcMemory>(info, size);
 }
 
 }  // namespace mscclpp

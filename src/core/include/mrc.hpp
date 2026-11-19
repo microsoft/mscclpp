@@ -35,23 +35,29 @@ struct MrcMrInfo {
   uint32_t rkey;
 };
 
+// The logical extent comes from RegisteredMemory, not from the native MR wire record.
+struct MrcBuffer {
+  MrcMrInfo info;
+  uint64_t size;
+};
+
 class MrcMr {
  public:
   ~MrcMr();
   MrcMr(const MrcMr&) = delete;
   MrcMr& operator=(const MrcMr&) = delete;
 
-  MrcMrInfo getInfo() const;
-  const void* getBuff() const;
-  uint32_t getLkey() const;
+  MrcBuffer getBuffer() const;
 
  private:
   MrcMr(ibv_pd* pd, void* buff, std::size_t size, const std::string& dataDirectPath);
 
   ibv_mr* mr_;
   void* buff_;
+  std::size_t size_;
 
   friend class MrcCtx;
+  friend class MrcQp;
 };
 
 // QP info to be shared with the remote peer.
@@ -73,9 +79,9 @@ class MrcQp {
 
   void rtr(const MrcQpInfo& info);
   void rts();
-  void stageSendWrite(const MrcMr* mr, const MrcMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
+  void stageSendWrite(const MrcMr* mr, const MrcBuffer& dst, uint64_t size, uint64_t wrId, uint64_t srcOffset,
                       uint64_t dstOffset, bool signaled);
-  void stageSendWriteWithImm(const MrcMr* mr, const MrcMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
+  void stageSendWriteWithImm(const MrcMr* mr, const MrcBuffer& dst, uint64_t size, uint64_t wrId, uint64_t srcOffset,
                              uint64_t dstOffset, bool signaled, unsigned int immData);
   void postSend();
   void stageRecv(uint64_t wrId);
@@ -94,9 +100,10 @@ class MrcQp {
  private:
   MrcQp(ibv_context* context, mrc_context* mrcContext, ibv_pd* pd, int port, int gidIndex, uint64_t evProfileId,
         int maxSendCqSize, int maxSendWr, int maxRecvWr);
-  ibv_send_wr& stageSend(const MrcMr* mr, const MrcMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
+  ibv_send_wr& stageSend(const MrcMr* mr, const MrcBuffer& dst, uint64_t size, uint64_t wrId, uint64_t srcOffset,
                          uint64_t dstOffset, bool signaled);
 
+  ibv_pd* pd_;
   int portNum_;
   int gidIndex_;
   MrcQpInfo info_;
@@ -151,16 +158,16 @@ class MrcCtx {
 class MrcMemory final : public RdmaMemory {
  public:
   MrcMemory(std::shared_ptr<RdmaProvider> provider, std::unique_ptr<const MrcMr> mr);
-  explicit MrcMemory(const MrcMrInfo& info);
+  MrcMemory(const MrcMrInfo& info, size_t size);
   bool isLocal() const override { return mr_ != nullptr; }
-  uint64_t address() const { return info_.addr; }
+  uint64_t address() const { return buffer_.info.addr; }
   void serialize(std::vector<char>& data) const override;
   const MrcMr* mr() const { return mr_.get(); }
-  const MrcMrInfo& info() const { return info_; }
+  const MrcBuffer& buffer() const { return buffer_; }
 
  private:
   std::unique_ptr<const MrcMr> mr_;
-  MrcMrInfo info_;
+  MrcBuffer buffer_;
 };
 
 class MrcEndpoint final : public RdmaEndpoint {

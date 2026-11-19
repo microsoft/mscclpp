@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <exception>
+#include <limits>
 #include <mscclpp/errors.hpp>
 #include <thread>
 
@@ -44,13 +45,13 @@ void MrcTestBase::runOnBothRanks(const char* phase, const std::function<void()>&
   if (peerFailed) FAIL() << phase << " failed on the peer.";
 }
 
-mscclpp::MrcMrInfo MrcTestBase::connectPeer(mscclpp::MrcQp& qp, const mscclpp::MrcMr& destination) {
+mscclpp::MrcBuffer MrcTestBase::connectPeer(mscclpp::MrcQp& qp, const mscclpp::MrcMr& destination) {
   auto peer = exchangeWithPeer(qp.getInfo());
   runOnBothRanks("native QP connection", [&] {
     qp.rtr(peer);
     qp.rts();
   });
-  return exchangeWithPeer(destination.getInfo());
+  return exchangeWithPeer(destination.getBuffer());
 }
 
 class MrcPeerToPeerTest : public MrcTestBase {
@@ -108,7 +109,7 @@ class MrcPeerToPeerTest : public MrcTestBase {
   std::vector<unsigned char> buffer;
   std::unique_ptr<const mscclpp::MrcMr> mr;
   std::shared_ptr<mscclpp::MrcQp> qp;
-  mscclpp::MrcMrInfo remoteMr;
+  mscclpp::MrcBuffer remoteMr;
 };
 
 void MrcPeerToPeerTest::testImmediateNotifications(bool precedingWrite) {
@@ -150,6 +151,43 @@ void MrcPeerToPeerTest::testImmediateNotifications(bool precedingWrite) {
 TEST(MrcPeerToPeerTest, WriteWithImmediatePayload) { testImmediateNotifications(false); }
 
 TEST(MrcPeerToPeerTest, WriteThenZeroByteNotification) { testImmediateNotifications(true); }
+
+TEST(MrcPeerToPeerTest, InvalidWritesPreserveStagedBatch) {
+  std::unique_ptr<const mscclpp::MrcMr> source;
+  std::vector<unsigned int> tokens;
+  runOnBothRanks("stage checked native writes", [&] {
+    // The logical source is shorter than its page-aligned registration.
+    source = context->registerMr(buffer.data() + 1, 2);
+    mscclpp::MrcCtx other(mrcDevice);
+    auto foreign = other.registerMr(buffer.data(), buffer.size());
+    buffer[2] = static_cast<unsigned char>(0x40 + gEnv->rank);
+    qp->stageSendWrite(source.get(), remoteMr, 1, 0, 1, remoteMr.size - 1, true);
+    ASSERT_TRUE(rejectsInvalidUsage([&] { qp->stageSendWrite(foreign.get(), remoteMr, 1, 0, 0, 0, true); }));
+    ASSERT_TRUE(rejectsInvalidUsage([&] { qp->stageSendWrite(source.get(), remoteMr, 2, 0, 1, 0, true); }));
+    ASSERT_TRUE(
+        rejectsInvalidUsage([&] { qp->stageSendWrite(source.get(), remoteMr, 2, 0, 0, remoteMr.size - 1, true); }));
+    ASSERT_TRUE(
+        rejectsInvalidUsage([&] { qp->stageSendWrite(source.get(), remoteMr, uint64_t{1} << 32, 0, 0, 0, true); }));
+    auto wrapped = remoteMr;
+    wrapped.info.addr = std::numeric_limits<uint64_t>::max() - 1;
+    ASSERT_TRUE(rejectsInvalidUsage([&] { qp->stageSendWriteWithImm(source.get(), wrapped, 1, 0, 0, 2, true, 0); }));
+    ASSERT_TRUE(rejectsInvalidUsage(
+        [&] { qp->stageSendWriteWithImm(nullptr, remoteMr, 0, 0, 0, std::numeric_limits<uint64_t>::max(), true, 0); }));
+
+    // Fill every remaining slot before posting: a rejected WR must not consume space or break the chain.
+    for (int i = 1; i < queueDepth; ++i) {
+      qp->stageRecv(i);
+      qp->stageSendWriteWithImm(nullptr, remoteMr, 0, i, 0, 0, true, i);
+      tokens.push_back(i);
+    }
+    qp->postRecv();
+  });
+  runOnBothRanks("complete checked native writes", [&] {
+    qp->postSend();
+    drain(queueDepth - 1, queueDepth, tokens);
+    EXPECT_EQ(buffer.back(), static_cast<unsigned char>(0x40 + 1 - gEnv->rank));
+  });
+}
 
 TEST(MrcPeerToPeerTest, ReceiveCapacityAndReplenishment) {
   for (int round = 0; round < 3; ++round) {
@@ -287,7 +325,7 @@ TEST(MultiProcessTest, MrcEndpointAndMemoryExchange) {
   qp->stageRecv(0);
   qp->postRecv();
   MPI_Barrier(MPI_COMM_WORLD);
-  qp->stageSendWriteWithImm(localMemory.mr(), remoteMemory.info(), 64, 0, 0, 1024, true, 0x01020304 + gEnv->rank);
+  qp->stageSendWriteWithImm(localMemory.mr(), remoteMemory.buffer(), 64, 0, 0, 1024, true, 0x01020304 + gEnv->rank);
   qp->postSend();
   bool received = false;
   bool sent = false;

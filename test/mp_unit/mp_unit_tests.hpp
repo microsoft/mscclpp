@@ -54,7 +54,7 @@ class MrcTestBase : public MultiProcessTest {
  protected:
   void SetUp() override;
   void runOnBothRanks(const char* phase, const std::function<void()>& run);
-  mscclpp::MrcMrInfo connectPeer(mscclpp::MrcQp& qp, const mscclpp::MrcMr& destination);
+  mscclpp::MrcBuffer connectPeer(mscclpp::MrcQp& qp, const mscclpp::MrcMr& destination);
 
   const char* mrcDevice = nullptr;
   static constexpr int queueDepth = 8;
