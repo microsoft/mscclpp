@@ -36,6 +36,10 @@ static bool isNvlsSupportedForDataType(const AlgorithmSelectorConfig& config, Da
 }
 
 bool matchExecutionPlan(std::shared_ptr<DslAlgorithm> algo, const CollectiveRequest& request) {
+  // DSL execution plans don't support FP8 on either CUDA or ROCm, so leave these requests to the native algorithms.
+  if (collective::isFp8DataType(request.dtype)) {
+    return false;
+  }
   bool worldSizeMatch = algo->constraint().worldSize == request.worldSize;
   bool ranksPerNodeMatch = algo->constraint().nRanksPerNode == request.nRanksPerNode;
   bool collectiveMatch = algo->collective() == request.collective;
