@@ -86,6 +86,20 @@ class MrcSendProgress {
   bool hasUnsignaled_ = false;
 };
 
+class MrcRecvProgress {
+ public:
+  void check() const;
+  int pendingRecvs() const;
+  void posted(int result, int staged);
+  void polled(int count, const ibv_wc* wcs);
+  const ibv_wc& completion(int idx, const ibv_wc* wcs) const;
+
+ private:
+  std::exception_ptr failure_;
+  int pending_ = 0;
+  int numWcs_ = 0;
+};
+
 class MrcQp {
  public:
   ~MrcQp();
@@ -138,9 +152,7 @@ class MrcQp {
   MrcSendProgress sendProgress_;
   int numSendWcs_;
   int numStagedRecv_;
-  int numPostedRecv_;
-  int numRecvWcs_;
-  bool recvFailed_;
+  MrcRecvProgress recvProgress_;
   const int maxSendCqSize_;
   const int maxSendWr_;
   const int maxRecvWr_;

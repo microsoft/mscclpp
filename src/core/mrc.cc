@@ -9,7 +9,6 @@
 #include <mrc.h>
 #include <unistd.h>
 
-#include <algorithm>
 #include <cerrno>
 #include <cstring>
 #include <limits>
@@ -202,9 +201,6 @@ MrcQp::MrcQp(ibv_context* context, mrc_context* mrcContext, ibv_pd* pd, int port
       numStagedSignaledSend_(0),
       numSendWcs_(0),
       numStagedRecv_(0),
-      numPostedRecv_(0),
-      numRecvWcs_(0),
-      recvFailed_(false),
       maxSendCqSize_(maxSendCqSize),
       maxSendWr_(maxSendWr),
       maxRecvWr_(maxRecvWr) {
@@ -433,10 +429,7 @@ void MrcQp::postSend() {
 }
 
 void MrcQp::stageRecv(uint64_t wrId) {
-  if (recvFailed_) {
-    throw Error("Native MRC receive posting previously failed; create a new QP", ErrorCode::InvalidUsage);
-  }
-  if (numStagedRecv_ + numPostedRecv_ >= maxRecvWr_) {
+  if (numStagedRecv_ >= maxRecvWr_ - recvProgress_.pendingRecvs()) {
     throw Error("Native MRC receive queue is full or disabled; poll completions before staging another receive",
                 ErrorCode::InvalidUsage);
   }
@@ -450,28 +443,13 @@ void MrcQp::stageRecv(uint64_t wrId) {
 }
 
 void MrcQp::postRecv() {
-  if (recvFailed_) {
-    throw Error("Native MRC receive posting previously failed; create a new QP", ErrorCode::InvalidUsage);
-  }
+  recvProgress_.check();
   if (numStagedRecv_ == 0) return;
   ibv_recv_wr* badWr = nullptr;
   int ret = mrc_post_recv(qp_, recvWrs_.get(), &badWr);
-  int error = ret > 0 ? ret : errno;
-  if (ret == 0) {
-    numPostedRecv_ += numStagedRecv_;
-  } else {
-    // As with sends, a failed post may have accepted a prefix.
-    if (badWr != nullptr) {
-      for (auto* wr = recvWrs_.get(); wr != nullptr && wr != badWr; wr = wr->next) {
-        ++numPostedRecv_;
-      }
-    }
-    recvFailed_ = true;
-  }
+  // A failed post may have accepted a prefix. Never replay that batch.
+  recvProgress_.posted(ret, numStagedRecv_);
   numStagedRecv_ = 0;
-  if (ret != 0) {
-    throw MrcError("mrc_post_recv failed", error);
-  }
 }
 
 void MrcSendProgress::check() const {
@@ -534,11 +512,58 @@ bool MrcQp::progressSend() {
   return numStagedSend_ == 0 && sendProgress_.drained();
 }
 
+void MrcRecvProgress::check() const {
+  if (failure_) std::rethrow_exception(failure_);
+}
+
+int MrcRecvProgress::pendingRecvs() const {
+  check();
+  return pending_;
+}
+
+void MrcRecvProgress::posted(int result, int staged) try {
+  check();
+  if (result != 0) throw MrcError("mrc_post_recv failed", result > 0 ? result : errno);
+  pending_ += staged;
+} catch (...) {
+  failure_ = std::current_exception();
+  throw;
+}
+
+void MrcRecvProgress::polled(int count, const ibv_wc* wcs) try {
+  check();
+  if (count < 0) throw MrcError("mrc_poll_cq failed for native MRC receive CQ", errno);
+  if (count > pending_) throw Error("Unexpected native MRC receive completion count", ErrorCode::InternalError);
+  // Validate the entire batch before making any notification visible.
+  for (int i = 0; i < count; ++i) {
+    if (wcs[i].status != IBV_WC_SUCCESS) {
+      throw Error(
+          "Native MRC receive WR " + std::to_string(wcs[i].wr_id) + " failed: " + ibv_wc_status_str(wcs[i].status),
+          ErrorCode::SystemError);
+    }
+    if (!(wcs[i].wc_flags & IBV_WC_WITH_IMM)) {
+      throw Error("Native MRC receive WR " + std::to_string(wcs[i].wr_id) + " has no immediate data",
+                  ErrorCode::SystemError);
+    }
+  }
+  numWcs_ = count;
+  pending_ -= count;
+} catch (...) {
+  failure_ = std::current_exception();
+  throw;
+}
+
+const ibv_wc& MrcRecvProgress::completion(int idx, const ibv_wc* wcs) const {
+  check();
+  if (idx < 0 || idx >= numWcs_) throw Error("Invalid native MRC receive completion index", ErrorCode::InvalidUsage);
+  return wcs[idx];
+}
+
 int MrcQp::pollRecvCq() {
+  recvProgress_.check();
   if (recvCq_ == nullptr) return 0;
   int count = mrc_poll_cq(recvCq_, maxRecvWr_, recvWcs_.get());
-  numRecvWcs_ = std::max(count, 0);
-  if (count > 0) numPostedRecv_ = std::max(numPostedRecv_ - count, 0);
+  recvProgress_.polled(count, recvWcs_.get());
   return count;
 }
 
@@ -555,22 +580,14 @@ std::string MrcQp::getSendWcStatusString(int idx) const {
 
 int MrcQp::getNumSendCqItems() const { return sendProgress_.pendingSignaledSends(); }
 
-int MrcQp::getRecvWcStatus(int idx) const {
-  if (idx < 0 || idx >= numRecvWcs_) {
-    throw Error("Invalid native MRC receive completion index", ErrorCode::InvalidUsage);
-  }
-  return recvWcs_[idx].status;
-}
+int MrcQp::getRecvWcStatus(int idx) const { return recvProgress_.completion(idx, recvWcs_.get()).status; }
 
 std::string MrcQp::getRecvWcStatusString(int idx) const {
   return ibv_wc_status_str(static_cast<ibv_wc_status>(getRecvWcStatus(idx)));
 }
 
 unsigned int MrcQp::getRecvWcImmData(int idx) const {
-  if (getRecvWcStatus(idx) != IBV_WC_SUCCESS || !(recvWcs_[idx].wc_flags & IBV_WC_WITH_IMM)) {
-    throw Error("Native MRC receive completion has no valid immediate data", ErrorCode::InvalidUsage);
-  }
-  return ntohl(recvWcs_[idx].imm_data);
+  return ntohl(recvProgress_.completion(idx, recvWcs_.get()).imm_data);
 }
 
 MrcCtx::MrcCtx(const std::string& devName) : devName_(devName), context_(nullptr), pd_(nullptr), mrcContext_(nullptr) {

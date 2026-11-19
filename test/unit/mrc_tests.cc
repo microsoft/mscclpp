@@ -14,19 +14,20 @@
 #include "mrc.hpp"
 #include "serialization.hpp"
 
-class MrcSendProgressTest : public mscclpp::test::TestCase {
- protected:
-  template <typename F>
-  std::string failureMessage(F run) {
-    try {
-      run();
-    } catch (const mscclpp::BaseError& error) {
-      return error.what();
-    }
-    FAIL() << "Expected native MRC send progress to fail";
-    return {};
+namespace {
+
+template <typename F>
+std::string failureMessage(F run) {
+  try {
+    run();
+  } catch (const mscclpp::BaseError& error) {
+    return error.what();
   }
-};
+  FAIL() << "Expected native MRC progress to fail";
+  return {};
+}
+
+}  // namespace
 
 TEST(MrcSendProgressTest, RequiresEverySignaledCompletion) {
   mscclpp::MrcSendProgress sends;
@@ -70,6 +71,46 @@ TEST(MrcSendProgressTest, FailedCompletionDoesNotRetireSignaledSends) {
   EXPECT_TRUE(failure.find("42") != std::string::npos);
   EXPECT_EQ(failureMessage([&] { sends.pendingSignaledSends(); }), failure);
   EXPECT_EQ(failureMessage([&] { sends.drained(); }), failure);
+}
+
+TEST(MrcRecvProgressTest, FailedPostOrPollInvalidatesPriorNotification) {
+  ibv_wc wc{};
+  wc.status = IBV_WC_SUCCESS;
+  wc.wc_flags = IBV_WC_WITH_IMM;
+  for (bool failPost : {false, true}) {
+    mscclpp::MrcRecvProgress recvs;
+    recvs.posted(0, 1);
+    recvs.polled(1, &wc);
+    ASSERT_EQ(recvs.completion(0, &wc).status, IBV_WC_SUCCESS);
+    auto failure = failureMessage([&] {
+      if (failPost) {
+        recvs.posted(EIO, 2);  // An unsuccessful repost may have submitted a prefix.
+      } else {
+        errno = EIO;
+        recvs.polled(-1, nullptr);
+      }
+    });
+    EXPECT_TRUE(failure.find(failPost ? "mrc_post_recv" : "mrc_poll_cq") != std::string::npos);
+    EXPECT_EQ(failureMessage([&] { recvs.completion(0, &wc); }), failure);
+    EXPECT_EQ(failureMessage([&] { recvs.polled(0, nullptr); }), failure);
+    EXPECT_EQ(failureMessage([&] { recvs.posted(0, 1); }), failure);
+  }
+}
+
+TEST(MrcRecvProgressTest, BadCompletionRejectsWholeNotificationBatch) {
+  for (auto status : {IBV_WC_WR_FLUSH_ERR, IBV_WC_SUCCESS}) {
+    mscclpp::MrcRecvProgress recvs;
+    recvs.posted(0, 2);
+    ibv_wc wcs[2]{};
+    wcs[0].status = IBV_WC_SUCCESS;
+    wcs[0].wc_flags = IBV_WC_WITH_IMM;
+    wcs[1].wr_id = 42;
+    wcs[1].status = status;  // A successful WC without immediate data is not a notification either.
+    auto failure = failureMessage([&] { recvs.polled(2, wcs); });
+    EXPECT_TRUE(failure.find("42") != std::string::npos);
+    EXPECT_EQ(failureMessage([&] { recvs.completion(0, wcs); }), failure);
+    EXPECT_EQ(failureMessage([&] { recvs.pendingRecvs(); }), failure);
+  }
 }
 
 struct MrcUnitMetadataAccess : mscclpp::BaseConnection {
