@@ -12,16 +12,7 @@
 #include "connection.hpp"
 #include "mp_unit_tests.hpp"
 
-namespace {
-
-template <typename T>
-T exchangeWithPeer(const T& local) {
-  std::array<T, 2> peers;
-  MPI_Allgather(&local, sizeof(T), MPI_BYTE, peers.data(), sizeof(T), MPI_BYTE, MPI_COMM_WORLD);
-  return peers[1 - gEnv->rank];
-}
-
-std::vector<char> exchangeWithPeer(const std::vector<char>& local) {
+std::vector<char> exchangeMrcPeerBytes(const std::vector<char>& local) {
   std::vector<char> peers(local.size() * 2);
   MPI_Allgather(local.data(), local.size(), MPI_BYTE, peers.data(), local.size(), MPI_BYTE, MPI_COMM_WORLD);
   auto begin = peers.begin() + (1 - gEnv->rank) * local.size();
@@ -34,6 +25,15 @@ mscclpp::Transport mrcTransportForDevice(const char* device) {
     if (mscclpp::getMrcDeviceName(candidate) == device) return candidate;
   }
   return mscclpp::Transport::Unknown;
+}
+
+namespace {
+
+template <typename T>
+T exchangeWithPeer(const T& local) {
+  std::array<T, 2> peers;
+  MPI_Allgather(&local, sizeof(T), MPI_BYTE, peers.data(), sizeof(T), MPI_BYTE, MPI_COMM_WORLD);
+  return peers[1 - gEnv->rank];
 }
 
 template <typename F>
@@ -356,8 +356,8 @@ class MrcConnectionTest : public MrcTestBase {
                                           {},
                                           {1, std::stoi(gEnv->args["ib_gid_index"]), 0, queueDepth, 2, 0}});
     });
-    auto peer = mscclpp::Endpoint::deserialize(exchangeWithPeer(endpoint.serialize()));
-    remote = mscclpp::RegisteredMemory::deserialize(exchangeWithPeer(local.serialize()));
+    auto peer = mscclpp::Endpoint::deserialize(exchangeMrcPeerBytes(endpoint.serialize()));
+    remote = mscclpp::RegisteredMemory::deserialize(exchangeMrcPeerBytes(local.serialize()));
     runOnBothRanks("connect private native data path", [&] {
       ASSERT_TRUE(rejectsInvalidUsage([&] { context->connect(endpoint, peer); }));
       connection = std::make_unique<mscclpp::MrcConnection>(context, endpoint, peer);
@@ -443,7 +443,7 @@ TEST(MrcConnectionTest, ReusesGpuSourceAfterFlush) {
     srcMemory = context->registerMemory(src.get(), bytes, transport);
     dstMemory = context->registerMemory(dst.get(), bytes, transport);
   });
-  auto target = mscclpp::RegisteredMemory::deserialize(exchangeWithPeer(dstMemory.serialize()));
+  auto target = mscclpp::RegisteredMemory::deserialize(exchangeMrcPeerBytes(dstMemory.serialize()));
   for (bool async : {false, true}) {
     runOnBothRanks("write GPU memory and reuse source after flush", [&] {
       MSCCLPP_CUDATHROW(cudaMemset(src.get(), 0x40 + async * 16 + gEnv->rank, bytes));
@@ -483,8 +483,8 @@ TEST(MultiProcessTest, MrcEndpointAndMemoryExchange) {
   auto memory = context->registerMemory(buffer.data(), buffer.size(), transport);
   auto endpoint = context->createEndpoint(
       {transport, mscclpp::DeviceType::CPU, -1, {}, {1, std::stoi(gEnv->args["ib_gid_index"]), 0, 8, 8, 8}});
-  auto peerEndpoint = mscclpp::Endpoint::deserialize(exchangeWithPeer(endpoint.serialize()));
-  auto peerMemory = mscclpp::RegisteredMemory::deserialize(exchangeWithPeer(memory.serialize()));
+  auto peerEndpoint = mscclpp::Endpoint::deserialize(exchangeMrcPeerBytes(endpoint.serialize()));
+  auto peerMemory = mscclpp::RegisteredMemory::deserialize(exchangeMrcPeerBytes(memory.serialize()));
   auto& local = MrcMetadataAccess::getImpl(memory).getTransportInfo(transport);
   auto& remote = MrcMetadataAccess::getImpl(peerMemory).getTransportInfo(peerEndpoint.transport());
   EXPECT_TRUE(local.rdmaMemory->isLocal());

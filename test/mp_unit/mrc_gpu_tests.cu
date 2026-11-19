@@ -4,9 +4,11 @@
 #include <chrono>
 #include <limits>
 #include <mscclpp/gpu_utils.hpp>
+#include <optional>
 #include <thread>
 
 #include "atomic.hpp"
+#include "connection.hpp"
 #include "gdr.hpp"
 #include "mp_unit_tests.hpp"
 
@@ -29,6 +31,18 @@ struct MrcGpuResult {
 
 __host__ __device__ uint32_t mrcPayloadValue(unsigned int round, unsigned int index, int rank) {
   return round * 0x9e3779b9U ^ index * 0x85ebca6bU ^ (rank + 1) * 0x01010101U;
+}
+
+constexpr unsigned int mrcProxyRounds = 4;
+
+__global__ void mrcPutAndFlush(mscclpp::PortChannelDeviceHandle channel, uint32_t* source, int rank) {
+  constexpr unsigned int bytes = mrcPayloadWords * sizeof(uint32_t);
+  for (unsigned int round = 0; round < mrcProxyRounds; ++round) {
+    for (unsigned int i = 0; i < mrcPayloadWords; ++i) source[i] = mrcPayloadValue(round, i, rank);
+    channel.put(round * bytes, 0, bytes);
+    channel.flush();
+  }
+  for (unsigned int i = 0; i < mrcPayloadWords; ++i) source[i] = 0;
 }
 
 __device__ uint64_t mrcGlobalTimer() {
@@ -223,3 +237,67 @@ TEST(MrcGpuVisibilityTest, WriteWithImmediatePayload) { testVisibility(0); }
 TEST(MrcGpuVisibilityTest, WriteThenZeroByteNotification) { testVisibility(1); }
 
 TEST(MrcGpuVisibilityTest, NonoverlappingWritesThenZeroByteNotification) { testVisibility(4); }
+
+TEST(MrcTestBase, GpuPutAndFlushThroughProxy) {
+  constexpr size_t bytes = mrcPayloadWords * sizeof(uint32_t);
+  std::shared_ptr<uint32_t> source, destination;
+  std::shared_ptr<mscclpp::Context> context;
+  mscclpp::Endpoint endpoint;
+  mscclpp::RegisteredMemory src, dst;
+  runOnBothRanks("register GPU buffers and create write-only endpoint", [&] {
+    int count = 0;
+    MSCCLPP_CUDATHROW(cudaGetDeviceCount(&count));
+    ASSERT_GT(count, 0);
+    int device = rankToLocalRank(gEnv->rank) % count;
+    MSCCLPP_CUDATHROW(cudaSetDevice(device));
+    auto transport = mrcTransportForDevice(mrcDevice);
+    ASSERT_TRUE(transport != mscclpp::Transport::Unknown);
+    context = mscclpp::Context::create();
+    endpoint = context->createEndpoint({transport,
+                                        {mscclpp::DeviceType::GPU, device},
+                                        queueDepth,
+                                        {},
+                                        {1, std::stoi(gEnv->args["ib_gid_index"]), 0, queueDepth, queueDepth, 0}});
+    source = mscclpp::detail::gpuCallocShared<uint32_t>(mrcPayloadWords);
+    destination = mscclpp::detail::gpuCallocShared<uint32_t>(mrcProxyRounds * mrcPayloadWords);
+    src = context->registerMemory(source.get(), bytes, transport);
+    dst = context->registerMemory(destination.get(), mrcProxyRounds * bytes, transport);
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+  });
+  auto peerEndpoint = exchangeMrcPeerBytes(endpoint.serialize());
+  auto peerDst = exchangeMrcPeerBytes(dst.serialize());
+  std::optional<mscclpp::SemaphoreStub> stub;
+  runOnBothRanks("connect private GPU endpoints", [&] {
+    // Install the private implementation only in this test. The public factory stays gated.
+    mscclpp::Connection connection;
+    mscclpp::BaseConnection::getImpl(connection) =
+        std::make_shared<mscclpp::MrcConnection>(context, endpoint, mscclpp::Endpoint::deserialize(peerEndpoint));
+    stub.emplace(connection);
+  });
+  auto peerStub = exchangeMrcPeerBytes(stub->serialize());
+  runOnBothRanks("GPU put, flush and source reuse", [&] {
+    mscclpp::ProxyService service(/*fifoSize=*/4);
+    auto id = service.addSemaphore(mscclpp::Semaphore(*stub, mscclpp::SemaphoreStub::deserialize(peerStub)));
+    auto dstId = service.addMemory(mscclpp::RegisteredMemory::deserialize(peerDst));
+    auto channel = service.portChannel(id, dstId, service.addMemory(src));
+    auto handle = channel.deviceHandle();
+    service.startProxy(true);
+    mrcPutAndFlush<<<1, 1>>>(handle, source.get(), gEnv->rank);
+    MSCCLPP_CUDATHROW(cudaGetLastError());
+    // A shutdown sentinel must not be what releases the kernel's flush.
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+    ASSERT_EQ(mscclpp::atomicLoad(handle.flushDonePos_, mscclpp::memoryOrderAcquire), 2 * mrcProxyRounds);
+    service.stopProxy();
+  });
+  runOnBothRanks("verify peer writes after both kernels completed", [&] {
+    std::vector<uint32_t> observed(mrcProxyRounds * mrcPayloadWords);
+    MSCCLPP_CUDATHROW(cudaMemcpy(observed.data(), source.get(), bytes, cudaMemcpyDeviceToHost));
+    for (unsigned int i = 0; i < mrcPayloadWords; ++i) ASSERT_EQ(observed[i], 0u);
+    MSCCLPP_CUDATHROW(cudaMemcpy(observed.data(), destination.get(), mrcProxyRounds * bytes, cudaMemcpyDeviceToHost));
+    for (unsigned int round = 0; round < mrcProxyRounds; ++round) {
+      for (unsigned int i = 0; i < mrcPayloadWords; ++i) {
+        ASSERT_EQ(observed[round * mrcPayloadWords + i], mrcPayloadValue(round, i, 1 - gEnv->rank));
+      }
+    }
+  });
+}

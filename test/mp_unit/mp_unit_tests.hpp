@@ -50,6 +50,9 @@ class MultiProcessTest : public ::mscclpp::test::TestCase {
 };
 
 #if defined(MSCCLPP_USE_MRC)
+mscclpp::Transport mrcTransportForDevice(const char* device);
+std::vector<char> exchangeMrcPeerBytes(const std::vector<char>& local);
+
 class MrcTestBase : public MultiProcessTest {
  protected:
   void SetUp() override;
