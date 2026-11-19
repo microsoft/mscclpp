@@ -38,7 +38,6 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports,
       size(size),
       hostHash(getHostHash()),
       pidHash(getPidHash()),
-      isLocal(true),
       transports(transports) {
   if (transports.has(Transport::CudaIpc)) {
     CudaDeviceGuard deviceGuard(detail::gpuIdFromAddress(data));
@@ -116,8 +115,7 @@ MSCCLPP_API_CPP RegisteredMemory RegisteredMemory::deserialize(const std::vector
 }
 
 RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
-                             const std::vector<char>::const_iterator& end)
-    : isLocal(false) {
+                             const std::vector<char>::const_iterator& end) {
   auto it = begin;
   it = detail::deserialize(it, this->originalDataPtr);
   it = detail::deserialize(it, this->size);

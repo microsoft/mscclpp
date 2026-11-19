@@ -37,7 +37,6 @@ struct RegisteredMemory::Impl {
   size_t size;
   uint64_t hostHash;
   uint64_t pidHash;
-  bool isLocal;
   TransportFlags transports;
   std::vector<TransportInfo> transportInfos;
   std::shared_ptr<void> peerMemHandle;

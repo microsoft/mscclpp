@@ -280,9 +280,8 @@ MSCCLPP_API_CPP PortChannelDeviceHandle<Backend> PortChannel<Backend>::deviceHan
   BasePortChannelDeviceHandle<Backend> base = BasePortChannel<Backend>::deviceHandle();
   if constexpr (Backend == PortChannelBackend::Device) {
     auto& conn = BaseConnection::getImpl(this->semaphore_->connection());
-    return PortChannelDeviceHandle<Backend>(base.semaphore_, base.device_,
-                                            conn->getDeviceMemoryInfo(dstMemory_, DeviceMemoryRole::Dst),
-                                            conn->getDeviceMemoryInfo(srcMemory_, DeviceMemoryRole::Src));
+    return PortChannelDeviceHandle<Backend>(base.semaphore_, base.device_, conn->getDeviceMemoryInfo(dstMemory_),
+                                            conn->getDeviceMemoryInfo(srcMemory_));
   } else {
     return PortChannelDeviceHandle<Backend>(base.semaphoreId_, base.semaphore_, base.fifo_, dst_, src_,
                                             base.flushDonePos_);

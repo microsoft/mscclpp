@@ -56,9 +56,8 @@ creating a separate semaphore creates an independent counter.
 
 Default owners are unassigned, and handle extraction throws `InvalidUsage` until a valid channel is assigned.
 Host construction rejects null semaphore owners or proxies. Device construction rejects null or moved-from Port
-semaphore owners and uninitialized or incompatible memory registrations (`dst` must be remote and `src` must be
-local). Port handle extraction also rejects a moved-from Port semaphore. Raw GPU handles start at zero but require
-valid state before use; Host registry ID0 is valid.
+semaphore owners and uninitialized or incompatible memory registrations. Port handle extraction also rejects a
+moved-from Port semaphore. Raw GPU handles start at zero but require valid state before use; Host registry ID0 is valid.
 
 Exclusive-mode operations automatically use internal shared-memory WQE slots for BlueFlame submission when the
 transfer fits `device_.blueFlameLimit` (default: 512 KiB) and the calling thread has a slot:
