@@ -9,6 +9,7 @@
 #include <mrc.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <cstring>
 #include <limits>
@@ -20,6 +21,7 @@
 
 #include "logger.hpp"
 #include "serialization.hpp"
+#include "utils_internal.hpp"
 
 #if defined(MSCCLPP_USE_CUDA)
 #include <filesystem>
@@ -722,6 +724,69 @@ std::shared_ptr<BaseConnection> MrcEndpoint::createConnection(std::shared_ptr<Co
   // TODO: Before enabling native signaling, agree on how the sender learns the peer's
   // initial posted receive count and when newly posted receives become available to it.
   throw Error("Native MRC connections are not implemented yet", ErrorCode::InvalidUsage);
+}
+
+MrcConnection::MrcConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint,
+                             const Endpoint& remoteEndpoint)
+    : BaseConnection(std::move(context), localEndpoint), remoteEndpoint_(remoteEndpoint) {
+  auto* local = dynamic_cast<MrcEndpoint*>(getImpl(localEndpoint).rdmaEndpoint_.get());
+  const auto* remote = dynamic_cast<const MrcEndpoint*>(getImpl(remoteEndpoint).rdmaEndpoint_.get());
+  if (!local || !local->isLocal() || !remote || remote->isLocal()) {
+    throw Error("Native MRC requires a local endpoint and an imported peer endpoint", ErrorCode::InvalidUsage);
+  }
+  const auto& config = localEndpoint.config().mrc;
+  maxWriteQueueSize_ = std::min({maxWriteQueueSize_, config.maxSendWr, config.maxCqSize});
+  qp_ = local->qp();
+  qp_->writeSources_.reserve(maxWriteQueueSize_);
+  local->connect(*remote);
+}
+
+void MrcConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
+                          uint64_t size) {
+  validateTransport(src, transport());
+  validateTransport(dst, remoteTransport());
+  const auto& srcOwner = getImpl(src).getTransportInfo(transport()).rdmaMemory;
+  const auto& dstImpl = getImpl(dst);
+  const auto* source = dynamic_cast<const MrcMemory*>(srcOwner.get());
+  const auto* target = dynamic_cast<const MrcMemory*>(dstImpl.getTransportInfo(remoteTransport()).rdmaMemory.get());
+  if (!source || !source->isLocal() || !target || target->isLocal() || dstImpl.hostHash != remoteEndpoint_.hostHash() ||
+      dstImpl.pidHash != remoteEndpoint_.pidHash()) {
+    throw Error("Native MRC write requires a local source and memory imported from the connected peer",
+                ErrorCode::InvalidUsage);
+  }
+
+  if (qp_->writeSources_.size() >= static_cast<size_t>(maxWriteQueueSize_)) flush();
+  qp_->stageSendWrite(source->mr(), target->buffer(), size, /*wrId=*/0, srcOffset, dstOffset, /*signaled=*/true);
+  // Space was reserved before connecting. A post failure can leave accepted work on the QP.
+  qp_->writeSources_.push_back(srcOwner);
+  qp_->postSend();
+}
+
+void MrcConnection::updateAndSync(RegisteredMemory, uint64_t, uint64_t*, uint64_t) {
+  throw Error("Native MRC signaling is not implemented yet", ErrorCode::InvalidUsage);
+}
+
+void MrcConnection::accumulate(RegisteredMemory, uint64_t, int64_t) {
+  throw Error("Native MRC does not support remote atomics", ErrorCode::InvalidUsage);
+}
+
+void MrcConnection::requestFlush() {
+  // As in IB, write() already posted the work. The proxy drives completion with progressFlush().
+}
+
+bool MrcConnection::progressFlush() {
+  if (!qp_->progressSend()) return false;
+  qp_->writeSources_.clear();
+  return true;
+}
+
+void MrcConnection::flush(int64_t timeoutUsec) {
+  Timer timer;
+  while (!progressFlush()) {
+    if (timeoutUsec >= 0 && timer.elapsed() >= timeoutUsec) {
+      throw Error("Native MRC send completion timed out", ErrorCode::Timeout);
+    }
+  }
 }
 
 MrcProvider::MrcProvider(Transport transport) : context_(getMrcDeviceName(transport)) {}

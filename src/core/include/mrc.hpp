@@ -12,6 +12,7 @@
 #include <memory>
 #include <string>
 
+#include "connection.hpp"
 #include "rdma_provider.hpp"
 
 struct ibv_context;
@@ -157,7 +158,11 @@ class MrcQp {
   const int maxSendWr_;
   const int maxRecvWr_;
 
+  // Keep the source registrations through a checked drain or QP destruction, even if the Connection goes away.
+  std::vector<std::shared_ptr<RdmaMemory>> writeSources_;
+
   friend class MrcCtx;
+  friend class MrcConnection;
 };
 
 class MrcCtx {
@@ -212,6 +217,25 @@ class MrcEndpoint final : public RdmaEndpoint {
  private:
   std::shared_ptr<MrcQp> qp_;
   MrcQpInfo info_;
+};
+
+// Internal data path only; MrcEndpoint::createConnection stays disabled until signaling and teardown are ready.
+class MrcConnection final : public BaseConnection {
+ public:
+  MrcConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint, const Endpoint& remoteEndpoint);
+  Transport transport() const override { return localEndpoint_.transport(); }
+  Transport remoteTransport() const override { return remoteEndpoint_.transport(); }
+  void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
+             uint64_t size) override;
+  void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) override;
+  void accumulate(RegisteredMemory dst, uint64_t dstOffset, int64_t value) override;
+  void flush(int64_t timeoutUsec = -1) override;
+  void requestFlush() override;
+  bool progressFlush() override;
+
+ private:
+  Endpoint remoteEndpoint_;
+  std::shared_ptr<MrcQp> qp_;
 };
 
 class MrcProvider final : public RdmaProvider {
