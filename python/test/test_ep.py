@@ -649,7 +649,7 @@ def _run_dispatch_combine_case(
 
 @pytest.mark.nranks(8)
 @pytest.mark.parametrize("num_topk", [8, 16])
-@pytest.mark.parametrize("hidden_size", [1024, 2048, 4096, 8192])
+@pytest.mark.parametrize("hidden_size", [1024, 1280, 1536, 2048, 4096, 8192])
 @pytest.mark.parametrize("apply_router_weights", [None, False])
 def test_dispatch_combine_correctness(ep_group, apply_router_weights, hidden_size, num_topk):
     for case in CASES:
