@@ -1713,6 +1713,7 @@ TEST(PortChannelOneToOneTest, HostAccumulateIbDeviceModeRejected) {
   testAccumulateRejected(ibTransport, IbMode::Device, /*tag=*/79, "GPU-initiated", /*checkHugeOffset=*/false);
 }
 
+#if defined(MSCCLPP_DEVICE_CUDA)
 // Buffer layout of the putWithAccumulate test: two payload ints, then one flag word per (run, rank).
 static constexpr int kPutWithAccumulateFlagInts = 2;
 static constexpr int kPutWithAccumulateRuns = 3;
@@ -1748,9 +1749,11 @@ __global__ void kernelGpuNetIoPutWithAccumulate(int* buff, int rank, int run, in
   }
   chan.flush<kExclusive>();
 }
+#endif  // defined(MSCCLPP_DEVICE_CUDA)
 
 TEST(PortChannelOneToOneTest, PutWithAccumulateIbDeviceMode) {
   REQUIRE_GPUNETIO;
+#if defined(MSCCLPP_DEVICE_CUDA)
   if (gEnv->rank >= numRanksToUse) return;
 
   const int rank = communicator->bootstrap()->getRank();
@@ -1790,6 +1793,7 @@ TEST(PortChannelOneToOneTest, PutWithAccumulateIbDeviceMode) {
   communicator->bootstrap()->barrier();
   for (auto& m : localMems) registeredMemories.push_back(m);
   for (auto& m : remoteMems) registeredMemories.push_back(m);
+#endif  // defined(MSCCLPP_DEVICE_CUDA)
 }
 
 PERF_TEST(PortChannelOneToOneTest, PingPongPerfIbDeviceMode) {
