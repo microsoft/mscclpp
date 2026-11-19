@@ -993,6 +993,16 @@ class ExecutionKernel {
         );
 #endif
         break;
+#else   // !defined(__FP8_TYPES_EXIST__)
+      case DataType::FLOAT8_E4M3FN:
+      case DataType::FLOAT8_E4M3FNUZ:
+      case DataType::FLOAT8_E5M2:
+      case DataType::FLOAT8_E5M2FNUZ:
+        // Without native FP8 types (HIP < 6) there is no kernel to launch. Returning here would look like success with
+        // the output buffer left untouched, so fail loudly instead.
+        THROW(LogSubsys::EXEC, Error, ErrorCode::InvalidUsage,
+              "Native FP8 data types are not supported by the execution kernel on this platform");
+        break;
 #endif  // __FP8_TYPES_EXIST__
       case DataType::FLOAT8_E4M3B15:
         executionKernel<__fp8_e4m3b15, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
@@ -1017,8 +1027,7 @@ class ExecutionKernel {
 #endif
         break;
       case DataType::AUTO:
-        // AUTO is a sentinel that must be resolved before reaching this point.
-        assert(false && "DataType::AUTO must be resolved before kernel launch");
+        THROW(LogSubsys::EXEC, Error, ErrorCode::InvalidUsage, "DataType::AUTO must be resolved before kernel launch");
         break;
     }
   }
