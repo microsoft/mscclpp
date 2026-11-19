@@ -194,7 +194,7 @@ struct W4A8Mainloop {
     using namespace cute;
     static_assert(!Overlap);
     auto base = Base::template init_tmem_tensors<EpilogueTile, false>(EpilogueTile{});
-    auto acc = TiledMma::make_fragment_C(append(partition_shape_C(TiledMma{}, take<0, 2>(KernelTile{})), _2{}));
+    auto acc = TiledMma::make_fragment_C(append(partition_shape_C(TiledMma{}, take<0, 2>(KernelTile{})), _3{}));
     return typename Base::template TmemStorage<decltype(acc), decltype(base.tCtSFA), decltype(base.tCtSFB)>{
         acc, base.tCtSFA, base.tCtSFB};
   }

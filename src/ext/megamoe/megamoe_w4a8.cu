@@ -79,6 +79,17 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
     prepareRoutes<FixedTokenCount>(p, tokens, ids, scores);
   }
   traceKernel(KernelTracePhase::Routing, false);
+  if constexpr (ActDtype == ActivationDtype::Fp8Static) {
+    constexpr int SfbWordsPerStage = sizeof(s.tensors.smem_SFB) / (Types::Load::Stages * sizeof(uint32_t));
+    auto* sfbStage0 = reinterpret_cast<uint32_t*>(s.tensors.smem_SFB.begin());
+    for (int i = threadIdx.x; i < SfbWordsPerStage; i += W4Threads) sfbStage0[i] = 0x7f7f7f7fU;
+    if constexpr (ClusterSize > 1) {
+      cute::cluster_sync();
+    } else {
+      __syncthreads();
+    }
+    cutlass::arch::fence_view_async_shared();
+  }
 
   if (warp < Schedule::DispatchBegin) {
     Mainloop fc1(p.fc1, ClusterShape{}, cta);
@@ -97,16 +108,8 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
     if (producerWarp) {
       // Producers need initialized pipeline barriers, not the TMEM allocation.
       runW4A8LoadRole(p, s, loadPipeline, activationPipeline, fc1, fc2, shape1, shape2, hidden, intermediate, warp,
-                      lane, cta, cluster, tasks);
+                      lane, cta, cluster, tasks, tokenBlocks, localExperts);
     } else {
-      if constexpr (ActDtype == ActivationDtype::Fp8Static) {
-        if (warp == Schedule::MmaWarp) {
-          constexpr int SfbWordsPerStage = sizeof(s.tensors.smem_SFB) / (Types::Load::Stages * sizeof(uint32_t));
-          auto* sfbStage0 = reinterpret_cast<uint32_t*>(s.tensors.smem_SFB.begin());
-          for (int i = lane; i < SfbWordsPerStage; i += warpSize) sfbStage0[i] = 0x7f7f7f7fU;
-          cutlass::arch::fence_view_async_shared();
-        }
-      }
       using EpilogueTile = Shape<Int<Parameters::Tiles::CtaM>, Int<Parameters::Tiles::N>>;
       auto tmemStorage = Mainloop::template init_tmem_tensors<EpilogueTile, false>(EpilogueTile{});
       Mainloop::set_tmem_offsets(tmemStorage, s.tmem);
@@ -115,14 +118,27 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
                                   tasks, output, tokens);
       } else {
         runMmaRole(p, s, loadPipeline, activationPipeline, accumulatePipeline, fc1, tmemStorage, hidden, intermediate,
-                   warp, cta, cluster, tasks);
+                   warp, cta, cluster, tasks, tokenBlocks, localExperts);
       }
     }
   } else {
-    // Lower dispatch/idle warp groups to 32 registers per thread to fund epilogue growth.
-    cutlass::arch::warpgroup_reg_dealloc<TransferRegisters>();
-    runDispatchRole<Hidden, Types::DispatchChunk, Types::DispatchStages>(p, s, warp, tokens, input, inputScales,
-                                                                         scores);
+    // Donate only the registers needed to fund epilogue growth; retain the remaining CTA budget on dispatch/offload
+    // warps.
+    constexpr int DispatchThreads = W4Threads - Types::EpilogueWarps * 32 - 128;
+    constexpr int AvailDispatchRegs =
+        ((W4Threads * EntryRegisters - Types::EpilogueWarps * 32 * Types::EpilogueRegisters -
+          128 * Types::TransferRegisters) /
+         DispatchThreads) &
+        ~7;
+    constexpr int DispatchRoleRegisters =
+        AvailDispatchRegs < TransferRegisters ? TransferRegisters : (AvailDispatchRegs > 80 ? 80 : AvailDispatchRegs);
+    if constexpr (DispatchRoleRegisters < EntryRegisters) cutlass::arch::warpgroup_reg_dealloc<DispatchRoleRegisters>();
+    if (warp < Schedule::DispatchEnd) {
+      runDispatchRole<Hidden, Types::DispatchChunk, Types::DispatchStages>(p, s, warp, tokens, input, inputScales,
+                                                                           scores);
+    } else {
+      runFc2StoreOffloadRole<Schedule>(p, s, warp, lane, hidden, output, tokens);
+    }
   }
   // Join even idle roles before the next register reconfiguration.
   __syncthreads();
@@ -135,7 +151,7 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
     allocator.release_allocation_lock();
     allocator.free(s.tmem, W4TmemColumns);
   }
-  finishAndCombine<Hidden>(p, tokens, output);
+  finishW4A8<Hidden>(p, tokens, output);
 }
 
 struct W4A8KernelRegistration {
