@@ -60,7 +60,9 @@ class CudaGpuTests(unittest.TestCase):
         self.api("GetDeviceCount").return_value = (0, 2)
         self.api("GetDevice").return_value = (0, 1)
         self.props = SimpleNamespace(name=b"Test GPU", major=9, minor=0, gcnArchName=b"gfx942:sramecc+:xnack-")
-        self.api("GetDeviceProperties").return_value = (0, self.props)
+        self.cuda.cudaGetDeviceProperties.return_value = (0, self.props)
+        self.attributes = SimpleNamespace(device=1)
+        self.cuda.cudaPointerGetAttributes.return_value = (0, self.attributes)
         self.api("GetErrorString").return_value = (0, b"test failure")
         self.utils = self.load_module("_gpu_utils_test", self.python_dir / "mscclpp" / "utils.py")
 
@@ -90,7 +92,7 @@ class CudaGpuTests(unittest.TestCase):
         expected = "gfx942:sramecc+:xnack-" if self.is_hip else "sm_90"
         self.assertEqual(self.utils.get_device_arch(), expected)
         self.api("GetDevice").assert_called_once_with()
-        self.api("GetDeviceProperties").assert_called_once_with(1)
+        self.assert_properties_query(1)
 
     def test_get_device_arch_preserves_string_arch_and_multi_digit_major(self):
         self.props.gcnArchName = "gfx950:xnack-"
@@ -103,7 +105,7 @@ class CudaGpuTests(unittest.TestCase):
             self.utils.get_device_arch()
 
     def test_device_properties_error_uses_shared_error_handling(self):
-        self.api("GetDeviceProperties").return_value = (17, None)
+        self.api("GetDeviceProperties").side_effect = lambda *args: (17,)
         with self.assertRaisesRegex(RuntimeError, r"get_device_properties failed: test failure \(17\)"):
             self.utils.get_device_arch()
 
@@ -148,24 +150,40 @@ class CudaGpuTests(unittest.TestCase):
 
     def test_device_names_and_stream_flags(self):
         self.assertEqual(self.gpu.device_name(), "Test GPU")
-        self.api("GetDeviceProperties").assert_called_once_with(1)
+        self.assert_properties_query(1)
         self.api("StreamCreateWithFlags").return_value = (0, 123)
         for non_blocking in (False, True):
             self.assertEqual(self.gpu.create_stream(non_blocking), 123)
             self.api("StreamCreateWithFlags").assert_called_with(int(non_blocking))
+
+    def assert_properties_query(self, device_id):
+        self.api("GetDeviceProperties").assert_called_once_with(device_id)
+
+    def test_device_properties_return_single_properties_object_for_explicit_device(self):
+        (props,) = self.gpu.get_device_properties(0)
+        self.assertEqual(vars(props), vars(self.props))
+        self.assert_properties_query(0)
+        self.api("GetDevice").assert_not_called()
 
     def test_version_decoding(self):
         self.api("RuntimeGetVersion").return_value = (0, 60_400_000 if self.is_hip else 12040)
         self.assertEqual(self.gpu.version(), (6, 4, 0) if self.is_hip else (12, 4, 0))
 
     def test_pointer_attributes_and_capture_status_use_shared_runtime(self):
-        attributes = SimpleNamespace(device=1)
-        self.api("PointerGetAttributes").return_value = (0, attributes)
         self.api("StreamIsCapturing").return_value = (0, 1)
-        self.assertEqual(self.gpu.pointer_get_attributes(1234), (attributes,))
+        (attributes,) = self.gpu.pointer_get_attributes(1234)
+        self.assertEqual(vars(attributes), vars(self.attributes))
         self.assertEqual(self.gpu.stream_is_capturing(123), (1,))
-        self.api("PointerGetAttributes").assert_called_once_with(1234)
+        self.assert_pointer_query(1234)
         self.api("StreamIsCapturing").assert_called_once_with(123)
+
+    def assert_pointer_query(self, ptr):
+        self.api("PointerGetAttributes").assert_called_once_with(ptr)
+
+    def test_pointer_attributes_error_uses_shared_error_handling(self):
+        self.api("PointerGetAttributes").side_effect = lambda *args: (17,)
+        with self.assertRaisesRegex(RuntimeError, r"pointer_get_attributes failed: test failure \(17\)"):
+            self.gpu.pointer_get_attributes(1234)
 
     def test_memcpy_async_resolves_backend_direction_and_stream(self):
         for direction, kind in (("HostToDevice", 11 if self.is_hip else 1), ("DeviceToHost", 12 if self.is_hip else 2)):
@@ -199,6 +217,55 @@ class CudaGpuTests(unittest.TestCase):
 
 class HipGpuTests(CudaGpuTests):
     is_hip = True
+
+    def setUp(self):
+        super().setUp()
+        self.hip.hipDeviceProp_t = Mock(side_effect=SimpleNamespace)
+
+        def get_device_properties(props, device_id):
+            vars(props).update(vars(self.props))
+            return (0,)
+
+        self.hip.hipGetDeviceProperties.side_effect = get_device_properties
+        self.hip.hipPointerAttribute_t = Mock(side_effect=SimpleNamespace)
+
+        def pointer_get_attributes(attributes, ptr):
+            vars(attributes).update(vars(self.attributes))
+            return (0,)
+
+        self.hip.hipPointerGetAttributes.side_effect = pointer_get_attributes
+
+    def assert_pointer_query(self, ptr):
+        self.hip.hipPointerAttribute_t.assert_called_once_with()
+        attributes, actual_ptr = self.api("PointerGetAttributes").call_args.args
+        self.assertEqual(vars(attributes), vars(self.attributes))
+        self.assertEqual(actual_ptr, ptr)
+        self.api("PointerGetAttributes").assert_called_once_with(attributes, ptr)
+
+    def test_pointer_queries_allocate_independent_output_objects(self):
+        (first,) = self.gpu.pointer_get_attributes(1234)
+        self.attributes.device = 2
+        (second,) = self.gpu.pointer_get_attributes(5678)
+        self.assertIsNot(first, second)
+        self.assertEqual(first.device, 1)
+        self.assertEqual(second.device, 2)
+        self.assertEqual(self.hip.hipPointerAttribute_t.call_count, 2)
+
+    def assert_properties_query(self, device_id):
+        self.hip.hipDeviceProp_t.assert_called_once_with()
+        props, actual_device_id = self.api("GetDeviceProperties").call_args.args
+        self.assertEqual(vars(props), vars(self.props))
+        self.assertEqual(actual_device_id, device_id)
+        self.api("GetDeviceProperties").assert_called_once_with(props, device_id)
+
+    def test_properties_queries_allocate_independent_output_objects(self):
+        (first,) = self.gpu.get_device_properties(0)
+        self.props.gcnArchName = b"gfx950"
+        (second,) = self.gpu.get_device_properties(1)
+        self.assertIsNot(first, second)
+        self.assertEqual(first.gcnArchName, b"gfx942:sramecc+:xnack-")
+        self.assertEqual(second.gcnArchName, b"gfx950")
+        self.assertEqual(self.hip.hipDeviceProp_t.call_count, 2)
 
 
 if __name__ == "__main__":
