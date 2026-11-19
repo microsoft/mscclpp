@@ -63,3 +63,27 @@ TEST(ExecutorTest, TwoNodesAllreduce) {
                     plan, stream);
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
 }
+
+#if !defined(__HIP_PLATFORM_AMD__)
+TEST(ExecutorTest, CudaRejectsFp8) {
+  std::string executablePath = getExecutablePath();
+  std::filesystem::path path = executablePath;
+  std::filesystem::path executionFilesPath =
+      path.parent_path().parent_path().parent_path() / "test/execution-files/allreduce.json";
+  mscclpp::ExecutionPlan plan(executionFilesPath.string(), gEnv->rank);
+  const int bufferSize = 1024 * 1024;
+  std::shared_ptr<char> sendbuff = mscclpp::GpuBuffer(bufferSize).memory();
+  mscclpp::CudaStreamWithFlags stream(cudaStreamNonBlocking);
+  for (auto dataType :
+       {mscclpp::DataType::FLOAT8_E4M3FN, mscclpp::DataType::FLOAT8_E4M3FNUZ, mscclpp::DataType::FLOAT8_E5M2,
+        mscclpp::DataType::FLOAT8_E5M2FNUZ, mscclpp::DataType::FLOAT8_E4M3B15}) {
+    bool thrown = false;
+    try {
+      executor->execute(gEnv->rank, sendbuff.get(), sendbuff.get(), bufferSize, bufferSize, dataType, plan, stream);
+    } catch (const mscclpp::Error&) {
+      thrown = true;
+    }
+    EXPECT_TRUE(thrown);
+  }
+}
+#endif
