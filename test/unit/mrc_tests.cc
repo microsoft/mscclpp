@@ -42,7 +42,7 @@ TEST(MrcSendProgressTest, RequiresEverySignaledCompletion) {
 
   sends.posted(0, 2, 1);
   sends.polled(1, &wc);
-  EXPECT_EQ(sends.pending(), 0);
+  EXPECT_EQ(sends.pendingSignaledSends(), 0);
   EXPECT_TRUE(failureMessage([&] { sends.drained(); }).find("unsignaled") != std::string::npos);
 }
 
@@ -68,7 +68,7 @@ TEST(MrcSendProgressTest, FailedCompletionDoesNotRetireSignaledSends) {
   wcs[1].status = IBV_WC_WR_FLUSH_ERR;
   auto failure = failureMessage([&] { sends.polled(2, wcs); });
   EXPECT_TRUE(failure.find("42") != std::string::npos);
-  EXPECT_EQ(failureMessage([&] { sends.pending(); }), failure);
+  EXPECT_EQ(failureMessage([&] { sends.pendingSignaledSends(); }), failure);
   EXPECT_EQ(failureMessage([&] { sends.drained(); }), failure);
 }
 

@@ -56,13 +56,15 @@ mscclpp::MrcBuffer MrcTestBase::connectPeer(mscclpp::MrcQp& qp, const mscclpp::M
 
 class MrcPeerToPeerTest : public MrcTestBase {
  protected:
-  void SetUp() override {
+  void SetUp() override { setUpWithSendDepth(queueDepth); }
+
+  void setUpWithSendDepth(int sendDepth) {
     MrcTestBase::SetUp();
     runOnBothRanks("native resource creation", [&] {
       context = std::make_unique<mscclpp::MrcCtx>(mrcDevice);
       buffer.resize(4096);
       mr = context->registerMr(buffer.data(), buffer.size());
-      qp = context->createQp(1, std::stoi(gEnv->args["ib_gid_index"]), 0, queueDepth, queueDepth, queueDepth);
+      qp = context->createQp(1, std::stoi(gEnv->args["ib_gid_index"]), 0, queueDepth, sendDepth, queueDepth);
     });
     remoteMr = connectPeer(*qp, *mr);
   }
@@ -151,6 +153,28 @@ void MrcPeerToPeerTest::testImmediateNotifications(bool precedingWrite) {
 TEST(MrcPeerToPeerTest, WriteWithImmediatePayload) { testImmediateNotifications(false); }
 
 TEST(MrcPeerToPeerTest, WriteThenZeroByteNotification) { testImmediateNotifications(true); }
+
+class MrcSendQueueTest : public MrcPeerToPeerTest {
+ protected:
+  void SetUp() override { setUpWithSendDepth(2); }  // Leave room in the CQ when the SQ is full.
+};
+
+TEST(MrcSendQueueTest, StagedAndPostedWritesShareCapacity) {
+  runOnBothRanks("exercise native send queue capacity", [&] {
+    auto stage = [&](int i) { qp->stageSendWrite(mr.get(), remoteMr, 1, i, i, 1024 + i, true); };
+    stage(0);
+    qp->postSend();
+    stage(1);
+    ASSERT_TRUE(rejectsInvalidUsage([&] { stage(2); }));
+
+    drain(0, 1, {});  // Only the first write was posted; the second still occupies a staging slot.
+    stage(2);
+    ASSERT_TRUE(rejectsInvalidUsage([&] { stage(3); }));
+    qp->postSend();
+    ASSERT_TRUE(rejectsInvalidUsage([&] { stage(3); }));
+    drain(0, 2, {});
+  });
+}
 
 TEST(MrcPeerToPeerTest, CheckedSendDrainAllowsSourceReuse) {
   runOnBothRanks("post receives for checked send drain", [&] {

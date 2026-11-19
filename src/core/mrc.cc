@@ -378,9 +378,13 @@ static uint64_t checkedWriteAddress(const MrcBuffer& buffer, uint64_t offset, ui
 
 ibv_send_wr& MrcQp::stageSend(const MrcMr* mr, const MrcBuffer& dst, uint64_t size, uint64_t wrId, uint64_t srcOffset,
                               uint64_t dstOffset, bool signaled) {
-  const int pending = sendProgress_.pending();
-  if ((mr == nullptr && size != 0) || numStagedSend_ >= maxSendWr_) {
-    throw Error("Native MRC WRITE requires an MR for nonzero size and space for a staged work request",
+  const int pending = sendProgress_.pendingSignaledSends();
+  if (mr == nullptr && size != 0) {
+    throw Error("Native MRC WRITE requires an MR for nonzero size", ErrorCode::InvalidUsage);
+  }
+  // On an all-signaled QP, pending accounts for every posted WR not yet polled.
+  if (numStagedSend_ >= maxSendWr_ - pending) {
+    throw Error("Native MRC send queue is full; post staged requests and poll send completions",
                 ErrorCode::InvalidUsage);
   }
   if (signaled && numStagedSignaledSend_ >= maxSendCqSize_ - pending) {
@@ -474,7 +478,7 @@ void MrcSendProgress::check() const {
   if (failure_) std::rethrow_exception(failure_);
 }
 
-int MrcSendProgress::pending() const {
+int MrcSendProgress::pendingSignaledSends() const {
   check();
   return pending_;
 }
@@ -549,7 +553,7 @@ std::string MrcQp::getSendWcStatusString(int idx) const {
   return ibv_wc_status_str(static_cast<ibv_wc_status>(getSendWcStatus(idx)));
 }
 
-int MrcQp::getNumSendCqItems() const { return sendProgress_.pending(); }
+int MrcQp::getNumSendCqItems() const { return sendProgress_.pendingSignaledSends(); }
 
 int MrcQp::getRecvWcStatus(int idx) const {
   if (idx < 0 || idx >= numRecvWcs_) {

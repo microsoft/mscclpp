@@ -75,7 +75,7 @@ struct MrcQpInfo {
 class MrcSendProgress {
  public:
   void check() const;
-  int pending() const;
+  int pendingSignaledSends() const;
   bool drained() const;
   void posted(int result, int staged, int signaled);
   void polled(int count, const ibv_wc* wcs);
