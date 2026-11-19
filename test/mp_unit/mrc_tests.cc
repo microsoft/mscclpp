@@ -255,6 +255,25 @@ TEST(MrcPeerToPeerTest, InvalidWritesPreserveStagedBatch) {
   });
 }
 
+TEST(MrcPeerToPeerTest, InvalidSignalsPreserveStagedBatch) {
+  const uint64_t wrap = uint64_t{1} << 32;
+  runOnBothRanks("stage admitted signals and reject invalid targets and deltas", [&] {
+    const uint64_t end = remoteMr.size;
+    qp->stageRecv(0);
+    qp->postRecv();
+    qp->stageSendSignal(remoteMr, end - 8, 0, wrap - 1, wrap);
+    ASSERT_TRUE(rejectsInvalidUsage([&] { qp->stageSendSignal(remoteMr, end, 1, wrap, wrap + 1); }));
+    ASSERT_TRUE(rejectsInvalidUsage([&] { qp->stageSendSignal(remoteMr, 1, 1, wrap, wrap + 1); }));
+    ASSERT_TRUE(rejectsInvalidUsage([&] { qp->stageSendSignal(remoteMr, 0, 1, wrap, 2 * wrap); }));
+    // Fill the rest of the batch to prove that none of the rejections consumed a send slot.
+    for (int i = 1; i < queueDepth; ++i) qp->stageSendWrite(mr.get(), remoteMr, 1, i, i, 1024 + i, true);
+  });
+  runOnBothRanks("deliver the original batch after peer preposts", [&] {
+    qp->postSend();
+    drain(1, queueDepth, {0});
+  });
+}
+
 TEST(MrcPeerToPeerTest, ReceiveCapacityAndReplenishment) {
   for (int round = 0; round < 3; ++round) {
     for (int i = 0; i < 8; ++i) qp->stageRecv(round * 8 + i);

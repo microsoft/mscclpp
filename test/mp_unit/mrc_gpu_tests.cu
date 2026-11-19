@@ -9,7 +9,6 @@
 
 #include "atomic.hpp"
 #include "connection.hpp"
-#include "gdr.hpp"
 #include "mp_unit_tests.hpp"
 
 namespace {
@@ -18,6 +17,11 @@ constexpr unsigned int mrcVisibilityRounds = 64;
 constexpr unsigned int mrcPayloadWords = 1024;
 constexpr uint64_t mrcAbortToken = std::numeric_limits<uint64_t>::max();
 constexpr uint64_t mrcKernelTimeoutNs = 20000000000ULL;
+
+// Start from zero, then cross the immediate's low-word wrap on the second notification.
+__host__ __device__ uint64_t mrcVisibilityToken(unsigned int round) {
+  return round == 0 ? 0 : uint64_t{0xfffffffe} + round;
+}
 
 struct MrcGpuResult {
   uint64_t ready;
@@ -60,9 +64,10 @@ __global__ void mrcObservePayload(const uint32_t* payload, uint64_t* token, MrcG
   for (unsigned int round = 1; round <= mrcVisibilityRounds; ++round) {
     for (;;) {
       uint64_t observed = mscclpp::atomicLoad(token, mscclpp::memoryOrderAcquire);
-      if (observed == round) break;
-      if (observed == mrcAbortToken || observed > round || mrcGlobalTimer() - start > mrcKernelTimeoutNs) {
-        result->expected = round;
+      if (observed == mrcVisibilityToken(round)) break;
+      if (observed == mrcAbortToken || observed > mrcVisibilityToken(round) ||
+          mrcGlobalTimer() - start > mrcKernelTimeoutNs) {
+        result->expected = mrcVisibilityToken(round);
         result->observed = observed;
         mscclpp::atomicStore(&result->failure, uint64_t{1}, mscclpp::memoryOrderRelease);
         return;
@@ -99,13 +104,11 @@ class MrcGpuVisibilityTest : public MrcTestBase {
       ASSERT_GT(count, 0);
       int deviceId = rankToLocalRank(gEnv->rank) % count;
       MSCCLPP_CUDATHROW(cudaSetDevice(deviceId));
-      if (!mscclpp::gdrEnabled()) FAIL() << mscclpp::gdrStatusMessage();
       context = std::make_unique<mscclpp::MrcCtx>(mrcDevice);
       source = mscclpp::detail::gpuCallocShared<uint32_t>(mrcPayloadWords * mrcVisibilityRounds);
       destination = mscclpp::detail::gpuCallocShared<uint32_t>(mrcPayloadWords);
       token = mscclpp::detail::gpuCallocShared<uint64_t>();
-      tokenMap = std::make_unique<mscclpp::GdrMap>(token, deviceId);
-      ASSERT_TRUE(tokenMap->valid());
+      signalTarget.emplace(token, mscclpp::Device{mscclpp::DeviceType::GPU, deviceId});
       // GPU acknowledgements go to host memory, avoiding a GPU BAR readback after token publication.
       result = mscclpp::detail::gpuCallocHostShared<MrcGpuResult>();
       MSCCLPP_CUDATHROW(cudaHostGetDevicePointer(reinterpret_cast<void**>(&deviceResult), result.get(), 0));
@@ -134,7 +137,7 @@ class MrcGpuVisibilityTest : public MrcTestBase {
 
   cudaError_t stopKernel() {
     if (!kernelStarted) return cudaSuccess;
-    mscclpp::atomicStore(tokenMap->hostPtr(), mrcAbortToken, mscclpp::memoryOrderRelease);
+    signalTarget->publish(mrcAbortToken);
     kernelStarted = false;
     return cudaStreamSynchronize(stream);
   }
@@ -159,6 +162,7 @@ class MrcGpuVisibilityTest : public MrcTestBase {
         std::this_thread::yield();
       }
     });
+    uint64_t receivedToken = 0;
     for (unsigned int round = 1; round <= mrcVisibilityRounds; ++round) {
       runOnBothRanks("receive credit acknowledgement", [&] {
         qp->stageRecv(round);
@@ -168,14 +172,17 @@ class MrcGpuVisibilityTest : public MrcTestBase {
         constexpr unsigned int payloadBytes = mrcPayloadWords * sizeof(uint32_t);
         uint64_t sourceOffset = (round - 1) * payloadBytes;
         if (writes == 0) {
-          qp->stageSendWriteWithImm(sourceMr.get(), remoteMr, payloadBytes, round, sourceOffset, 0, true, round);
+          qp->stageSendWriteWithImm(
+              sourceMr.get(), remoteMr, payloadBytes, round, sourceOffset, 0, true,
+              mscclpp::mrcSignalImmediate(mrcVisibilityToken(round - 1), mrcVisibilityToken(round)));
         } else {
           unsigned int chunkBytes = payloadBytes / writes;
           for (unsigned int i = 0; i < writes; ++i) {
             qp->stageSendWrite(sourceMr.get(), remoteMr, chunkBytes, round * 8 + i, sourceOffset + i * chunkBytes,
                                i * chunkBytes, true);
           }
-          qp->stageSendWriteWithImm(nullptr, remoteMr, 0, round * 8 + writes, 0, 0, true, round);
+          qp->stageSendSignal(remoteMr, 0, round * 8 + writes, mrcVisibilityToken(round - 1),
+                              mrcVisibilityToken(round));
         }
         qp->postSend();
         int received = 0;
@@ -190,9 +197,10 @@ class MrcGpuVisibilityTest : public MrcTestBase {
             if (qp->getRecvWcStatus(i) != 0) FAIL() << qp->getRecvWcStatusString(i);
             ++received;
             ASSERT_EQ(received, 1);
-            ASSERT_EQ(qp->getRecvWcImmData(i), round);
+            // Only one acknowledged notification is in flight; this does not assume general WIMM ordering.
+            receivedToken = mscclpp::extendOrderedMrcSignal(receivedToken, qp->getRecvWcImmData(i));
             // No CUDA operation, payload copyback or GPU BAR read intervenes in this handoff.
-            mscclpp::atomicStore(tokenMap->hostPtr(), static_cast<uint64_t>(round), mscclpp::memoryOrderRelease);
+            signalTarget->publish(receivedToken);
           }
           count = qp->pollSendCq();
           ASSERT_GE(count, 0);
@@ -222,7 +230,7 @@ class MrcGpuVisibilityTest : public MrcTestBase {
   std::shared_ptr<uint32_t> destination;
   std::shared_ptr<uint64_t> token;
   std::shared_ptr<MrcGpuResult> result;
-  std::unique_ptr<mscclpp::GdrMap> tokenMap;
+  std::optional<mscclpp::MrcSignalTarget> signalTarget;
   std::unique_ptr<const mscclpp::MrcMr> sourceMr;
   std::unique_ptr<const mscclpp::MrcMr> destinationMr;
   std::shared_ptr<mscclpp::MrcQp> qp;

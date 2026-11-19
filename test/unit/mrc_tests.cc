@@ -29,6 +29,35 @@ std::string failureMessage(F run) {
 
 }  // namespace
 
+TEST(MrcSignalTest, RoundTripsOrderedAdvancesAcrossLowWordWrap) {
+  const uint64_t wrap = uint64_t{1} << 32;
+  const uint64_t last = std::numeric_limits<uint64_t>::max();
+  for (auto [previous, next] : {std::pair{uint64_t{0}, wrap - 1}, std::pair{wrap - 1, wrap},
+                                std::pair{wrap + 3, 2 * wrap + 2}, std::pair{last - 1, last}}) {
+    auto wire = mscclpp::mrcSignalImmediate(previous, next);
+    EXPECT_EQ(mscclpp::extendOrderedMrcSignal(previous, wire), next);
+  }
+  for (uint64_t next : {wrap - 1, wrap, 2 * wrap}) {
+    EXPECT_FALSE(failureMessage([&] { mscclpp::mrcSignalImmediate(wrap, next); }).empty());
+  }
+  EXPECT_FALSE(failureMessage([&] { mscclpp::extendOrderedMrcSignal(wrap, 0); }).empty());
+  EXPECT_FALSE(failureMessage([&] { mscclpp::extendOrderedMrcSignal(last, 0); }).empty());
+}
+
+TEST(MrcSignalTest, CpuForwardingRetainsTokenAllocation) {
+  auto token = std::make_shared<uint64_t>(0);
+  std::weak_ptr<uint64_t> owner = token;
+  {
+    mscclpp::MrcSignalTarget target(std::move(token), mscclpp::DeviceType::CPU);
+    target.publish(uint64_t{1} << 32);
+    auto retained = owner.lock();
+    ASSERT_TRUE(retained != nullptr);
+    EXPECT_EQ(*retained, uint64_t{1} << 32);
+  }
+  EXPECT_TRUE(owner.expired());
+  EXPECT_FALSE(failureMessage([] { mscclpp::MrcSignalTarget target(nullptr, mscclpp::DeviceType::CPU); }).empty());
+}
+
 TEST(MrcSendProgressTest, RequiresEverySignaledCompletion) {
   mscclpp::MrcSendProgress sends;
   sends.posted(0, 2, 2);

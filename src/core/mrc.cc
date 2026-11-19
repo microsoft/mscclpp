@@ -19,6 +19,8 @@
 #include <mscclpp/gpu_utils.hpp>
 #include <sstream>
 
+#include "atomic.hpp"
+#include "gdr.hpp"
 #include "logger.hpp"
 #include "serialization.hpp"
 #include "utils_internal.hpp"
@@ -297,6 +299,8 @@ MrcQp::MrcQp(ibv_context* context, mrc_context* mrcContext, ibv_pd* pd, int port
 }
 
 MrcQp::~MrcQp() {
+  // TODO(MRC): Confirm with Sreev which provider operation proves DMA has stopped after a partial post or
+  // failed CQE, including what to do if QP destruction fails, before releasing writeSources_ on that path.
   mrc_destroy_qp(qp_);
   mrc_destroy_cq(sendCq_);
   if (recvCq_ != nullptr) {
@@ -336,7 +340,7 @@ void MrcQp::rts() {
   qpAttrs.qp_state = IBV_QPS_RTS;
   qpAttrs.sq_psn = 0;
   // The installed provider accepts these verbs retry fields despite the SDK's unsupported-fields table.
-  // FIXME: should this be set dynamically based on some environment variable?
+  // RNR retries are not a substitute for accounting for peer receive capacity.
   qpAttrs.retry_cnt = 7;
   qpAttrs.rnr_retry = 7;
   mrc_qp_attr mrcAttrs{};
@@ -358,8 +362,6 @@ void MrcQp::stageSendWrite(const MrcMr* mr, const MrcBuffer& dst, uint64_t size,
 
 void MrcQp::stageSendWriteWithImm(const MrcMr* mr, const MrcBuffer& dst, uint64_t size, uint64_t wrId,
                                   uint64_t srcOffset, uint64_t dstOffset, bool signaled, unsigned int immData) {
-  // TODO: Define how the Connection handles zero peer receive credits during one-way traffic.
-  // A local send completion does not mean the peer has reposted a receive.
   auto& wr = stageSend(mr, dst, size, wrId, srcOffset, dstOffset, signaled);
   wr.opcode = IBV_WR_RDMA_WRITE_WITH_IMM;
   wr.imm_data = htonl(immData);
@@ -373,6 +375,49 @@ static uint64_t checkedWriteAddress(const MrcBuffer& buffer, uint64_t offset, ui
   }
   return buffer.info.addr + offset;
 }
+
+uint32_t mrcSignalImmediate(uint64_t previous, uint64_t next) {
+  if (next <= previous || next - previous > std::numeric_limits<uint32_t>::max()) {
+    throw Error("Native MRC signal must advance by 1 through UINT32_MAX", ErrorCode::InvalidUsage);
+  }
+  return static_cast<uint32_t>(next);
+}
+
+uint64_t extendOrderedMrcSignal(uint64_t previous, uint32_t immediate) {
+  const uint32_t delta = immediate - static_cast<uint32_t>(previous);
+  if (delta == 0 || delta > std::numeric_limits<uint64_t>::max() - previous) {
+    throw Error("Invalid native MRC signal advance on ordered stream", ErrorCode::RemoteError);
+  }
+  return previous + delta;
+}
+
+void MrcQp::stageSendSignal(const MrcBuffer& dst, uint64_t dstOffset, uint64_t wrId, uint64_t previous, uint64_t next) {
+  // A zero-byte WIMM still denotes an entire, naturally aligned uint64_t at the peer.
+  const auto addr = checkedWriteAddress(dst, dstOffset, sizeof(uint64_t));
+  if (addr % alignof(uint64_t)) throw Error("Unaligned native MRC signal destination", ErrorCode::InvalidUsage);
+  stageSendWriteWithImm(nullptr, dst, 0, wrId, 0, dstOffset, true, mrcSignalImmediate(previous, next));
+}
+
+MrcSignalTarget::MrcSignalTarget(std::shared_ptr<uint64_t> token, Device device) {
+  if (!token || reinterpret_cast<uintptr_t>(token.get()) % alignof(uint64_t)) {
+    throw Error("Native MRC signal forwarding requires an aligned token", ErrorCode::InvalidUsage);
+  }
+  if (device.type == DeviceType::CPU) {
+    hostToken_ = std::move(token);
+    return;
+  }
+  if (device.type != DeviceType::GPU || device.id < 0 || detail::gpuIdFromAddress(token.get()) != device.id) {
+    throw Error("Native MRC signal token does not belong to the requested GPU", ErrorCode::InvalidUsage);
+  }
+  if (!gdrEnabled())
+    throw Error("Native MRC GPU signal forwarding requires GDRCopy: " + gdrStatusMessage(), ErrorCode::InvalidUsage);
+  auto mapping = std::make_shared<GdrMap>(std::move(token), device.id);
+  if (!mapping->valid()) throw Error("Invalid native MRC GPU signal mapping", ErrorCode::SystemError);
+  // Keep the mapping (and therefore the GPU allocation) alive for every publication through its BAR address.
+  hostToken_ = std::shared_ptr<uint64_t>(mapping, mapping->hostPtr());
+}
+
+void MrcSignalTarget::publish(uint64_t value) const { atomicStore(hostToken_.get(), value, memoryOrderRelease); }
 
 std::pair<uint64_t, uint64_t> MrcQp::checkedWriteAddresses(const MrcMr* mr, const MrcBuffer& dst, uint64_t size,
                                                            uint64_t srcOffset, uint64_t dstOffset) const {
@@ -725,8 +770,8 @@ void MrcEndpoint::connect(const RdmaEndpoint& remote) {
 
 std::shared_ptr<BaseConnection> MrcEndpoint::createConnection(std::shared_ptr<Context>, const Endpoint&,
                                                               const Endpoint&) const {
-  // TODO: Before enabling native signaling, agree on how the sender learns the peer's
-  // initial posted receive count and when newly posted receives become available to it.
+  // TODO(MRC): Agree with Sreev on the per-QP initial window (including plain WRITEs ahead of WIMM),
+  // how to learn about reposts, and what wakes a one-way sender at zero credits. Send CQEs are not credits.
   throw Error("Native MRC connections are not implemented yet", ErrorCode::InvalidUsage);
 }
 
@@ -765,6 +810,8 @@ void MrcConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMe
     qp_->checkedWriteAddresses(source->mr(), target->buffer(), size, srcOffset, dstOffset);
     flush();
   }
+  // TODO(MRC): Confirm WRITE placement ordering with Sreev. Nonoverlapping puts before a signal and
+  // last-writer-wins for overlapping puts are distinct guarantees; don't infer either from a local CQE.
   qp_->stageSendWrite(source->mr(), target->buffer(), size, /*wrId=*/0, srcOffset, dstOffset, /*signaled=*/true);
   // Space was reserved before connecting. A post failure can leave accepted work on the QP.
   qp_->writeSources_.push_back(srcOwner);
@@ -772,6 +819,9 @@ void MrcConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMe
 }
 
 void MrcConnection::updateAndSync(RegisteredMemory, uint64_t, uint64_t*, uint64_t) {
+  // TODO(MRC): Can a QP bind one semaphore stream, and are its WIMM completions delivered in order?
+  // The immediate carries no target identity. Don't select a target, post a WR, or advance the caller's
+  // counter until binding, ordering and peer receive admission are established.
   throw Error("Native MRC signaling is not implemented yet", ErrorCode::InvalidUsage);
 }
 

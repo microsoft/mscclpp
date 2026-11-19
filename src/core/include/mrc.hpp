@@ -102,6 +102,20 @@ class MrcRecvProgress {
   int numWcs_ = 0;
 };
 
+// Low-word encoding for one ordered semaphore stream. It cannot detect a missing or reordered notification.
+uint32_t mrcSignalImmediate(uint64_t previous, uint64_t next);
+uint64_t extendOrderedMrcSignal(uint64_t previous, uint32_t immediate);
+
+// The caller supplies the allocation owner, not a borrowed semaphore pointer. One target, no receive worker.
+class MrcSignalTarget {
+ public:
+  MrcSignalTarget(std::shared_ptr<uint64_t> token, Device device);
+  void publish(uint64_t value) const;
+
+ private:
+  std::shared_ptr<uint64_t> hostToken_;
+};
+
 class MrcQp {
  public:
   ~MrcQp();
@@ -114,6 +128,8 @@ class MrcQp {
                       uint64_t dstOffset, bool signaled);
   void stageSendWriteWithImm(const MrcMr* mr, const MrcBuffer& dst, uint64_t size, uint64_t wrId, uint64_t srcOffset,
                              uint64_t dstOffset, bool signaled, unsigned int immData);
+  // Stage only. The caller must already have permission to send a notification to this peer.
+  void stageSendSignal(const MrcBuffer& dst, uint64_t dstOffset, uint64_t wrId, uint64_t previous, uint64_t next);
   void postSend();
   void stageRecv(uint64_t wrId);
   void postRecv();
