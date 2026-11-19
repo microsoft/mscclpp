@@ -237,6 +237,10 @@ MSCCLPP_API_CPP MemoryDevice2DeviceSemaphore::DeviceHandle MemoryDevice2DeviceSe
 
 MSCCLPP_API_CPP PortDevice2DeviceSemaphore::PortDevice2DeviceSemaphore(const Semaphore& semaphore)
     : semaphore_(semaphore) {
+  if (connection().localDevice().type != DeviceType::GPU) {
+    THROW(CONN, Error, ErrorCode::InvalidUsage,
+          "Local endpoint device type of PortDevice2DeviceSemaphore should be GPU");
+  }
   auto& conn = BaseConnection::getImpl(connection());
   if (!conn->isDeviceBackend()) {
     THROW(CONN, Error, ErrorCode::InvalidUsage,
@@ -257,6 +261,7 @@ MSCCLPP_API_CPP PortDevice2DeviceSemaphore::PortDevice2DeviceSemaphore(Communica
 MSCCLPP_API_CPP Connection& PortDevice2DeviceSemaphore::connection() { return semaphore_.connection(); }
 
 MSCCLPP_API_CPP PortDevice2DeviceSemaphore::DeviceHandle PortDevice2DeviceSemaphore::deviceHandle() const {
+  if (!expectedInboundToken_) THROW(CONN, Error, ErrorCode::InvalidUsage, "PortDevice2DeviceSemaphore was moved from");
   PortDevice2DeviceSemaphore::DeviceHandle device;
   device.inboundToken = reinterpret_cast<uint64_t*>(semaphore_.localMemory().data());
   device.expectedInboundToken = expectedInboundToken_.get();

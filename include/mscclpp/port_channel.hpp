@@ -112,8 +112,8 @@ struct BasePortChannel {
   std::shared_ptr<Proxy> proxy_;
 
  public:
-  /// Constructor.
-  BasePortChannel() = default;
+  /// Construct an unassigned channel. Handle extraction throws InvalidUsage until assigned.
+  BasePortChannel() noexcept : semaphoreId_(0) {}
 
   /// Constructor.
   /// @param semaphoreId The ID of the semaphore.
@@ -144,7 +144,7 @@ struct BasePortChannel {
   BasePortChannel& operator=(const BasePortChannel& other) = default;
 
   /// Device-side handle for BasePortChannel.
-  using DeviceHandle = BasePortChannelDeviceHandleT<Backend>;
+  using DeviceHandle = BasePortChannelDeviceHandle<Backend>;
 
   /// Returns the device-side handle.
   /// User should make sure the BasePortChannel is not released when using the returned handle.
@@ -167,8 +167,8 @@ struct PortChannel : public BasePortChannel<Backend> {
   RegisteredMemory srcMemory_;
 
  public:
-  /// Constructor.
-  PortChannel() = default;
+  /// Construct an unassigned channel. Handle extraction throws InvalidUsage until assigned.
+  PortChannel() noexcept : dst_(0), src_(0) {}
 
   /// Constructor.
   /// @param semaphoreId The ID of the semaphore.
@@ -206,7 +206,7 @@ struct PortChannel : public BasePortChannel<Backend> {
   PortChannel& operator=(const PortChannel& other) = default;
 
   /// Device-side handle for PortChannel.
-  using DeviceHandle = PortChannelDeviceHandleT<Backend>;
+  using DeviceHandle = PortChannelDeviceHandle<Backend>;
 
   /// Returns the device-side handle.
   /// User should make sure the PortChannel is not released when using the returned handle.
