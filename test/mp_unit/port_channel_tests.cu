@@ -186,8 +186,8 @@ void PortChannelOneToOneTest::setupMeshConnections(std::vector<TestPortChannel>&
 }
 
 union ConstPortChannelStorage {
-  mscclpp::PortChannelDeviceHandleT<mscclpp::PortChannelBackend::Host> host;
-  mscclpp::PortChannelDeviceHandleT<mscclpp::PortChannelBackend::Device> device;
+  mscclpp::PortChannelDeviceHandle<mscclpp::PortChannelBackend::Host> host;
+  mscclpp::PortChannelDeviceHandle<mscclpp::PortChannelBackend::Device> device;
   constexpr ConstPortChannelStorage() : host{} {}
 };
 
@@ -195,7 +195,7 @@ template <mscclpp::PortChannelBackend Backend, Concurrency Mode = Backend == msc
                                                                       ? Concurrency::Device
                                                                       : Concurrency::Exclusive>
 struct TestPortChannelHandle {
-  mscclpp::PortChannelDeviceHandleT<Backend> chan;
+  mscclpp::PortChannelDeviceHandle<Backend> chan;
 
   __device__ void put(uint64_t dstOffset, uint64_t srcOffset, uint64_t size) {
     chan.template put<Mode>(dstOffset, srcOffset, size);
@@ -1034,13 +1034,13 @@ TEST(PortChannelOneToOneTest, AccumulateIbHostNoAtomicRejected) {
 
 static constexpr int kMaxQps = 4;
 __constant__ DeviceHandle<mscclpp::PortChannel<>> gMultiQpPortChans[kMaxQps];
-__constant__ mscclpp::PortChannelDeviceHandleT<mscclpp::PortChannelBackend::Device> gMultiQpDevicePortChans[kMaxQps];
+__constant__ mscclpp::PortChannelDeviceHandle<mscclpp::PortChannelBackend::Device> gMultiQpDevicePortChans[kMaxQps];
 
 inline void copyMultiQpChannelsToSymbol(const std::vector<TestPortChannel>& portChannels, IbMode ibMode) {
   const int numQps = static_cast<int>(portChannels.size());
   ASSERT_LE(numQps, kMaxQps);
   if (ibMode == IbMode::Device) {
-    std::vector<mscclpp::PortChannelDeviceHandleT<mscclpp::PortChannelBackend::Device>> handles;
+    std::vector<mscclpp::PortChannelDeviceHandle<mscclpp::PortChannelBackend::Device>> handles;
     for (const auto& ch : portChannels) {
       handles.push_back(std::get<mscclpp::PortChannel<mscclpp::PortChannelBackend::Device>>(ch).deviceHandle());
     }
@@ -1713,6 +1713,7 @@ TEST(PortChannelOneToOneTest, HostAccumulateIbDeviceModeRejected) {
   testAccumulateRejected(ibTransport, IbMode::Device, /*tag=*/79, "GPU-initiated", /*checkHugeOffset=*/false);
 }
 
+#if defined(MSCCLPP_DEVICE_CUDA)
 // Buffer layout of the putWithAccumulate test: two payload ints, then one flag word per (run, rank).
 static constexpr int kPutWithAccumulateFlagInts = 2;
 static constexpr int kPutWithAccumulateRuns = 3;
@@ -1748,9 +1749,11 @@ __global__ void kernelGpuNetIoPutWithAccumulate(int* buff, int rank, int run, in
   }
   chan.flush<kExclusive>();
 }
+#endif  // defined(MSCCLPP_DEVICE_CUDA)
 
 TEST(PortChannelOneToOneTest, PutWithAccumulateIbDeviceMode) {
   REQUIRE_GPUNETIO;
+#if defined(MSCCLPP_DEVICE_CUDA)
   if (gEnv->rank >= numRanksToUse) return;
 
   const int rank = communicator->bootstrap()->getRank();
@@ -1790,8 +1793,10 @@ TEST(PortChannelOneToOneTest, PutWithAccumulateIbDeviceMode) {
   communicator->bootstrap()->barrier();
   for (auto& m : localMems) registeredMemories.push_back(m);
   for (auto& m : remoteMems) registeredMemories.push_back(m);
+#endif  // defined(MSCCLPP_DEVICE_CUDA)
 }
 
+#if defined(MSCCLPP_DEVICE_CUDA)
 template <int PayloadElements, bool BlueFlame>
 __global__ void kernelGpuNetIoPutWithAccumulatePayload(int* buffer, int rank, int iterations, int* errors) {
   if (threadIdx.x != 0) return;
@@ -1823,8 +1828,11 @@ __global__ void kernelGpuNetIoPutWithAccumulatePayload(int* buffer, int rank, in
   }
   channel.flush<Exclusive>();
 }
+#endif  // defined(MSCCLPP_DEVICE_CUDA)
 
-void PortChannelOneToOneTest::testPutWithAccumulatePayload(bool inlinePayload, bool blueFlame) {
+void PortChannelOneToOneTest::testPutWithAccumulatePayload([[maybe_unused]] bool inlinePayload,
+                                                           [[maybe_unused]] bool blueFlame) {
+#if defined(MSCCLPP_DEVICE_CUDA)
   if (gEnv->rank >= numRanksToUse) return;
   const int elements = inlinePayload ? 4 : 64;
   const int rank = communicator->bootstrap()->getRank();
@@ -1851,6 +1859,7 @@ void PortChannelOneToOneTest::testPutWithAccumulatePayload(bool inlinePayload, b
   communicator->bootstrap()->barrier();
   for (auto& memory : localMems) registeredMemories.push_back(memory);
   for (auto& memory : remoteMems) registeredMemories.push_back(memory);
+#endif  // defined(MSCCLPP_DEVICE_CUDA)
 }
 
 TEST(PortChannelOneToOneTest, PutWithAccumulatePayloadSizesIbDeviceMode) {

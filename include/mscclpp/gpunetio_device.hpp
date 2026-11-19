@@ -100,7 +100,26 @@ struct GpuNetIoDeviceHandle {
                                         [[maybe_unused]] int slotIdx = -1) {
     static_assert(MaxExclusiveThreadsPerBlock <= 1024, "At most 1024 exclusive threads per block are supported");
 #if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
-    accumulateImpl<docaConcurrency<Mode>(), MaxExclusiveThreadsPerBlock>(dst, dstOffset, value, slotIdx);
+    const uint64_t addr = dst.addr + dstOffset;
+    MSCCLPP_ASSERT_DEVICE(addr % sizeof(uint64_t) == 0, "accumulate address must be 8-byte aligned");
+    auto* q = static_cast<doca_gpu_dev_verbs_qp*>(qp);
+    constexpr auto sharing = docaConcurrency<Mode>();
+    const uint32_t resolvedSlotIdx = resolveSlotIndex(slotIdx);
+    if (useBlueFlame<sharing, MaxExclusiveThreadsPerBlock>(sizeof(uint64_t), resolvedSlotIdx)) {
+      withWqeSlot<sharing, MaxExclusiveThreadsPerBlock>(
+          q, 1, resolvedSlotIdx, [&](doca_gpu_dev_verbs_wqe* sharedWqe, uint64_t index) {
+            prepareAtomicWqe(q, sharedWqe, index, addr, dst.key, value);
+            copyWqeToGlobal(doca_gpu_dev_verbs_get_wqe_ptr(q, index), sharedWqe);
+            doca_gpu_dev_verbs_mark_wqes_ready<sharing>(q, index, index);
+            submitPreparedFromShared<sharing>(q, index, sharedWqe);
+          });
+    } else {
+      const auto index =
+          doca_gpu_dev_verbs_reserve_wq_slots<sharing, DOCA_GPUNETIO_VERBS_QP_SQ, DOCA_GPUNETIO_VERBS_CQ_64B>(q, 1);
+      prepareAtomicWqe(q, doca_gpu_dev_verbs_get_wqe_ptr(q, index), index, addr, dst.key, value);
+      doca_gpu_dev_verbs_mark_wqes_ready<sharing>(q, index, index);
+      submitDb<sharing>(q, index + 1);
+    }
 #else
     MSCCLPP_ASSERT_DEVICE(false, "GPUNetIO is not enabled");
 #endif
@@ -130,8 +149,27 @@ struct GpuNetIoDeviceHandle {
                                                [[maybe_unused]] int slotIdx = -1) {
     static_assert(MaxExclusiveThreadsPerBlock <= 1024, "At most 1024 exclusive threads per block are supported");
 #if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
-    putWithAccumulateImpl<Mode, MaxExclusiveThreadsPerBlock>(dst, dstOffset, src, srcOffset, size, acc, accOffset,
-                                                             value, slotIdx);
+    const uint64_t accAddr = acc.addr + accOffset;
+    MSCCLPP_ASSERT_DEVICE(accAddr % sizeof(uint64_t) == 0, "putWithAccumulate address must be 8-byte aligned");
+    if (size == 0 || size > DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE) {
+      putImpl<docaConcurrency<Mode>(), MaxExclusiveThreadsPerBlock>(dst, dstOffset, src, srcOffset, size, slotIdx);
+      accumulate<Mode, MaxExclusiveThreadsPerBlock>(acc, accOffset, value, slotIdx);
+      return;
+    }
+    auto* q = static_cast<doca_gpu_dev_verbs_qp*>(qp);
+    constexpr auto sharing = docaConcurrency<Mode>();
+    const uint64_t dstAddr = dst.addr + dstOffset;
+    const uint64_t srcAddr = src.addr + srcOffset;
+    const uint32_t resolvedSlotIdx = resolveSlotIndex(slotIdx);
+    if (useBlueFlame<sharing, MaxExclusiveThreadsPerBlock>(size, resolvedSlotIdx)) {
+      submitPutWithAccumulateBlueFlame<sharing, MaxExclusiveThreadsPerBlock>(
+          q, dstAddr, dst.key, srcAddr, src.key, size, accAddr, acc.key, value, resolvedSlotIdx);
+    } else {
+      const auto index =
+          doca_gpu_dev_verbs_reserve_wq_slots<sharing, DOCA_GPUNETIO_VERBS_QP_SQ, DOCA_GPUNETIO_VERBS_CQ_64B>(q, 2);
+      submitPutWithAccumulateDb<sharing>(q, index, dstAddr, dst.key, srcAddr, src.key, size, accAddr, acc.key,
+                                         atomicFetchAddr, atomicFetchKey, value);
+    }
 #else
     MSCCLPP_ASSERT_DEVICE(false, "GPUNetIO is not enabled");
 #endif
@@ -241,58 +279,6 @@ struct GpuNetIoDeviceHandle {
     prepareWriteWqe(q, wqePtr, index, dstAddr, dstKey, srcAddr, srcKey, size);
     doca_gpu_dev_verbs_mark_wqes_ready<Sharing>(q, index, index);
     submitDb<Sharing>(q, index + 1);
-  }
-
-  template <doca_gpu_dev_verbs_resource_sharing_mode Sharing, uint32_t MaxExclusiveThreadsPerBlock>
-  MSCCLPP_DEVICE_INLINE void accumulateImpl(const GpuNetIoMemoryDeviceHandle& dst, uint64_t dstOffset, int64_t value,
-                                            int slotIdx) {
-    const uint64_t addr = dst.addr + dstOffset;
-    MSCCLPP_ASSERT_DEVICE(addr % sizeof(uint64_t) == 0, "accumulate address must be 8-byte aligned");
-    auto* q = static_cast<doca_gpu_dev_verbs_qp*>(qp);
-    const uint32_t resolvedSlotIdx = resolveSlotIndex(slotIdx);
-    if (useBlueFlame<Sharing, MaxExclusiveThreadsPerBlock>(sizeof(uint64_t), resolvedSlotIdx)) {
-      withWqeSlot<Sharing, MaxExclusiveThreadsPerBlock>(
-          q, 1, resolvedSlotIdx, [&](doca_gpu_dev_verbs_wqe* sharedWqe, uint64_t index) {
-            prepareAtomicWqe(q, sharedWqe, index, addr, dst.key, value);
-            copyWqeToGlobal(doca_gpu_dev_verbs_get_wqe_ptr(q, index), sharedWqe);
-            doca_gpu_dev_verbs_mark_wqes_ready<Sharing>(q, index, index);
-            submitPreparedFromShared<Sharing>(q, index, sharedWqe);
-          });
-    } else {
-      const auto index =
-          doca_gpu_dev_verbs_reserve_wq_slots<Sharing, DOCA_GPUNETIO_VERBS_QP_SQ, DOCA_GPUNETIO_VERBS_CQ_64B>(q, 1);
-      prepareAtomicWqe(q, doca_gpu_dev_verbs_get_wqe_ptr(q, index), index, addr, dst.key, value);
-      doca_gpu_dev_verbs_mark_wqes_ready<Sharing>(q, index, index);
-      submitDb<Sharing>(q, index + 1);
-    }
-  }
-
-  template <auto Mode, uint32_t MaxExclusiveThreadsPerBlock>
-  MSCCLPP_DEVICE_INLINE void putWithAccumulateImpl(const GpuNetIoMemoryDeviceHandle& dst, uint64_t dstOffset,
-                                                   const GpuNetIoMemoryDeviceHandle& src, uint64_t srcOffset,
-                                                   uint64_t size, const GpuNetIoMemoryDeviceHandle& acc,
-                                                   uint64_t accOffset, int64_t value, int slotIdx) {
-    const uint64_t accAddr = acc.addr + accOffset;
-    MSCCLPP_ASSERT_DEVICE(accAddr % sizeof(uint64_t) == 0, "putWithAccumulate address must be 8-byte aligned");
-    if (size == 0 || size > DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE) {
-      putImpl<docaConcurrency<Mode>(), MaxExclusiveThreadsPerBlock>(dst, dstOffset, src, srcOffset, size, slotIdx);
-      accumulate<Mode, MaxExclusiveThreadsPerBlock>(acc, accOffset, value, slotIdx);
-      return;
-    }
-    auto* q = static_cast<doca_gpu_dev_verbs_qp*>(qp);
-    constexpr auto sharing = docaConcurrency<Mode>();
-    const uint64_t dstAddr = dst.addr + dstOffset;
-    const uint64_t srcAddr = src.addr + srcOffset;
-    const uint32_t resolvedSlotIdx = resolveSlotIndex(slotIdx);
-    if (useBlueFlame<sharing, MaxExclusiveThreadsPerBlock>(size, resolvedSlotIdx)) {
-      submitPutWithAccumulateBlueFlame<sharing, MaxExclusiveThreadsPerBlock>(
-          q, dstAddr, dst.key, srcAddr, src.key, size, accAddr, acc.key, value, resolvedSlotIdx);
-    } else {
-      const auto index =
-          doca_gpu_dev_verbs_reserve_wq_slots<sharing, DOCA_GPUNETIO_VERBS_QP_SQ, DOCA_GPUNETIO_VERBS_CQ_64B>(q, 2);
-      submitPutWithAccumulateDb<sharing>(q, index, dstAddr, dst.key, srcAddr, src.key, size, accAddr, acc.key,
-                                         atomicFetchAddr, atomicFetchKey, value);
-    }
   }
 
   template <doca_gpu_dev_verbs_resource_sharing_mode Sharing, uint32_t MaxExclusiveThreadsPerBlock>

@@ -282,7 +282,7 @@ Runtime views are reused by later operations, not independent results.
   ranks across two equal IPC domains via GPUNetIO (not a claim of hardware
   qualification of every topology). Expert placement is even
   and contiguous; top-k is 1-16; throughput allows at most 128 experts per rank.
-* Latency hidden sizes are `1024, 2048, 4096, 4352, 5120, 5376, 6656, 7168, 8192, 8704, 9216`.
+* Latency hidden sizes are `256, 512, 768, 1024, 1280, 1536, 1792, 2048, 2560, 4096, 4352, 5120, 5376, 6656, 7168, 8192, 8704, 9216`.
   Throughput combine always consumes BF16 and requires hidden size to be a
   multiple of 8 for 16-byte rows, regardless of the dispatch format. FP8 dispatch
   additionally requires a multiple of 128.

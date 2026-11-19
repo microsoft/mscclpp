@@ -15,6 +15,29 @@ from mscclpp import CommGroup
 from . import _cpp
 from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode, NativeQuantConfig
 
+LATENCY_HIDDEN_SIZES = frozenset(
+    {
+        256,
+        512,
+        768,
+        1024,
+        1280,
+        1536,
+        1792,
+        2048,
+        2560,
+        4096,
+        4352,
+        5120,
+        5376,
+        6656,
+        7168,
+        8192,
+        8704,
+        9216,
+    }
+)
+
 
 @dataclass
 class QuantConfig:
@@ -123,11 +146,9 @@ class MoECommunicatorConfig:
         if not latency and self.combine_mode != CombineMode.RANK_LOCAL_REDUCE:
             raise ValueError("THROUGHPUT supports only RANK_LOCAL_REDUCE combine")
         if latency:
-            # The native runtime validates the hidden size against the selected transport.
-            if self.hidden_size not in (1024, 2048, 4096, 4352, 5120, 5376, 6656, 7168, 8192, 8704, 9216):
-                raise ValueError(
-                    "latency hidden_size must be one of 1024, 2048, 4096, 4352, 5120, 5376, 6656, 7168, 8192, 8704, 9216"
-                )
+            if self.hidden_size not in LATENCY_HIDDEN_SIZES:
+                supported_sizes = ", ".join(str(size) for size in sorted(LATENCY_HIDDEN_SIZES))
+                raise ValueError(f"latency hidden_size must be one of {supported_sizes}")
         elif self.hidden_size % 8:
             raise ValueError("throughput combine requires 16-byte-aligned BF16 rows, even after FP8 dispatch")
         if self.comm is None:

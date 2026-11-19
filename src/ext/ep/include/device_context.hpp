@@ -10,7 +10,7 @@
 namespace mscclpp {
 namespace ep {
 
-using PortChannelDeviceHandle = mscclpp::PortChannelDeviceHandleT<mscclpp::PortChannelBackend::Device>;
+using PortChannelDeviceHandle = mscclpp::PortChannelDeviceHandle<mscclpp::PortChannelBackend::Device>;
 
 struct PortChannelDeviceContext {
   PortChannelDeviceHandle* channels;

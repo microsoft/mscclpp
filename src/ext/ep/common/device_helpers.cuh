@@ -105,19 +105,19 @@ MSCCLPP_DEVICE_INLINE void blockPeerBarrier(BaseMemoryChannelDeviceHandle* chann
 // Deferred PortChannel helpers built on public put / putWithAccumulate.
 template <uint32_t MaxExclusiveThreadsPerBlock = DeviceBackendHandle::kDefaultMaxExclusiveThreadsPerBlock,
           typename WaitFn>
-MSCCLPP_DEVICE_INLINE void putAfter(PortChannelDeviceHandleT<PortChannelBackend::Device>& channel, uint64_t dstOffset,
+MSCCLPP_DEVICE_INLINE void putAfter(PortChannelDeviceHandle<PortChannelBackend::Device>& channel, uint64_t dstOffset,
                                     uint64_t srcOffset, uint64_t size, int slotIdx, WaitFn&& waitReady) {
-  constexpr auto kExclusive = PortChannelDeviceHandle::Concurrency::Exclusive;
+  constexpr auto kExclusive = PortChannelDeviceHandle<PortChannelBackend::Device>::Concurrency::Exclusive;
   waitReady();
   channel.put<kExclusive, MaxExclusiveThreadsPerBlock>(dstOffset, srcOffset, size, slotIdx);
 }
 
 template <uint32_t MaxExclusiveThreadsPerBlock = DeviceBackendHandle::kDefaultMaxExclusiveThreadsPerBlock,
           typename WaitFn>
-MSCCLPP_DEVICE_INLINE void putWithAccumulateAfter(PortChannelDeviceHandleT<PortChannelBackend::Device>& channel,
+MSCCLPP_DEVICE_INLINE void putWithAccumulateAfter(PortChannelDeviceHandle<PortChannelBackend::Device>& channel,
                                                   uint64_t dstOffset, uint64_t srcOffset, uint64_t size,
                                                   uint64_t accOffset, int64_t value, int slotIdx, WaitFn&& waitReady) {
-  constexpr auto kExclusive = PortChannelDeviceHandle::Concurrency::Exclusive;
+  constexpr auto kExclusive = PortChannelDeviceHandle<PortChannelBackend::Device>::Concurrency::Exclusive;
   waitReady();
   channel.putWithAccumulate<kExclusive, MaxExclusiveThreadsPerBlock>(dstOffset, srcOffset, size, accOffset, value,
                                                                      slotIdx);

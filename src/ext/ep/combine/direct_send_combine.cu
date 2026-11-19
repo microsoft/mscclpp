@@ -34,13 +34,12 @@ MSCCLPP_DEVICE_INLINE ExpertTokenLocation locateExpertMajorToken(int flatTokenId
 // Warp 0 TMA-copies each local expert's output tokens back to their source ranks' combine buffers.
 template <int Hidden>
 MSCCLPP_DEVICE_INLINE void sendExpertMajorTokens(const void* expertOutput, const int* srcInfo,
-                                                 const int64_t* layoutRange, const Workload& workload,
+                                                 const int64_t* layoutRange, const Workload& workload, int nRanks,
                                                  void* combineBuffer, const TransportView& transport,
                                                  uint8_t* sharedMemory) {
   if (threadIdx.x >= WARP_SIZE) return;
   constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(Bf16);
   const int laneIdx = getLaneId();
-  const int nRanks = transport.numRanks_;
   const int nLocalExperts = workload.numExperts_ / nRanks;
   const int maxTokensPerRank = workload.maxTokensPerRank_;
   const int nOutputSlotsPerExpert = nRanks * maxTokensPerRank;
@@ -102,8 +101,8 @@ template <int Hidden, int MaxNTopk>
 MSCCLPP_DEVICE_INLINE void reduceExpertMajorTokens(void* output, const int64_t* __restrict__ topkIndices,
                                                    const float* __restrict__ topkWeights, const Workload& workload,
                                                    const void* combineBuffer) {
-  constexpr int NHiddenVectors = Hidden / mscclpp::bf16x8::Size;
-  constexpr int NPairsPerVector = mscclpp::f32x8::Size / mscclpp::f32x2::Size;
+  constexpr int NFp32x8 = Hidden / mscclpp::f32x8::Size;
+  constexpr int NFp32x2PerFp32x8 = mscclpp::f32x8::Size / mscclpp::f32x2::Size;
   const int nTokens = workload.numTokens_;
   const int nTopk = workload.numTopk_;
   const int nExperts = workload.numExperts_;
@@ -122,26 +121,26 @@ MSCCLPP_DEVICE_INLINE void reduceExpertMajorTokens(void* output, const int64_t* 
     }
 
 #pragma unroll
-    for (int vectorIdx = static_cast<int>(threadIdx.x); vectorIdx < NHiddenVectors; vectorIdx += CombineNThreads) {
+    for (int fp32x8Idx = static_cast<int>(threadIdx.x); fp32x8Idx < NFp32x8; fp32x8Idx += CombineNThreads) {
       mscclpp::f32x8 sum;
-      auto* sumPairs = reinterpret_cast<mscclpp::f32x2*>(&sum);
+      auto* sumFp32x2 = reinterpret_cast<mscclpp::f32x2*>(&sum);
 #pragma unroll
-      for (int pairIdx = 0; pairIdx < NPairsPerVector; ++pairIdx) {
-        sumPairs[pairIdx].storage = make_float2(0.0f, 0.0f);
+      for (int idx = 0; idx < NFp32x2PerFp32x8; ++idx) {
+        sumFp32x2[idx].storage = make_float2(0.0f, 0.0f);
       }
       for (int routeIdx = 0; routeIdx < nTopk; ++routeIdx) {
         const int expertIdx = routeExperts[routeIdx];
         if (expertIdx < 0) continue;
         const size_t expertTokenIdx = static_cast<size_t>(expertIdx) * maxTokensPerRank + tokenIdx;
-        const auto values = mscclpp::to<mscclpp::f32x8>(expertTokens[expertTokenIdx * NHiddenVectors + vectorIdx]);
-        const auto* valuePairs = reinterpret_cast<const mscclpp::f32x2*>(&values);
-        const mscclpp::f32x2 weightPair(make_float2(routeWeights[routeIdx], routeWeights[routeIdx]));
+        const auto values = mscclpp::to<mscclpp::f32x8>(expertTokens[expertTokenIdx * NFp32x8 + fp32x8Idx]);
+        const auto* valuesFp32x2 = reinterpret_cast<const mscclpp::f32x2*>(&values);
+        const mscclpp::f32x2 weightFp32x2(make_float2(routeWeights[routeIdx], routeWeights[routeIdx]));
 #pragma unroll
-        for (int pairIdx = 0; pairIdx < NPairsPerVector; ++pairIdx) {
-          sumPairs[pairIdx] = mscclpp::fma(valuePairs[pairIdx], weightPair, sumPairs[pairIdx]);
+        for (int idx = 0; idx < NFp32x2PerFp32x8; ++idx) {
+          sumFp32x2[idx] = mscclpp::fma(valuesFp32x2[idx], weightFp32x2, sumFp32x2[idx]);
         }
       }
-      outputTokens[static_cast<size_t>(tokenIdx) * NHiddenVectors + vectorIdx] = mscclpp::to<mscclpp::bf16x8>(sum);
+      outputTokens[static_cast<size_t>(tokenIdx) * NFp32x8 + fp32x8Idx] = mscclpp::to<mscclpp::bf16x8>(sum);
     }
   }
 }
@@ -156,23 +155,25 @@ __global__ __launch_bounds__(CombineNThreads,
                                                    const void* dispatchRecvBuffer, const DeviceContext* context) {
 #if MSCCLPP_BULK_AVAILABLE
   extern __shared__ __align__(128) uint8_t sharedMemory[];
+  const int nRanks = context->numRanks_;
   const TransportView transport(context);
-  WorkspaceView workspace(context->workspace_, context->numRanks_, workload.numExperts_);
+  WorkspaceView workspace(context->workspace_, nRanks, workload.numExperts_);
 
   if constexpr (Layout == DispatchLayout::RANK_MAJOR) {
     const uint32_t flag = getDispatchFlag(workspace);
     if (blockIdx.x == 0) {
-      publishRankMajorCombineReady(transport, context->numRanks_, flag, workspace);
+      publishRankMajorCombineReady(transport, nRanks, flag, workspace);
     } else {
       combineRankMajorTokens<Hidden, CombineMode::DIRECT_SEND, DispatchType, MaxNTopk>(
-          output, expertOutput, topkIndices, topkWeights, workload, transport, workspace, flag, sharedMemory);
+          output, expertOutput, topkIndices, topkWeights, workload, nRanks, transport, workspace, flag, sharedMemory);
     }
   } else {
     static_assert(Layout == DispatchLayout::EXPERT_MAJOR);
-    sendExpertMajorTokens<Hidden>(expertOutput, srcInfo, layoutRange, workload, combineBuffer, transport, sharedMemory);
+    sendExpertMajorTokens<Hidden>(expertOutput, srcInfo, layoutRange, workload, nRanks, combineBuffer, transport,
+                                  sharedMemory);
 
     workspace.combineSyncer_->sync(gridDim.x);
-    exchangeCombineReady(transport, context->numRanks_);
+    exchangeCombineReady(transport, nRanks);
     workspace.combineSyncer_->sync(gridDim.x);
 
     reduceExpertMajorTokens<Hidden, MaxNTopk>(output, topkIndices, topkWeights, workload, combineBuffer);

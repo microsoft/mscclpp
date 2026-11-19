@@ -24,8 +24,9 @@ inline constexpr int DefaultLatencyDispatchBlocks = MaxDispatchBlocks;
 inline constexpr int DefaultLatencyCombineBlocks = MaxWorkerBlocks;
 
 inline constexpr bool isSupportedHidden(int hidden) {
-  return hidden == 1024 || hidden == 2048 || hidden == 4096 || hidden == 4352 || hidden == 5120 || hidden == 5376 ||
-         hidden == 6656 || hidden == 7168 || hidden == 8192 || hidden == 8704 || hidden == 9216;
+  return hidden == 256 || hidden == 512 || hidden == 768 || hidden == 1024 || hidden == 1280 || hidden == 1536 ||
+         hidden == 1792 || hidden == 2048 || hidden == 2560 || hidden == 4096 || hidden == 4352 || hidden == 5120 ||
+         hidden == 5376 || hidden == 6656 || hidden == 7168 || hidden == 8192 || hidden == 8704 || hidden == 9216;
 }
 
 struct Workload {

@@ -3,8 +3,8 @@
 By default, `PortChannel` operations over InfiniBand are pushed by GPU threads into a FIFO and posted to the NIC by the
 host proxy thread of a `ProxyService`. With the optional GPUNetIO backend, GPU threads build the RDMA work requests and
 ring the NIC doorbell themselves through [DOCA GPUNetIO](https://github.com/NVIDIA-DOCA/gpunetio) (GDAKI), removing
-the proxy from the data path. The host setup flow and `PortChannel` posting methods are unchanged; kernels provide
-shared-memory WQE scratch as shown below. The backend is selected per endpoint with `EndpointConfig::Ib::Mode::Device`.
+the proxy from the data path. Select the backend per endpoint with `EndpointConfig::Ib::Mode::Device`, then use a
+Device-typed channel owner and GPU handle. Posting methods allocate their shared-memory WQE scratch internally.
 
 ## Build
 
@@ -48,12 +48,23 @@ mscclpp::PortChannel channel(semaphore, remoteMem, localMem);
 auto deviceHandle = channel.deviceHandle();
 ```
 
+Host and Device owners have distinct `DeviceHandle` types; `mscclpp::deviceHandle(channel)` selects the matching
+GPU view. The canonical types are `BasePortChannelDeviceHandle<Backend>` and `PortChannelDeviceHandle<Backend>`; `<>` selects Host.
+
+Keep the channel and application buffers alive during GPU use. Channel copies share the semaphore owner and counter;
+creating a separate semaphore creates an independent counter.
+
+Default owners are unassigned, and handle extraction throws `InvalidUsage` until a valid channel is assigned.
+Host construction rejects null semaphore owners or proxies. Device construction rejects null or moved-from Port
+semaphore owners and uninitialized or incompatible memory registrations. Port handle extraction also rejects a
+moved-from Port semaphore. Raw GPU handles start at zero but require valid state before use; Host registry ID0 is valid.
+
 Exclusive-mode operations automatically use internal shared-memory WQE slots for BlueFlame submission when the
 transfer fits `device_.blueFlameLimit` (default: 512 KiB) and the calling thread has a slot:
 
 ```cpp
-__global__ void send(mscclpp::PortChannelDeviceHandleT<mscclpp::PortChannelBackend::Device> channel, size_t bytes) {
-  using Concurrency = mscclpp::PortChannelDeviceHandle::Concurrency;
+__global__ void send(mscclpp::PortChannelDeviceHandle<mscclpp::PortChannelBackend::Device> channel, size_t bytes) {
+  using Concurrency = mscclpp::PortChannelDeviceHandle<>::Concurrency;
   if (threadIdx.x != 0) return;
   channel.putWithSignal<Concurrency::Exclusive>(0, bytes);
   channel.flush<Concurrency::Exclusive>();
@@ -86,8 +97,8 @@ every submission. Keep non-inline source buffers unchanged until their transfers
 
 ### Queue pair concurrency and BlueFlame configuration
 
-Channel handles expose a nested `Concurrency` type (`mscclpp::PortChannelDeviceHandle::Concurrency`).
-The type is defined in `BasePortChannelDeviceHandle` in `port_channel_device.hpp` and shared by both backends.
+Channel handles expose a nested `Concurrency` type (`mscclpp::PortChannelDeviceHandle<>::Concurrency`).
+The type is defined in `BasePortChannelDeviceHandle<>` in `port_channel_device.hpp` and shared by both backends.
 For device-backed channels it describes concurrent access to the underlying queue pair, not ownership of the
 PortChannel object. The default is `Concurrency::Device`, allowing callers across the device. Callers may instead
 select `Concurrency::Block` for callers confined to one thread block, or `Concurrency::Exclusive` when the caller
@@ -116,7 +127,7 @@ The default slot index is the linear thread index, including all three block dim
 optional `slotIdx` (`-1` selects the default); out-of-range indices fall back to regular doorbells. For example:
 
 ```cpp
-using Concurrency = mscclpp::PortChannelDeviceHandle::Concurrency;
+using Concurrency = mscclpp::PortChannelDeviceHandle<>::Concurrency;
 channel.put<Concurrency::Exclusive, 8>(dstOffset, srcOffset, bytes, slotIdx);
 channel.signal<Concurrency::Exclusive, 8>(slotIdx);
 ```

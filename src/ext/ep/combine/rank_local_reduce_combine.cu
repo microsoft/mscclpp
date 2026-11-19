@@ -223,7 +223,7 @@ __global__ __launch_bounds__(CombineNThreads,
       publishRankMajorCombineReady(transport, nRanks, flag, workspaceView);
     } else {
       combineRankMajorTokens<Hidden, CombineMode::RANK_LOCAL_REDUCE, DispatchType, MaxNTopk>(
-          output, expertOutput, topkIndices, nullptr, workload, transport, workspaceView, flag, sharedMemory);
+          output, expertOutput, topkIndices, nullptr, workload, nRanks, transport, workspaceView, flag, sharedMemory);
     }
   } else {
     static_assert(Layout == DispatchLayout::EXPERT_MAJOR);

@@ -1287,8 +1287,10 @@ TEST(MoERuntimeTest, DispatchCombineCorrectness) {
     }
     runCorrectnessCase(*communicator, gEnv->rank, 0, 0, mscclpp::ep::DispatchLayout::RANK_MAJOR, combineMode,
                        mscclpp::ep::DispatchDataType::MXFP8_E4M3);
-    runCorrectnessCase(*communicator, gEnv->rank, 0, 0, mscclpp::ep::DispatchLayout::RANK_MAJOR, combineMode,
-                       mscclpp::ep::DispatchDataType::MXFP8_E4M3, 4352);
+    for (const int hidden : {256, 4352, 5376}) {
+      runCorrectnessCase(*communicator, gEnv->rank, 0, 0, mscclpp::ep::DispatchLayout::RANK_MAJOR, combineMode,
+                         mscclpp::ep::DispatchDataType::MXFP8_E4M3, hidden);
+    }
     for (const auto& numTokensPerRank : {uniformTokens(MultiGroupTokens), UnevenTokens}) {
       runCorrectnessCase(*communicator, gEnv->rank, MultiGroupDispatchBlocks, 0,
                          mscclpp::ep::DispatchLayout::RANK_MAJOR, combineMode,
