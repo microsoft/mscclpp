@@ -25,6 +25,12 @@
 
 namespace mscclpp {
 
+/// Role of a RegisteredMemory when resolving a DeviceMemoryHandle on a device-mode connection.
+enum class DeviceMemoryRole : uint8_t {
+  Src,
+  Dst,
+};
+
 /// Internal base class for connection implementations between two processes.
 class BaseConnection {
  public:
@@ -60,8 +66,8 @@ class BaseConnection {
   /// Create the device backend handle for a PortChannel on this connection.
   virtual DeviceBackendHandle getDeviceBackendInfo() const { return {}; }
 
-  /// Create the device memory handle for a RegisteredMemory on this connection.
-  virtual DeviceMemoryHandle getDeviceMemoryInfo(const RegisteredMemory& /*memory*/) const { return {}; }
+  /// Create the device memory handle for a RegisteredMemory in the given role on this connection.
+  virtual DeviceMemoryHandle getDeviceMemoryInfo(const RegisteredMemory&, DeviceMemoryRole) const { return {}; }
 
   /// Request a flush. Subclasses that support async flush (e.g. IBConnection) override this
   /// to be a no-op and rely on progressFlush() to drive completion via the proxy thread.

@@ -84,7 +84,7 @@ class GpuNetIoConnection : public BaseConnection {
 
   DeviceBackendHandle getDeviceBackendInfo() const override;
 
-  DeviceMemoryHandle getDeviceMemoryInfo(const RegisteredMemory& memory) const override;
+  DeviceMemoryHandle getDeviceMemoryInfo(const RegisteredMemory& memory, DeviceMemoryRole role) const override;
 
   void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
              uint64_t size) override;

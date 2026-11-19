@@ -1713,6 +1713,45 @@ TEST(PortChannelOneToOneTest, HostAccumulateIbDeviceModeRejected) {
   testAccumulateRejected(ibTransport, IbMode::Device, /*tag=*/79, "GPU-initiated", /*checkHugeOffset=*/false);
 }
 
+TEST(PortChannelOneToOneTest, InvalidMemoryRolesIbDeviceModeRejected) {
+  REQUIRE_GPUNETIO;
+  const bool participates = gEnv->rank < numRanksToUse;
+  bool rejectsLocalDst = false;
+  bool rejectsRemoteSrc = false;
+  bool rejectsSwapped = false;
+  if (participates) {
+    const int peer = 1 - gEnv->rank;
+    auto buff = mscclpp::GpuBuffer<int64_t>(1).memory();
+    mscclpp::EndpointConfig cfg;
+    cfg.transport = ibTransport;
+    cfg.ib.gidIndex = std::stoi(gEnv->args["ib_gid_index"]);
+    cfg.ib.mode = IbMode::Device;
+    auto connFuture = communicator->connect(cfg, peer);
+    auto localMem = communicator->registerMemory(buff.get(), sizeof(int64_t), ibTransport);
+    communicator->sendMemory(localMem, peer, /*tag=*/81);
+    auto remoteFuture = communicator->recvMemory(peer, /*tag=*/81);
+    auto conn = connFuture.get();
+    auto remoteMem = remoteFuture.get();
+    auto sem = std::make_shared<mscclpp::PortDevice2DeviceSemaphore>(
+        communicator->buildSemaphore(conn, peer, /*tag=*/82).get());
+
+    rejectsLocalDst =
+        rejectsInvalidUsage([&] { mscclpp::PortChannel invalid(sem, localMem, localMem); }, "dst is local");
+    rejectsRemoteSrc =
+        rejectsInvalidUsage([&] { mscclpp::PortChannel invalid(sem, remoteMem, remoteMem); }, "src is remote");
+    rejectsSwapped =
+        rejectsInvalidUsage([&] { mscclpp::PortChannel invalid(sem, localMem, remoteMem); }, "dst is local");
+  }
+
+  MPI_Barrier(MPI_COMM_WORLD);
+  if (participates) {
+    EXPECT_TRUE(rejectsLocalDst);
+    EXPECT_TRUE(rejectsRemoteSrc);
+    EXPECT_TRUE(rejectsSwapped);
+  }
+}
+
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
 // Buffer layout of the putWithAccumulate test: two payload ints, then one flag word per (run, rank).
 static constexpr int kPutWithAccumulateFlagInts = 2;
 static constexpr int kPutWithAccumulateRuns = 3;
@@ -1748,9 +1787,11 @@ __global__ void kernelGpuNetIoPutWithAccumulate(int* buff, int rank, int run, in
   }
   chan.flush<kExclusive>();
 }
+#endif  // defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
 
 TEST(PortChannelOneToOneTest, PutWithAccumulateIbDeviceMode) {
   REQUIRE_GPUNETIO;
+#if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
   if (gEnv->rank >= numRanksToUse) return;
 
   const int rank = communicator->bootstrap()->getRank();
@@ -1790,6 +1831,7 @@ TEST(PortChannelOneToOneTest, PutWithAccumulateIbDeviceMode) {
   communicator->bootstrap()->barrier();
   for (auto& m : localMems) registeredMemories.push_back(m);
   for (auto& m : remoteMems) registeredMemories.push_back(m);
+#endif  // defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS)
 }
 
 PERF_TEST(PortChannelOneToOneTest, PingPongPerfIbDeviceMode) {

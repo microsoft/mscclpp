@@ -249,17 +249,24 @@ DeviceBackendHandle GpuNetIoConnection::getDeviceBackendInfo() const {
   return handle;
 }
 
-DeviceMemoryHandle GpuNetIoConnection::getDeviceMemoryInfo(const RegisteredMemory& memory) const {
+DeviceMemoryHandle GpuNetIoConnection::getDeviceMemoryInfo(const RegisteredMemory& memory,
+                                                           DeviceMemoryRole role) const {
   const auto& impl = getImpl(memory);
-  if (impl.transports.has(transport_)) {
-    const auto& info = impl.getTransportInfo(transport_);
-    if (info.ibLocal) return {info.ibMrInfo.addr, htobe32(info.ibMr->getLkey())};
+  const Transport expectedTransport = (role == DeviceMemoryRole::Dst) ? remoteTransport_ : transport_;
+  if (!impl.transports.has(expectedTransport)) {
+    THROW(CONN, Error, ErrorCode::InvalidUsage, "RegisteredMemory does not support this transport");
   }
-  if (impl.transports.has(remoteTransport_)) {
-    const auto& info = impl.getTransportInfo(remoteTransport_);
-    if (!info.ibLocal) return {info.ibMrInfo.addr, htobe32(info.ibMrInfo.rkey)};
+  const auto& info = impl.getTransportInfo(expectedTransport);
+  if (role == DeviceMemoryRole::Dst) {
+    if (info.ibLocal) {
+      THROW(CONN, Error, ErrorCode::InvalidUsage, "dst is local, which is not supported");
+    }
+    return {info.ibMrInfo.addr, htobe32(info.ibMrInfo.rkey)};
   }
-  THROW(CONN, Error, ErrorCode::InvalidUsage, "RegisteredMemory does not support this transport");
+  if (!info.ibLocal) {
+    THROW(CONN, Error, ErrorCode::InvalidUsage, "src is remote, which is not supported");
+  }
+  return {info.ibMrInfo.addr, htobe32(info.ibMr->getLkey())};
 }
 
 }  // namespace mscclpp

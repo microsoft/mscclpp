@@ -246,7 +246,7 @@ MSCCLPP_API_CPP PortDevice2DeviceSemaphore::PortDevice2DeviceSemaphore(const Sem
     THROW(CONN, Error, ErrorCode::InvalidUsage,
           "PortDevice2DeviceSemaphore requires a PortChannel device-mode connection");
   }
-  remoteInboundToken_ = conn->getDeviceMemoryInfo(semaphore_.remoteMemory());
+  remoteInboundToken_ = conn->getDeviceMemoryInfo(semaphore_.remoteMemory(), DeviceMemoryRole::Dst);
   if (remoteInboundToken_.addr == 0 || remoteInboundToken_.addr % sizeof(uint64_t) != 0) {
     THROW(CONN, Error, ErrorCode::InvalidUsage, "remote semaphore token is not addressable in PortChannel device mode");
   }

@@ -66,8 +66,22 @@ class MetadataConnection : public mscclpp::BaseConnection {
   MetadataConnection(std::shared_ptr<mscclpp::Context> context, const mscclpp::Endpoint& endpoint, bool device)
       : BaseConnection(std::move(context), endpoint), device_(device) {}
   bool isDeviceBackend() const override { return device_; }
-  mscclpp::DeviceMemoryHandle getDeviceMemoryInfo(const mscclpp::RegisteredMemory& memory) const override {
-    BaseConnection::getImpl(memory);  // Exercise the real empty-registration check.
+  mscclpp::DeviceMemoryHandle getDeviceMemoryInfo(const mscclpp::RegisteredMemory& memory,
+                                                  mscclpp::DeviceMemoryRole role) const override {
+    const auto& impl = BaseConnection::getImpl(memory);  // Exercise the real empty-registration check.
+    if (!impl.transports.has(role == mscclpp::DeviceMemoryRole::Dst ? remoteTransport() : transport())) {
+      THROW(mscclpp::CONN, mscclpp::Error, mscclpp::ErrorCode::InvalidUsage,
+            "RegisteredMemory does not support this transport");
+    }
+    if (role == mscclpp::DeviceMemoryRole::Dst) {
+      if (impl.isLocal) {
+        THROW(mscclpp::CONN, mscclpp::Error, mscclpp::ErrorCode::InvalidUsage, "dst is local, which is not supported");
+      }
+      return {0x2000, 29};
+    }
+    if (!impl.isLocal) {
+      THROW(mscclpp::CONN, mscclpp::Error, mscclpp::ErrorCode::InvalidUsage, "src is remote, which is not supported");
+    }
     return {0x1000, 17};
   }
   mscclpp::Transport transport() const override { return mscclpp::Transport::Ethernet; }
@@ -117,7 +131,20 @@ TEST(SemaphoreValidationTest, DeviceChannelOwnershipAndRegistrations) {
   const auto expected = owner->deviceHandle().expectedInboundToken;
   EXPECT_TRUE(rejectsInvalidUsage([&] { Device invalid(owner, {}, raw.localMemory()); }));
   EXPECT_TRUE(rejectsInvalidUsage([&] { Device invalid(owner, raw.remoteMemory(), {}); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { Device invalid(owner, raw.localMemory(), raw.localMemory()); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { Device invalid(owner, raw.remoteMemory(), raw.remoteMemory()); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { Device invalid(owner, raw.localMemory(), raw.remoteMemory()); }));
+  auto wrongTransportLocal = context->registerMemory(raw.localMemory().data(), sizeof(uint64_t), {});
+  auto wrongTransportRemote = mscclpp::RegisteredMemory::deserialize(wrongTransportLocal.serialize());
+  EXPECT_TRUE(rejectsInvalidUsage([&] { Device invalid(owner, wrongTransportRemote, raw.localMemory()); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { Device invalid(owner, raw.remoteMemory(), wrongTransportLocal); }));
   Device channel(owner, raw.remoteMemory(), raw.localMemory());
+  EXPECT_EQ(mscclpp::deviceHandle(channel).semaphore_.remoteInboundToken.addr, 0x2000u);
+  EXPECT_EQ(mscclpp::deviceHandle(channel).semaphore_.remoteInboundToken.key, 29u);
+  EXPECT_EQ(mscclpp::deviceHandle(channel).dstMemory_.addr, 0x2000u);
+  EXPECT_EQ(mscclpp::deviceHandle(channel).dstMemory_.key, 29u);
+  EXPECT_EQ(mscclpp::deviceHandle(channel).srcMemory_.addr, 0x1000u);
+  EXPECT_EQ(mscclpp::deviceHandle(channel).srcMemory_.key, 17u);
   auto copy = channel;
   mscclpp::BasePortChannel<Backend::Device> baseCopy = channel;
   std::weak_ptr<PortSemaphore> weak = owner;
