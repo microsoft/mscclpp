@@ -15,7 +15,7 @@
 
 template <class T>
 using DeviceHandle = mscclpp::DeviceHandle<T>;
-__constant__ DeviceHandle<mscclpp::PortChannel> constPortChans[16];
+__constant__ DeviceHandle<mscclpp::PortChannel<>> constPortChans[16];
 __constant__ DeviceHandle<mscclpp::MemoryChannel> constMemChans[512];
 __device__ mscclpp::DeviceSyncer deviceSyncer;
 
@@ -26,7 +26,7 @@ static void* localScratchBuff;
 __device__ void localAlltoall(int rank, int nRanksPerNode, size_t nElements) {
   int remoteRank = ((int)blockIdx.x < rank) ? blockIdx.x : blockIdx.x + 1;
   for (int i = 1; i < nRanksPerNode; i++) {
-    DeviceHandle<mscclpp::PortChannel> portChan = constPortChans[blockIdx.x];
+    DeviceHandle<mscclpp::PortChannel<>> portChan = constPortChans[blockIdx.x];
     if (threadIdx.x == 0 && remoteRank % nRanksPerNode == (rank + i) % nRanksPerNode) {
       portChan.putWithSignalAndFlush(rank * nElements * sizeof(int), remoteRank * nElements * sizeof(int),
                                      nElements * sizeof(int));
@@ -41,7 +41,7 @@ __device__ void localAlltoall(int rank, int nRanksPerNode, size_t nElements) {
 
 __global__ void __launch_bounds__(1024) alltoall0(int rank, size_t nElements) {
   int remoteRank = ((int)blockIdx.x < rank) ? blockIdx.x : blockIdx.x + 1;
-  DeviceHandle<mscclpp::PortChannel> portChan = constPortChans[blockIdx.x];
+  DeviceHandle<mscclpp::PortChannel<>> portChan = constPortChans[blockIdx.x];
   if (threadIdx.x == 0) {
     portChan.putWithSignal(rank * nElements * sizeof(int), remoteRank * nElements * sizeof(int),
                            nElements * sizeof(int));
@@ -324,17 +324,17 @@ void AllToAllTestEngine::allocateBuffer() {
 }
 
 void AllToAllTestEngine::setupConnections() {
-  std::vector<DeviceHandle<mscclpp::PortChannel>> portChannels;
+  std::vector<DeviceHandle<mscclpp::PortChannel<>>> portChannels;
   std::vector<DeviceHandle<mscclpp::MemoryChannel>> memoryChannelHandles;
   setupMeshConnections(portChannels, sendBuff_.get(), args_.maxBytes, recvBuff_.get(), args_.maxBytes);
   setupMeshConnections(this->memoryChannels, sendBuff_.get(), args_.maxBytes, scratchBuff_.get(), args_.maxBytes,
                        ChannelSemantic::PUT, 64);
 
-  if (portChannels.size() > sizeof(constPortChans) / sizeof(DeviceHandle<mscclpp::PortChannel>)) {
+  if (portChannels.size() > sizeof(constPortChans) / sizeof(DeviceHandle<mscclpp::PortChannel<>>)) {
     throw std::runtime_error("unexpected error");
   }
   CUDATHROW(cudaMemcpyToSymbol(constPortChans, portChannels.data(),
-                               sizeof(DeviceHandle<mscclpp::PortChannel>) * portChannels.size()));
+                               sizeof(DeviceHandle<mscclpp::PortChannel<>>) * portChannels.size()));
   std::transform(this->memoryChannels.begin(), this->memoryChannels.end(), std::back_inserter(memoryChannelHandles),
                  [](const mscclpp::MemoryChannel& channel) { return mscclpp::deviceHandle(channel); });
   if (memoryChannelHandles.size() > sizeof(constMemChans) / sizeof(DeviceHandle<mscclpp::MemoryChannel>)) {
