@@ -11,6 +11,7 @@
 #include <exception>
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "connection.hpp"
 #include "rdma_provider.hpp"
@@ -132,6 +133,8 @@ class MrcQp {
  private:
   MrcQp(ibv_context* context, mrc_context* mrcContext, ibv_pd* pd, int port, int gidIndex, uint64_t evProfileId,
         int maxSendCqSize, int maxSendWr, int maxRecvWr);
+  std::pair<uint64_t, uint64_t> checkedWriteAddresses(const MrcMr* mr, const MrcBuffer& dst, uint64_t size,
+                                                      uint64_t srcOffset, uint64_t dstOffset) const;
   ibv_send_wr& stageSend(const MrcMr* mr, const MrcBuffer& dst, uint64_t size, uint64_t wrId, uint64_t srcOffset,
                          uint64_t dstOffset, bool signaled);
 

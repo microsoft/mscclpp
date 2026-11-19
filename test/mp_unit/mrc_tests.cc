@@ -429,6 +429,29 @@ TEST(MrcConnectionTest, RejectsInvalidWritesBeforePosting) {
   EXPECT_EQ(buffer[1], static_cast<unsigned char>(0x30 + 1 - gEnv->rank));
 }
 
+TEST(MrcConnectionTest, InvalidWritesDoNotDrainAFullQueue) {
+  runOnBothRanks("reject invalid writes with two sends outstanding", [&] {
+    auto other = mscclpp::Context::create();
+    auto foreign = other->registerMemory(buffer.data(), buffer.size(), transport);
+    auto src = context->registerMemory(buffer.data() + 8, 2, transport);
+    std::weak_ptr<mscclpp::RdmaMemory> owner = MrcMetadataAccess::getImpl(src).getTransportInfo(transport).rdmaMemory;
+    for (int i = 0; i < 2; ++i) {
+      buffer[8 + i] = 0x40 + 2 * gEnv->rank + i;
+      connection->write(remote, i, src, i, 1);
+    }
+    src = {};
+    EXPECT_TRUE(rejectsInvalidUsage([&] { connection->write(remote, 0, foreign, 0, 1); }));
+    EXPECT_TRUE(rejectsInvalidUsage([&] { connection->write(remote, remote.size(), local, 0, 1); }));
+    EXPECT_TRUE(rejectsInvalidUsage([&] { connection->write(remote, 0, local, local.size(), 1); }));
+    EXPECT_TRUE(rejectsInvalidUsage([&] { connection->write(remote, 0, local, 0, uint64_t{1} << 32); }));
+    // Only the QP retains this registration. Rejection must not have drained the earlier writes.
+    EXPECT_FALSE(owner.expired());
+    connection->flush(8000000);
+    EXPECT_TRUE(owner.expired());
+  });
+  for (int i = 0; i < 2; ++i) EXPECT_EQ(buffer[i], static_cast<unsigned char>(0x40 + 2 * (1 - gEnv->rank) + i));
+}
+
 TEST(MrcConnectionTest, ReusesGpuSourceAfterFlush) {
   constexpr size_t bytes = 4096;
   std::shared_ptr<unsigned char> src, dst;

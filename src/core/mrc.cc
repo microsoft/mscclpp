@@ -374,6 +374,17 @@ static uint64_t checkedWriteAddress(const MrcBuffer& buffer, uint64_t offset, ui
   return buffer.info.addr + offset;
 }
 
+std::pair<uint64_t, uint64_t> MrcQp::checkedWriteAddresses(const MrcMr* mr, const MrcBuffer& dst, uint64_t size,
+                                                           uint64_t srcOffset, uint64_t dstOffset) const {
+  if (size > std::numeric_limits<uint32_t>::max()) {
+    throw Error("Native MRC WRITE exceeds the maximum SGE length", ErrorCode::InvalidUsage);
+  }
+  if (mr && mr->mr_->pd != pd_) {
+    throw Error("Native MRC WRITE source and QP belong to different protection domains", ErrorCode::InvalidUsage);
+  }
+  return {mr ? checkedWriteAddress(mr->getBuffer(), srcOffset, size) : 0, checkedWriteAddress(dst, dstOffset, size)};
+}
+
 ibv_send_wr& MrcQp::stageSend(const MrcMr* mr, const MrcBuffer& dst, uint64_t size, uint64_t wrId, uint64_t srcOffset,
                               uint64_t dstOffset, bool signaled) {
   const int pending = sendProgress_.pendingSignaledSends();
@@ -388,14 +399,7 @@ ibv_send_wr& MrcQp::stageSend(const MrcMr* mr, const MrcBuffer& dst, uint64_t si
   if (signaled && numStagedSignaledSend_ >= maxSendCqSize_ - pending) {
     throw Error("Native MRC send CQ is full; poll completions before staging another signal", ErrorCode::InvalidUsage);
   }
-  if (size > std::numeric_limits<uint32_t>::max()) {
-    throw Error("Native MRC WRITE exceeds the maximum SGE length", ErrorCode::InvalidUsage);
-  }
-  if (mr && mr->mr_->pd != pd_) {
-    throw Error("Native MRC WRITE source and QP belong to different protection domains", ErrorCode::InvalidUsage);
-  }
-  const uint64_t dstAddress = checkedWriteAddress(dst, dstOffset, size);
-  const uint64_t srcAddress = mr ? checkedWriteAddress(mr->getBuffer(), srcOffset, size) : 0;
+  const auto [srcAddress, dstAddress] = checkedWriteAddresses(mr, dst, size, srcOffset, dstOffset);
   auto& wr = sendWrs_[numStagedSend_];
   auto& sge = sendSges_[numStagedSend_];
   wr = {};
@@ -755,7 +759,12 @@ void MrcConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMe
                 ErrorCode::InvalidUsage);
   }
 
-  if (qp_->writeSources_.size() >= static_cast<size_t>(maxWriteQueueSize_)) flush();
+  if (qp_->writeSources_.size() >= static_cast<size_t>(maxWriteQueueSize_)) {
+    qp_->sendProgress_.check();
+    // Reject invalid arguments before a capacity flush can drain unrelated writes.
+    qp_->checkedWriteAddresses(source->mr(), target->buffer(), size, srcOffset, dstOffset);
+    flush();
+  }
   qp_->stageSendWrite(source->mr(), target->buffer(), size, /*wrId=*/0, srcOffset, dstOffset, /*signaled=*/true);
   // Space was reserved before connecting. A post failure can leave accepted work on the QP.
   qp_->writeSources_.push_back(srcOwner);
