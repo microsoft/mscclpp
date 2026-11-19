@@ -152,6 +152,33 @@ TEST(MrcPeerToPeerTest, WriteWithImmediatePayload) { testImmediateNotifications(
 
 TEST(MrcPeerToPeerTest, WriteThenZeroByteNotification) { testImmediateNotifications(true); }
 
+TEST(MrcPeerToPeerTest, CheckedSendDrainAllowsSourceReuse) {
+  runOnBothRanks("post receives for checked send drain", [&] {
+    qp->stageRecv(0);
+    qp->stageRecv(1);
+    qp->postRecv();
+  });
+  runOnBothRanks("drain both native sends before source reuse", [&] {
+    for (int i = 0; i < 2; ++i) {
+      buffer[i] = static_cast<unsigned char>(0x40 + 2 * gEnv->rank + i);
+      qp->stageSendWriteWithImm(mr.get(), remoteMr, 1, i, i, 1024 + i, true, i);
+      ASSERT_FALSE(qp->progressSend());  // Staging is not submission.
+      qp->postSend();
+    }
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
+    while (!qp->progressSend()) {
+      ASSERT_TRUE(std::chrono::steady_clock::now() < deadline);
+      std::this_thread::yield();
+    }
+    std::fill_n(buffer.begin(), 2, 0xff);
+    ASSERT_TRUE(qp->progressSend());
+    drain(2, 0, {0, 1});
+    for (int i = 0; i < 2; ++i) {
+      EXPECT_EQ(buffer[1024 + i], static_cast<unsigned char>(0x40 + 2 * (1 - gEnv->rank) + i));
+    }
+  });
+}
+
 TEST(MrcPeerToPeerTest, InvalidWritesPreserveStagedBatch) {
   std::unique_ptr<const mscclpp::MrcMr> source;
   std::vector<unsigned int> tokens;

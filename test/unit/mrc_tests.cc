@@ -1,6 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#include <infiniband/verbs.h>
+
+#include <cerrno>
 #include <limits>
 #include <mscclpp/core.hpp>
 #include <mscclpp/errors.hpp>
@@ -10,6 +13,64 @@
 #include "ib.hpp"
 #include "mrc.hpp"
 #include "serialization.hpp"
+
+class MrcSendProgressTest : public mscclpp::test::TestCase {
+ protected:
+  template <typename F>
+  std::string failureMessage(F run) {
+    try {
+      run();
+    } catch (const mscclpp::BaseError& error) {
+      return error.what();
+    }
+    FAIL() << "Expected native MRC send progress to fail";
+    return {};
+  }
+};
+
+TEST(MrcSendProgressTest, RequiresEverySignaledCompletion) {
+  mscclpp::MrcSendProgress sends;
+  sends.posted(0, 2, 2);
+  sends.polled(0, nullptr);
+  EXPECT_FALSE(sends.drained());
+  ibv_wc wc{};
+  wc.status = IBV_WC_SUCCESS;
+  sends.polled(1, &wc);
+  EXPECT_FALSE(sends.drained());
+  sends.polled(1, &wc);
+  EXPECT_TRUE(sends.drained());
+
+  sends.posted(0, 2, 1);
+  sends.polled(1, &wc);
+  EXPECT_EQ(sends.pending(), 0);
+  EXPECT_TRUE(failureMessage([&] { sends.drained(); }).find("unsignaled") != std::string::npos);
+}
+
+TEST(MrcSendProgressTest, FailedPostOrPollCannotBecomeADrain) {
+  mscclpp::MrcSendProgress post;
+  // Even the first failed post may have submitted a prefix.
+  auto failure = failureMessage([&] { post.posted(EIO, 2, 2); });
+  EXPECT_EQ(failureMessage([&] { post.posted(0, 1, 1); }), failure);
+  EXPECT_EQ(failureMessage([&] { post.drained(); }), failure);
+  mscclpp::MrcSendProgress poll;
+  errno = EIO;
+  failure = failureMessage([&] { poll.polled(-1, nullptr); });
+  EXPECT_EQ(failureMessage([&] { poll.polled(0, nullptr); }), failure);
+  EXPECT_EQ(failureMessage([&] { poll.drained(); }), failure);
+}
+
+TEST(MrcSendProgressTest, FailedCompletionDoesNotRetireSignaledSends) {
+  mscclpp::MrcSendProgress sends;
+  sends.posted(0, 3, 2);
+  ibv_wc wcs[2]{};
+  wcs[0].status = IBV_WC_SUCCESS;
+  wcs[1].wr_id = 42;
+  wcs[1].status = IBV_WC_WR_FLUSH_ERR;
+  auto failure = failureMessage([&] { sends.polled(2, wcs); });
+  EXPECT_TRUE(failure.find("42") != std::string::npos);
+  EXPECT_EQ(failureMessage([&] { sends.pending(); }), failure);
+  EXPECT_EQ(failureMessage([&] { sends.drained(); }), failure);
+}
 
 struct MrcUnitMetadataAccess : mscclpp::BaseConnection {
   using BaseConnection::getImpl;

@@ -8,6 +8,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <memory>
 #include <string>
 
@@ -71,6 +72,20 @@ struct MrcQpInfo {
   bool isGrh;
 };
 
+class MrcSendProgress {
+ public:
+  void check() const;
+  int pending() const;
+  bool drained() const;
+  void posted(int result, int staged, int signaled);
+  void polled(int count, const ibv_wc* wcs);
+
+ private:
+  std::exception_ptr failure_;
+  int pending_ = 0;
+  bool hasUnsignaled_ = false;
+};
+
 class MrcQp {
  public:
   ~MrcQp();
@@ -87,6 +102,8 @@ class MrcQp {
   void stageRecv(uint64_t wrId);
   void postRecv();
   int pollSendCq();
+  // Poll at most once. A checked drain requires every posted send on this QP to be signaled.
+  bool progressSend();
   int pollRecvCq();
 
   MrcQpInfo& getInfo() { return info_; }
@@ -118,9 +135,8 @@ class MrcQp {
   std::unique_ptr<ibv_recv_wr[]> recvWrs_;
   int numStagedSend_;
   int numStagedSignaledSend_;
-  int numPostedSignaledSend_;
+  MrcSendProgress sendProgress_;
   int numSendWcs_;
-  bool sendFailed_;
   int numStagedRecv_;
   int numPostedRecv_;
   int numRecvWcs_;

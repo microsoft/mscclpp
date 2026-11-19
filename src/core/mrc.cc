@@ -200,9 +200,7 @@ MrcQp::MrcQp(ibv_context* context, mrc_context* mrcContext, ibv_pd* pd, int port
       qp_(nullptr),
       numStagedSend_(0),
       numStagedSignaledSend_(0),
-      numPostedSignaledSend_(0),
       numSendWcs_(0),
-      sendFailed_(false),
       numStagedRecv_(0),
       numPostedRecv_(0),
       numRecvWcs_(0),
@@ -362,6 +360,8 @@ void MrcQp::stageSendWrite(const MrcMr* mr, const MrcBuffer& dst, uint64_t size,
 
 void MrcQp::stageSendWriteWithImm(const MrcMr* mr, const MrcBuffer& dst, uint64_t size, uint64_t wrId,
                                   uint64_t srcOffset, uint64_t dstOffset, bool signaled, unsigned int immData) {
+  // TODO: Define how the Connection handles zero peer receive credits during one-way traffic.
+  // A local send completion does not mean the peer has reposted a receive.
   auto& wr = stageSend(mr, dst, size, wrId, srcOffset, dstOffset, signaled);
   wr.opcode = IBV_WR_RDMA_WRITE_WITH_IMM;
   wr.imm_data = htonl(immData);
@@ -378,14 +378,12 @@ static uint64_t checkedWriteAddress(const MrcBuffer& buffer, uint64_t offset, ui
 
 ibv_send_wr& MrcQp::stageSend(const MrcMr* mr, const MrcBuffer& dst, uint64_t size, uint64_t wrId, uint64_t srcOffset,
                               uint64_t dstOffset, bool signaled) {
-  if (sendFailed_) {
-    throw Error("Native MRC send posting previously failed; create a new QP", ErrorCode::InvalidUsage);
-  }
+  const int pending = sendProgress_.pending();
   if ((mr == nullptr && size != 0) || numStagedSend_ >= maxSendWr_) {
     throw Error("Native MRC WRITE requires an MR for nonzero size and space for a staged work request",
                 ErrorCode::InvalidUsage);
   }
-  if (signaled && numPostedSignaledSend_ + numStagedSignaledSend_ >= maxSendCqSize_) {
+  if (signaled && numStagedSignaledSend_ >= maxSendCqSize_ - pending) {
     throw Error("Native MRC send CQ is full; poll completions before staging another signal", ErrorCode::InvalidUsage);
   }
   if (size > std::numeric_limits<uint32_t>::max()) {
@@ -420,29 +418,14 @@ ibv_send_wr& MrcQp::stageSend(const MrcMr* mr, const MrcBuffer& dst, uint64_t si
 }
 
 void MrcQp::postSend() {
-  if (sendFailed_) {
-    throw Error("Native MRC send posting previously failed; create a new QP", ErrorCode::InvalidUsage);
-  }
+  sendProgress_.check();
   if (numStagedSend_ == 0) return;
   ibv_send_wr* badWr = nullptr;
   int ret = mrc_post_send(qp_, sendWrs_.get(), &badWr);
-  int error = ret > 0 ? ret : errno;
-  if (ret == 0) {
-    numPostedSignaledSend_ += numStagedSignaledSend_;
-  } else {
-    // A failed post can submit a prefix. Account for it, but never replay the batch.
-    if (badWr != nullptr) {
-      for (auto* wr = sendWrs_.get(); wr != nullptr && wr != badWr; wr = wr->next) {
-        if (wr->send_flags & IBV_SEND_SIGNALED) ++numPostedSignaledSend_;
-      }
-    }
-    sendFailed_ = true;
-  }
+  // A failed post may have submitted a prefix: never replay it or report it drained.
+  sendProgress_.posted(ret, numStagedSend_, numStagedSignaledSend_);
   numStagedSend_ = 0;
   numStagedSignaledSend_ = 0;
-  if (ret != 0) {
-    throw MrcError("mrc_post_send failed", error);
-  }
 }
 
 void MrcQp::stageRecv(uint64_t wrId) {
@@ -487,14 +470,64 @@ void MrcQp::postRecv() {
   }
 }
 
-int MrcQp::pollSendCq() {
-  int count = mrc_poll_cq(sendCq_, maxSendCqSize_, sendWcs_.get());
-  numSendWcs_ = std::max(count, 0);
-  if (count > 0) {
-    // Failed unsignaled WRs can also produce completions.
-    numPostedSignaledSend_ = std::max(numPostedSignaledSend_ - count, 0);
+void MrcSendProgress::check() const {
+  if (failure_) std::rethrow_exception(failure_);
+}
+
+int MrcSendProgress::pending() const {
+  check();
+  return pending_;
+}
+
+bool MrcSendProgress::drained() const {
+  check();
+  if (hasUnsignaled_) {
+    throw Error("Cannot verify a native MRC send drain after an unsignaled send", ErrorCode::InvalidUsage);
   }
+  return pending_ == 0;
+}
+
+void MrcSendProgress::posted(int result, int staged, int signaled) try {
+  check();
+  if (result != 0) throw MrcError("mrc_post_send failed", result > 0 ? result : errno);
+  pending_ += signaled;
+  if (staged != signaled) hasUnsignaled_ = true;
+} catch (...) {
+  failure_ = std::current_exception();
+  throw;
+}
+
+void MrcSendProgress::polled(int count, const ibv_wc* wcs) try {
+  check();
+  if (count < 0) throw MrcError("mrc_poll_cq failed for native MRC send CQ", errno);
+  for (int i = 0; i < count; ++i) {
+    // An unsignaled send can also produce an error CQE. Never credit it to a signaled send.
+    if (wcs[i].status != IBV_WC_SUCCESS) {
+      throw Error("Native MRC send WR " + std::to_string(wcs[i].wr_id) + " failed: " + ibv_wc_status_str(wcs[i].status),
+                  ErrorCode::SystemError);
+    }
+  }
+  if (count > pending_) {
+    throw Error("Unexpected native MRC send completion count", ErrorCode::InternalError);
+  }
+  pending_ -= count;
+} catch (...) {
+  failure_ = std::current_exception();
+  throw;
+}
+
+int MrcQp::pollSendCq() {
+  sendProgress_.check();
+  int count = mrc_poll_cq(sendCq_, maxSendCqSize_, sendWcs_.get());
+  sendProgress_.polled(count, sendWcs_.get());
+  numSendWcs_ = count;
   return count;
+}
+
+bool MrcQp::progressSend() {
+  if (sendProgress_.drained()) return numStagedSend_ == 0;
+  pollSendCq();
+  return numStagedSend_ == 0 && sendProgress_.drained();
 }
 
 int MrcQp::pollRecvCq() {
@@ -516,7 +549,7 @@ std::string MrcQp::getSendWcStatusString(int idx) const {
   return ibv_wc_status_str(static_cast<ibv_wc_status>(getSendWcStatus(idx)));
 }
 
-int MrcQp::getNumSendCqItems() const { return numPostedSignaledSend_; }
+int MrcQp::getNumSendCqItems() const { return sendProgress_.pending(); }
 
 int MrcQp::getRecvWcStatus(int idx) const {
   if (idx < 0 || idx >= numRecvWcs_) {
@@ -665,6 +698,8 @@ void MrcEndpoint::connect(const RdmaEndpoint& remote) {
 
 std::shared_ptr<BaseConnection> MrcEndpoint::createConnection(std::shared_ptr<Context>, const Endpoint&,
                                                               const Endpoint&) const {
+  // TODO: Before enabling native signaling, agree on how the sender learns the peer's
+  // initial posted receive count and when newly posted receives become available to it.
   throw Error("Native MRC connections are not implemented yet", ErrorCode::InvalidUsage);
 }
 

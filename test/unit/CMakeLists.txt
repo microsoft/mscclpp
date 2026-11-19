@@ -24,6 +24,7 @@ target_sources(unit_tests PRIVATE
 if(MSCCLPP_USE_MRC)
     target_sources(unit_tests PRIVATE mrc_tests.cc)
     target_compile_definitions(unit_tests PRIVATE MSCCLPP_USE_MRC)
+    target_include_directories(unit_tests SYSTEM PRIVATE ${IBVERBS_INCLUDE_DIRS})
 endif()
 
 if(TARGET mscclpp_ep)
