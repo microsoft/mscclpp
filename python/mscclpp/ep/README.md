@@ -346,10 +346,10 @@ contributions in FP32, adds the returned remote-domain partial sum, and casts to
 BF16 once (**FP32 addition grouping differs** from single-domain combine):
 
 - **Control block (block 0).** Exchanges intra-domain start signals, streams
-  ready reduced chunks over RDMA (`Gateway::reduceAndSend`), resets dispatch
+  ready reduced chunks over RDMA (`Gateway::send`), resets dispatch
   send counters, and waits for the peer's Dispatch completion.
 - **Worker blocks.** Split into two 16-warp groups. Gateway reductions run first
-  (`Gateway::reduceAndSend`: chunk 0 launches uncontested, later chunks pace
+  (`Gateway::reduce`: chunk 0 launches uncontested, later chunks pace
   behind one grid wave of completed TMA loads); groups then reduce local tokens
   and fuse remote partial sums directly as chunks arrive (`Gateway::poll`/`wait`).
 

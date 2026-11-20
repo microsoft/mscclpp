@@ -394,16 +394,11 @@ __global__ __launch_bounds__(CombineNThreads, 1) void hierarchicalCombineKernel(
     extern __shared__ __align__(128) uint8_t sharedMemory[];
     const TransportView transport(context);
     const auto& hierarchicalCtx = context->hierarchicalCtx_;
-    const int nGatewayBlocks = static_cast<int>(gridDim.x) - 1;
-    const Gateway::ReduceConfig reduceConfig{
-        .nWorkerBlocks = nGatewayBlocks,
-        .nWorkers = nGatewayBlocks * HierarchicalCombineNWarpGroups,
-    };
     const size_t wireElemBytes = useBf16InterDomainCombine(hierarchicalCtx) ? sizeof(Bf16) : sizeof(float);
     Gateway gateway(transport, hierarchicalCtx.gatewayRank_, hierarchicalCtx.nTokensPerChunk_,
                     static_cast<size_t>(Hidden) * wireElemBytes, hierarchicalCtx.combineSendBuffer_,
                     hierarchicalCtx.combineRecvBuffer_, hierarchicalCtx.combineControl_->qpSignals,
-                    hierarchicalCtx.combineChunkReady_, reduceConfig);
+                    hierarchicalCtx.combineChunkReady_, nullptr, hierarchicalCtx.combineChunkLoadReady_);
     const WorkspaceView workspace(context->workspace_, context->numRanks_, workload.numExperts_);
     const uint32_t flag = getDispatchFlag(workspace);
     constexpr int StageSlots = hierarchicalCombineGroupStageSlots<Hidden, DispatchType, MaxNTopk>();
@@ -430,20 +425,26 @@ __global__ __launch_bounds__(CombineNThreads, 1) void hierarchicalCombineKernel(
 
     if (blockIdx.x == 0) {
       combineControl(context, transport, workspace, flag);
-    }
-    // Reserve block 0 for control and QP posting; stripe each warp group across the remaining blocks first.
-    const bool isPoster = blockIdx.x == 0;
-    const int workerIdx = groupIdx * nGatewayBlocks + (static_cast<int>(blockIdx.x) - 1);
-    const int posterQueueIdx = warpIdx - configCellDiv(context->numRanks_, WARP_SIZE);
-    gateway.reduceAndSend<HierarchicalCombineGroupThreads>(
-        *hierarchicalCtx.nIncomingTokens_, hierarchicalCtx.combineChunkLoadReady_, isPoster, workerIdx, posterQueueIdx,
-        warpGroupThreadIdx, warpGroupBarrierId, [&](uint8_t* dst, int tokenIdx, auto&& loadReady) {
-          combineGatewayToken<Mode, Hidden, DispatchType, MaxNTopk>(dst, expertOutput, tokenIdx, workload, context,
-                                                                    transport, gateway, workspace, flag, dequantScale,
-                                                                    group, loadReady);
-        });
-    if (blockIdx.x == 0) {
+      const int queueIdx = warpIdx - configCellDiv(context->numRanks_, WARP_SIZE);
+      const int nQps = transport.portChannelCtx_->numQpsPerPeer;
+      if (queueIdx >= 0 && queueIdx < nQps && getLaneId() == 0) {
+        gateway.send(queueIdx, queueIdx * gateway.nTokensPerChunk(), nQps * gateway.nTokensPerChunk(),
+                     *hierarchicalCtx.nIncomingTokens_);
+      }
       __syncthreads();
+    } else {
+      // Reserve block 0 for control and QP posting; stripe each warp group across the remaining blocks first.
+      const int nGatewayBlocks = static_cast<int>(gridDim.x) - 1;
+      const int tokenIdx = groupIdx * nGatewayBlocks + (static_cast<int>(blockIdx.x) - 1);
+      const int tokenStride = nGatewayBlocks * HierarchicalCombineNWarpGroups;
+      gateway.reduce(
+          tokenIdx, tokenStride, *hierarchicalCtx.nIncomingTokens_, group.threadIdx, HierarchicalCombineGroupThreads,
+          [&] { group.sync(); },
+          [&](uint8_t* dst, int idx, auto&& markLoadReady) {
+            combineGatewayToken<Mode, Hidden, DispatchType, MaxNTopk>(dst, expertOutput, idx, workload, context,
+                                                                      transport, gateway, workspace, flag, dequantScale,
+                                                                      group, markLoadReady);
+          });
     }
 
     // Assign local workers in reverse group/block order so small-T local work lands on idle groups/SMs first and

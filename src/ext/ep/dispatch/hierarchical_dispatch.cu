@@ -240,12 +240,12 @@ MSCCLPP_DEVICE_INLINE void dispatchControl(const int64_t* routes, const Workload
   WorkspaceView workspace(context->workspace_, nRanks, workload.numExperts_);
   const Gateway combineGateway(transport, hierarchicalCtx.gatewayRank_, hierarchicalCtx.nTokensPerChunk_, 0,
                                hierarchicalCtx.combineSendBuffer_, hierarchicalCtx.combineRecvBuffer_,
-                               hierarchicalCtx.combineControl_->qpSignals, hierarchicalCtx.combineChunkReady_);
+                               hierarchicalCtx.combineControl_->qpSignals, hierarchicalCtx.combineChunkReady_, nullptr,
+                               hierarchicalCtx.combineChunkLoadReady_);
 
   for (int peerIdx = threadIdx.x; peerIdx < nRanks; peerIdx += blockDim.x) rankTokenCounts[peerIdx] = 0;
   if (threadIdx.x == 0) nRemoteTokens = 0;
-  combineGateway.reset(hierarchicalCtx.maxTokensPerRank_, static_cast<int>(threadIdx.x), static_cast<int>(blockDim.x),
-                       true, hierarchicalCtx.combineChunkLoadReady_);
+  combineGateway.reset(hierarchicalCtx.maxTokensPerRank_, static_cast<int>(threadIdx.x), static_cast<int>(blockDim.x));
   __syncthreads();
   dispatchCountRoutes(routes, workload, transport, rankTokenCounts, nRemoteTokens);
   __syncthreads();

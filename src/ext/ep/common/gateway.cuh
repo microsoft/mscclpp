@@ -30,19 +30,9 @@ class Gateway {
     int dstRank = -1;
     size_t dstSlotIndex = 0;
   };
-  // Counts exclude QP posters. Each worker warp-group passes a dense workerIdx in [0, nWorkers) to reduceAndSend().
-  struct ReduceConfig {
-    int nWorkerBlocks = 0;
-    int nWorkers = 0;
-  };
   MSCCLPP_DEVICE_INLINE Gateway(const TransportView& transport, int peerRank, int nTokensPerChunk, size_t tokenBytes,
                                 void* sendBuffer, void* recvBuffer, uint64_t* qpSignals, int* chunkReadySignals,
-                                uint64_t* completionSignal = nullptr)
-      : Gateway(transport, peerRank, nTokensPerChunk, tokenBytes, sendBuffer, recvBuffer, qpSignals, chunkReadySignals,
-                ReduceConfig{}, completionSignal) {}
-  MSCCLPP_DEVICE_INLINE Gateway(const TransportView& transport, int peerRank, int nTokensPerChunk, size_t tokenBytes,
-                                void* sendBuffer, void* recvBuffer, uint64_t* qpSignals, int* chunkReadySignals,
-                                ReduceConfig reduceConfig, uint64_t* completionSignal = nullptr)
+                                uint64_t* completionSignal = nullptr, int* chunkLoadReadySignals = nullptr)
       : transport_(transport),
         peerRank_(peerRank),
         nTokensPerChunk_(nTokensPerChunk),
@@ -52,18 +42,17 @@ class Gateway {
         qpSignals_(qpSignals),
         chunkReadySignals_(chunkReadySignals),
         completionSignal_(completionSignal),
-        reduceConfig_(reduceConfig) {}
+        chunkLoadReadySignals_(chunkLoadReadySignals) {}
 
   MSCCLPP_DEVICE_INLINE int peerRank() const { return peerRank_; }
   MSCCLPP_DEVICE_INLINE int nTokensPerChunk() const { return nTokensPerChunk_; }
   MSCCLPP_DEVICE_INLINE size_t tokenBytes() const { return tokenBytes_; }
 
   // Reset per-round chunk counters and, when requested, the incoming QP counters.
-  MSCCLPP_DEVICE_INLINE void reset(int maxTokens, int tid, int nThreads, bool resetRecv = true,
-                                   int* extraChunkSignals = nullptr) const {
+  MSCCLPP_DEVICE_INLINE void reset(int maxTokens, int tid, int nThreads, bool resetRecv = true) const {
     EP_DEVICE_ASSERT(nThreads > 0 && tid >= 0 && tid < nThreads);
     if (resetRecv) resetRecvSignals(tid, nThreads);
-    resetSendSignals(maxTokens, tid, nThreads, extraChunkSignals);
+    resetSendSignals(maxTokens, tid, nThreads);
   }
 
   // Copy payload into sendBuffer_ slot and enqueue it for RDMA chunk transmission.
@@ -200,53 +189,54 @@ class Gateway {
     if (laneIdx == 0) workspace.barrier.invalidate();
   }
 
-  // QP posters send ready chunks while worker groups [0, nWorkers) wave-pace loads and reduce into sendBuffer_.
-  template <int NWarpGroupThreads, typename ReduceTokenFn>
-  MSCCLPP_DEVICE_INLINE void reduceAndSend(int nTokens, int* chunkLoadReadySignals, bool isPoster, int workerIdx,
-                                           int posterQueueIdx, int warpGroupThreadIdx, int warpGroupBarrierId,
-                                           ReduceTokenFn&& reduceToken) {
-    if (isPoster) {
-      const int nQps = transport_.portChannelCtx_->numQpsPerPeer;
-      if (posterQueueIdx >= 0 && posterQueueIdx < nQps && getLaneId() == 0) {
-        send(posterQueueIdx, posterQueueIdx * nTokensPerChunk_, nQps * nTokensPerChunk_, nTokens);
-      }
-      return;
-    }
-    EP_DEVICE_ASSERT(reduceConfig_.nWorkerBlocks > 0 && reduceConfig_.nWorkers >= reduceConfig_.nWorkerBlocks);
-    EP_DEVICE_ASSERT(workerIdx >= 0 && workerIdx < reduceConfig_.nWorkers);
-    const int nGatewayWorkers = reduceConfig_.nWorkers;
-    const int nSmWaveChunks = max(1, reduceConfig_.nWorkerBlocks / nTokensPerChunk_);
+  // Thread-group-cooperative reduction into sendBuffer_: all nThreads threads pass the same (tokenIdx, tokenStride,
+  // nTokens), wave-pace intra-domain TMA loads across chunks, synchronize via threadBarrierFn, and publish ready
+  // chunks for RDMA transmission.
+  template <typename SyncFn, typename ReduceTokenFn>
+  MSCCLPP_DEVICE_INLINE void reduce(int tokenIdx, int tokenStride, int nTokens, int tid, int nThreads,
+                                    SyncFn&& threadBarrierFn, ReduceTokenFn&& reduceTokenFn) const {
+    EP_DEVICE_ASSERT(chunkLoadReadySignals_ != nullptr);
+    EP_DEVICE_ASSERT(tokenIdx >= 0 && tokenStride > 0 && nTokens >= 0);
+    EP_DEVICE_ASSERT(nThreads > 0 && nThreads % WARP_SIZE == 0 && static_cast<int>(blockDim.x) >= nThreads);
+    EP_DEVICE_ASSERT(tid >= 0 && tid < nThreads);
+    EP_DEVICE_ASSERT(__activemask() == 0xffffffffu);
+    EP_DEVICE_ASSERT(__shfl_sync(0xffffffffu, tokenIdx, 0) == tokenIdx &&
+                     __shfl_sync(0xffffffffu, tokenStride, 0) == tokenStride &&
+                     __shfl_sync(0xffffffffu, nTokens, 0) == nTokens);
+    const int nGroupsPerBlock = static_cast<int>(blockDim.x) / nThreads;
+    const int nWorkerBlocks = max(1, tokenStride / nGroupsPerBlock);
+    const int loadWindowChunks = max(1, nWorkerBlocks / nTokensPerChunk_);
     auto* sendBase = static_cast<uint8_t*>(sendBuffer_);
-    for (int tokenIdx = workerIdx; tokenIdx < nTokens; tokenIdx += nGatewayWorkers) {
-      const int chunkIdx = tokenIdx / nTokensPerChunk_;
+    for (int idx = tokenIdx; idx < nTokens; idx += tokenStride) {
+      const int chunkIdx = idx / nTokensPerChunk_;
       if (chunkIdx > 0) {
-        if (warpGroupThreadIdx == 0) {
+        if (tid == 0) {
           // Launch chunk 0 uncontested to kick off RDMA immediately, then pace by one 1-CTA-per-SM grid wave.
-          const int prevLoadChunk = max(0, chunkIdx - nSmWaveChunks);
-          while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(chunkLoadReadySignals + prevLoadChunk,
+          const int prevLoadChunk = max(0, chunkIdx - loadWindowChunks);
+          while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(chunkLoadReadySignals_ + prevLoadChunk,
                                                                 mscclpp::memoryOrderAcquire) != nTokensPerChunk_) {
           }
         }
-        syncNamedBarrier(warpGroupBarrierId, NWarpGroupThreads);
+        threadBarrierFn();
       }
-      auto loadReady = [&] { ready(chunkLoadReadySignals, tokenIdx); };
-      reduceToken(sendBase + static_cast<size_t>(tokenIdx) * tokenBytes_, tokenIdx, loadReady);
-      // Join all warp-group writers before thread 0 publishes chunk readiness.
-      syncNamedBarrier(warpGroupBarrierId, NWarpGroupThreads);
-      if (warpGroupThreadIdx == 0) ready(tokenIdx);
+      auto markLoadReady = [&] { ready(chunkLoadReadySignals_, idx); };
+      reduceTokenFn(sendBase + static_cast<size_t>(idx) * tokenBytes_, idx, markLoadReady);
+      // Join all writers in the group before tid 0 publishes chunk readiness.
+      threadBarrierFn();
+      if (tid == 0) ready(idx);
     }
     // Wait for priority gateway TMA loads before local reductions compete intra-domain, skipping any partial tail wave.
-    const int nPriorityTokens = nTokens <= nGatewayWorkers ? nTokens : (nTokens / nGatewayWorkers) * nGatewayWorkers;
-    if (warpGroupThreadIdx == 0) {
+    const int nPriorityTokens = nTokens <= tokenStride ? nTokens : (nTokens / tokenStride) * tokenStride;
+    if (tid == 0) {
       for (int tokenBegin = 0; tokenBegin < nPriorityTokens; tokenBegin += nTokensPerChunk_) {
-        if (nTokens > nGatewayWorkers && tokenBegin + nTokensPerChunk_ > nPriorityTokens) break;
+        if (nTokens > tokenStride && tokenBegin + nTokensPerChunk_ > nPriorityTokens) break;
         const int nChunkTokens = min(nTokensPerChunk_, nTokens - tokenBegin);
-        while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(chunkLoadReadySignals + tokenBegin / nTokensPerChunk_,
+        while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(chunkLoadReadySignals_ + tokenBegin / nTokensPerChunk_,
                                                               mscclpp::memoryOrderAcquire) != nChunkTokens) {
         }
       }
     }
-    syncNamedBarrier(warpGroupBarrierId, NWarpGroupThreads);
+    threadBarrierFn();
   }
 
   // Warp-group-cooperative intra-domain completion signal: last forwarder resets incoming QP counters, marks local
@@ -330,11 +320,11 @@ class Gateway {
     }
   }
 
-  MSCCLPP_DEVICE_INLINE void resetSendSignals(int maxTokens, int tid, int nThreads, int* extraChunkSignals) const {
+  MSCCLPP_DEVICE_INLINE void resetSendSignals(int maxTokens, int tid, int nThreads) const {
     const int nChunks = configCellDiv(maxTokens, nTokensPerChunk_);
     for (int chunkIdx = tid; chunkIdx < nChunks; chunkIdx += nThreads) {
       chunkReadySignals_[chunkIdx] = 0;
-      if (extraChunkSignals != nullptr) extraChunkSignals[chunkIdx] = 0;
+      if (chunkLoadReadySignals_ != nullptr) chunkLoadReadySignals_[chunkIdx] = 0;
     }
   }
 
@@ -353,7 +343,7 @@ class Gateway {
   uint64_t* qpSignals_;
   int* chunkReadySignals_;
   uint64_t* completionSignal_;
-  ReduceConfig reduceConfig_;
+  int* chunkLoadReadySignals_;
   PortChannelDeviceHandle cachedChannel_{};
   int cachedQueueIdx_ = -1;
   uint32_t flushQueueFlags_ = ~0u;
