@@ -9,6 +9,7 @@
 #include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/memory_channel_device.hpp>
 
+#include "common/gateway.cuh"
 #include "config.hpp"
 #include "device_helpers.cuh"
 #include "kernels.hpp"
@@ -210,19 +211,13 @@ MSCCLPP_HOST_DEVICE_INLINE size_t dispatchRecvTmaBytes() {
 }
 
 template <int Hidden, DispatchDataType DataType>
-MSCCLPP_HOST_DEVICE_INLINE constexpr size_t hierarchicalDispatchStageStride() {
-  static_assert(Hidden % 128 == 0);
-  constexpr size_t ScaleBytes = DataType == DispatchDataType::MXFP8_E4M3 ? Hidden / 32 : 0;
-  return configAlign<size_t>(static_cast<size_t>(Hidden) * sizeof(DispatchElementType<DataType>) + ScaleBytes,
-                             BufferAlignmentBytes);
-}
-
-template <int Hidden, DispatchDataType DataType>
 MSCCLPP_HOST_DEVICE_INLINE constexpr size_t hierarchicalDispatchTmaBytes() {
+  static_assert(Hidden % 128 == 0);
+  constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(DispatchElementType<DataType>);
+  constexpr size_t ScaleBytes = DataType == DispatchDataType::MXFP8_E4M3 ? Hidden / 32 : 0;
   constexpr int NSlots =
       HierarchicalForwardWarps > HierarchicalMaxProduceGroups ? HierarchicalForwardWarps : HierarchicalMaxProduceGroups;
-  return static_cast<size_t>(NSlots) *
-         (hierarchicalDispatchStageStride<Hidden, DataType>() + sizeof(mscclpp::BulkBarrier));
+  return static_cast<size_t>(NSlots) * sizeof(WarpForwardWorkspace<HiddenBytes, ScaleBytes>);
 }
 
 template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, bool Hierarchical = false>

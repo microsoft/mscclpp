@@ -107,14 +107,13 @@ MSCCLPP_DEVICE_INLINE void dispatchProduce(void* output, void* outputScales, int
   constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(ElementType);
   constexpr size_t ScaleBytes = DataType == DispatchDataType::MXFP8_E4M3 ? Hidden / 32 : 0;
   constexpr size_t PayloadBytes = InterDomainDispatchPayload::payloadBytes(Hidden, sizeof(ElementType), ScaleBytes);
-  constexpr size_t Stride = hierarchicalDispatchStageStride<Hidden, DataType>();
   const auto& hierarchicalCtx = context->hierarchicalCtx_;
   const int nTopk = workload.numTopk_;
   const int nLocalExperts = workload.numExperts_ / context->numRanks_;
-  auto* base = sharedMemory + dispatchSharedControlBytes(context->numRanks_, true);
-  auto* staged = base + static_cast<size_t>(groupIdx) * Stride;
-  auto& barrier = reinterpret_cast<mscclpp::BulkBarrier*>(base + static_cast<size_t>(HierarchicalMaxProduceGroups) *
-                                                                     Stride)[groupIdx];
+  auto* workspaces = reinterpret_cast<WarpForwardWorkspace<HiddenBytes, ScaleBytes>*>(
+      sharedMemory + dispatchSharedControlBytes(context->numRanks_, true));
+  auto* staged = workspaces[groupIdx].staged;
+  auto& barrier = workspaces[groupIdx].barrier;
   __shared__ int groupRemoteTokenIndices[HierarchicalMaxProduceGroups];
   const bool quantizeInput =
       DataType == DispatchDataType::MXFP8_E4M3 ||
@@ -282,13 +281,13 @@ MSCCLPP_DEVICE_INLINE void dispatchForward(void* output, void* outputScales, int
   using ElementType = DispatchElementType<DataType>;
   constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(ElementType);
   constexpr size_t ScaleBytes = DataType == DispatchDataType::MXFP8_E4M3 ? Hidden / 32 : 0;
-  constexpr size_t Stride = hierarchicalDispatchStageStride<Hidden, DataType>();
   const auto& hierarchicalCtx = context->hierarchicalCtx_;
   auto* state = hierarchicalCtx.dispatchControl_;
   const int laneIdx = getLaneId();
   const int nTopk = workload.numTopk_;
   const int nLocalExperts = workload.numExperts_ / context->numRanks_;
-  auto* base = sharedMemory + dispatchSharedControlBytes(context->numRanks_, true);
+  auto* workspaces = reinterpret_cast<WarpForwardWorkspace<HiddenBytes, ScaleBytes>*>(
+      sharedMemory + dispatchSharedControlBytes(context->numRanks_, true));
 
   __shared__ int nIncomingTokens;
   __shared__ bool isLastForwarder;
@@ -312,11 +311,15 @@ MSCCLPP_DEVICE_INLINE void dispatchForward(void* output, void* outputScales, int
   const int warpGroupThreadIdx = static_cast<int>(threadIdx.x);
   if (warpGroupThreadIdx < NWarpGroupThreads) {
     constexpr int warpGroupBarrierId = DispatchWarpGroupBarrierBase;
+    const int warpIdx = warpGroupThreadIdx / WARP_SIZE;
+    // Stripe tokens across forwarder blocks first to spread small workloads across SMs.
+    const int firstTokenIdx = warpIdx * nForwarders + forwarderIdx;
+    const int tokenStride = nForwarders * HierarchicalForwardWarps;
     int expertIdx = -1;
     int slotIdx = -1;
     float weight = 0.0f;
-    gateway.forward<HiddenBytes, Stride, HierarchicalForwardWarps, ScaleBytes>(
-        base, output, outputScales, nIncomingTokens, forwarderIdx, nForwarders, warpGroupThreadIdx, warpGroupBarrierId,
+    gateway.forward<HiddenBytes, ScaleBytes>(
+        firstTokenIdx, tokenStride, nIncomingTokens, workspaces[warpIdx], output, outputScales,
         [&](int tokenIdx, void* landing) {
           const InterDomainDispatchPayload payload(landing, Hidden, nTopk, sizeof(ElementType), ScaleBytes);
           expertIdx = laneIdx < nTopk ? payload.expertIds_[laneIdx] : -1;
@@ -343,6 +346,7 @@ MSCCLPP_DEVICE_INLINE void dispatchForward(void* output, void* outputScales, int
                                             slotIdx, outputExpertIdx, weight, leaderMask, nTopk,
                                             workload.maxTokensPerRank_, workload.invalidTokenExpertId_);
         });
+    syncNamedBarrier(warpGroupBarrierId, NWarpGroupThreads);
     gateway.signalIntraDomain(&hierarchicalCtx.dispatchScratch_->nCompletedForwarders, nForwarders,
                               &hierarchicalCtx.dispatchScratch_->forwardComplete, state->payloadReady, flag,
                               &isLastForwarder, warpGroupThreadIdx, NWarpGroupThreads, warpGroupBarrierId);

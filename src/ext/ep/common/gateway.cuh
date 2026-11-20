@@ -13,6 +13,14 @@
 namespace mscclpp {
 namespace ep {
 
+// Per-warp shared-memory staging workspace (128B-aligned payload + mbarrier) for Gateway::forward.
+template <size_t PrimaryBytes, size_t AuxBytes = 0>
+struct alignas(BufferAlignmentBytes) WarpForwardWorkspace {
+  static constexpr size_t LoadBytes = configAlign<size_t>(PrimaryBytes + AuxBytes, 16);
+  uint8_t staged[LoadBytes];
+  mscclpp::BulkBarrier barrier;
+};
+
 #if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS) && MSCCLPP_BULK_AVAILABLE
 
 // Cross-domain two-hop gateway channel over device-initiated RDMA PortChannels and intra-domain peers.
@@ -113,13 +121,13 @@ class Gateway {
     }
   }
 
-  // Once local forwarding is complete, notify the peer so the next round can reuse the receive buffers.
-  MSCCLPP_DEVICE_INLINE void complete(int queueIdx, int* localDone) {
-    EP_DEVICE_ASSERT(completionSignal_ != nullptr);
+  // Wait on local waitSignal, then notify the peer so the next round can reuse the receive buffers.
+  MSCCLPP_DEVICE_INLINE void complete(int queueIdx, int* waitSignal) {
+    EP_DEVICE_ASSERT(completionSignal_ != nullptr && waitSignal != nullptr);
     auto& channel = getChannel(queueIdx);
     const uint64_t signalOffset = transport_.symmetricOffset(completionSignal_);
     constexpr auto kExclusive = PortChannelDeviceHandle::Concurrency::Exclusive;
-    while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(localDone, mscclpp::memoryOrderAcquire) != 1) {
+    while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(waitSignal, mscclpp::memoryOrderAcquire) != 1) {
     }
     channel.accumulate<kExclusive, MaxQpsPerPeer>(signalOffset, 1, queueIdx);
   }
@@ -132,50 +140,47 @@ class Gateway {
     *completionSignal_ = 0;
   }
 
-  // Dynamic multi-dst intra-domain forward: wait for incoming RDMA chunks, TMA-load each token into shared memory,
-  // resolve per-lane destinations during bulkLoad, TMA-store payload (and optional AuxBytes) to each unique
-  // intra-domain peer, and run overlapFn while bulkStore is in flight.
-  template <size_t PrimaryBytes, size_t Stride, int NWarpGroupWarps, size_t AuxBytes = 0, typename ResolveRouteFn,
-            typename OverlapFn>
-  MSCCLPP_DEVICE_INLINE void forward(uint8_t* base, void* dstBuffer, void* dstAuxBuffer, int nTokens, int forwarderIdx,
-                                     int nForwarders, int warpGroupThreadIdx, int warpGroupBarrierId,
-                                     ResolveRouteFn&& resolveRoute, OverlapFn&& overlapFn) const {
-    static_assert(NWarpGroupWarps > 0);
-    constexpr size_t LoadBytes = configAlign<size_t>(PrimaryBytes + AuxBytes, 16);
-    constexpr int NWarpGroupThreads = NWarpGroupWarps * WARP_SIZE;
-    EP_DEVICE_ASSERT(warpGroupThreadIdx >= 0 && warpGroupThreadIdx < NWarpGroupThreads);
-    EP_DEVICE_ASSERT(warpGroupBarrierId > 0);
+  // Warp-cooperative multi-dst intra-domain forward: all 32 lanes pass the same (tokenIdx, tokenStride, nTokens) and
+  // per-warp workspace; lane 0 waits for incoming RDMA chunks and TMA-loads each token, lanes resolve destinations
+  // during bulkLoad, unique intra-domain leaders TMA-store payload (and optional AuxBytes), and overlapFn runs while
+  // bulkStore is in flight.
+  template <size_t PrimaryBytes, size_t AuxBytes = 0, typename ResolveRouteFn, typename OverlapFn>
+  MSCCLPP_DEVICE_INLINE void forward(int tokenIdx, int tokenStride, int nTokens,
+                                     WarpForwardWorkspace<PrimaryBytes, AuxBytes>& workspace, void* dstBuffer,
+                                     void* dstAuxBuffer, ResolveRouteFn&& resolveRoute, OverlapFn&& overlapFn) const {
+    static_assert(PrimaryBytes > 0 && PrimaryBytes % 16 == 0);
+    EP_DEVICE_ASSERT(__activemask() == 0xffffffffu);
+    EP_DEVICE_ASSERT(tokenIdx >= 0 && tokenStride > 0 && nTokens >= 0);
+    EP_DEVICE_ASSERT(__shfl_sync(0xffffffffu, tokenIdx, 0) == tokenIdx &&
+                     __shfl_sync(0xffffffffu, tokenStride, 0) == tokenStride &&
+                     __shfl_sync(0xffffffffu, nTokens, 0) == nTokens);
+    constexpr size_t LoadBytes = WarpForwardWorkspace<PrimaryBytes, AuxBytes>::LoadBytes;
     const int laneIdx = getLaneId();
-    const int warpIdx = warpGroupThreadIdx / WARP_SIZE;
-    auto* staged = base + static_cast<size_t>(warpIdx) * Stride;
-    auto* barriers = reinterpret_cast<mscclpp::BulkBarrier*>(base + static_cast<size_t>(NWarpGroupWarps) * Stride);
-    if (laneIdx == 0) barriers[warpIdx].init();
+    if (laneIdx == 0) workspace.barrier.init();
     uint32_t phase = 0;
-    // Stripe tokens across forwarder groups first to spread small workloads across SMs.
-    for (int tokenIdx = warpIdx * nForwarders + forwarderIdx; tokenIdx < nTokens;
-         tokenIdx += nForwarders * NWarpGroupWarps) {
-      if (laneIdx == 0) wait(tokenIdx);
+    for (int idx = tokenIdx; idx < nTokens; idx += tokenStride) {
+      if (laneIdx == 0) wait(idx);
       __syncwarp();
 
-      auto* landing = static_cast<uint8_t*>(recvBuffer_) + static_cast<size_t>(tokenIdx) * tokenBytes_;
+      auto* landing = static_cast<uint8_t*>(recvBuffer_) + static_cast<size_t>(idx) * tokenBytes_;
       if (laneIdx == 0) {
-        barriers[warpIdx].arriveAndExpect(LoadBytes);
-        mscclpp::bulkLoad(staged, landing, LoadBytes, barriers[warpIdx]);
+        workspace.barrier.arriveAndExpect(LoadBytes);
+        mscclpp::bulkLoad(workspace.staged, landing, LoadBytes, workspace.barrier);
       }
-      const ForwardRoute route = resolveRoute(tokenIdx, landing);
+      const ForwardRoute route = resolveRoute(idx, landing);
       const bool isLeader = isFirstLaneForRank(route.dstRank, laneIdx);
       const bool isLocalLeader = route.dstRank >= 0 && transport_.isIntraDomainPeer(route.dstRank) && isLeader;
-      if (laneIdx == 0) barriers[warpIdx].wait(phase);
+      if (laneIdx == 0) workspace.barrier.wait(phase);
       __syncwarp();
       mscclpp::bulkFence();
 
       if (isLocalLeader) {
         auto* dstPrimary = static_cast<uint8_t*>(transport_.mappedBuffer(dstBuffer, route.dstRank));
-        mscclpp::bulkStore(dstPrimary + route.dstSlotIndex * PrimaryBytes, staged, PrimaryBytes);
+        mscclpp::bulkStore(dstPrimary + route.dstSlotIndex * PrimaryBytes, workspace.staged, PrimaryBytes);
         if constexpr (AuxBytes > 0) {
           auto* dstAux = static_cast<uint8_t*>(transport_.mappedBuffer(dstAuxBuffer, route.dstRank)) +
                          route.dstSlotIndex * AuxBytes;
-          const auto* stagedAux = staged + PrimaryBytes;
+          const auto* stagedAux = workspace.staged + PrimaryBytes;
           if constexpr (AuxBytes % 16 == 0) {
             mscclpp::bulkStore(dstAux, stagedAux, AuxBytes);
           } else {
@@ -188,36 +193,11 @@ class Gateway {
         mscclpp::bulkStoreCommit();
       }
       const unsigned int leaderMask = __ballot_sync(0xffffffff, isLocalLeader);
-      overlapFn(tokenIdx, route, leaderMask);
+      overlapFn(idx, route, leaderMask);
       if (isLocalLeader) mscclpp::bulkStoreWait();
       __syncwarp();
     }
-    if (laneIdx == 0) barriers[warpIdx].invalidate();
-    syncNamedBarrier(warpGroupBarrierId, NWarpGroupThreads);
-  }
-
-  template <size_t PrimaryBytes, size_t Stride, int NWarpGroupWarps, typename ResolveRouteFn>
-  MSCCLPP_DEVICE_INLINE void forward(uint8_t* base, void* dstBuffer, int nTokens, int forwarderIdx, int nForwarders,
-                                     int warpGroupThreadIdx, int warpGroupBarrierId,
-                                     ResolveRouteFn&& resolveRoute) const {
-    forward<PrimaryBytes, Stride, NWarpGroupWarps, 0>(
-        base, dstBuffer, nullptr, nTokens, forwarderIdx, nForwarders, warpGroupThreadIdx, warpGroupBarrierId,
-        static_cast<ResolveRouteFn&&>(resolveRoute), [](int, const ForwardRoute&, unsigned int) {});
-  }
-
-  // Fixed single-dst intra-domain forward without callbacks.
-  template <size_t PrimaryBytes, size_t Stride, int NWarpGroupWarps, size_t AuxBytes = 0>
-  MSCCLPP_DEVICE_INLINE void forward(uint8_t* base, int dstRank, void* dstBuffer, size_t dstBaseSlotIndex, int nTokens,
-                                     int forwarderIdx, int nForwarders, int warpGroupThreadIdx, int warpGroupBarrierId,
-                                     void* dstAuxBuffer = nullptr) const {
-    const int laneIdx = getLaneId();
-    forward<PrimaryBytes, Stride, NWarpGroupWarps, AuxBytes>(
-        base, dstBuffer, dstAuxBuffer, nTokens, forwarderIdx, nForwarders, warpGroupThreadIdx, warpGroupBarrierId,
-        [&](int tokenIdx, void*) {
-          return laneIdx == 0 ? ForwardRoute{dstRank, dstBaseSlotIndex + static_cast<size_t>(tokenIdx)}
-                              : ForwardRoute{};
-        },
-        [](int, const ForwardRoute&, unsigned int) {});
+    if (laneIdx == 0) workspace.barrier.invalidate();
   }
 
   // QP posters send ready chunks while worker groups [0, nWorkers) wave-pace loads and reduce into sendBuffer_.
