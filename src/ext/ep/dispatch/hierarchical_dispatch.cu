@@ -50,6 +50,37 @@ MSCCLPP_DEVICE_INLINE void dispatchCountRoutes(const int64_t* routes, const Work
   }
 }
 
+// Write per-token top-k IDs and weights for all intra-domain leader lanes in leaderMask.
+MSCCLPP_DEVICE_INLINE void sendTokenMetaIntraDomain(const TransportView& transport, int* outputTopkIdx,
+                                                    float* outputTopkWeights, int sourceRank, int dstRank,
+                                                    int destinationSlot, int candidateExpert, float candidateWeight,
+                                                    unsigned int leaderMask, int nTopk, int maxTokensPerRank,
+                                                    int invalidTokenExpertId) {
+  const int laneId = getLaneId();
+  const int totalEntries = __popc(leaderMask) * nTopk;
+  for (int begin = 0; begin < totalEntries; begin += WARP_SIZE) {
+    const int index = begin + laneId;
+    const bool valid = index < totalEntries;
+    const int destination = valid ? index / nTopk : 0;
+    const int routeSlot = valid ? index % nTopk : 0;
+    unsigned int mask = leaderMask;
+    for (int i = 0; i < destination; ++i) mask &= mask - 1;
+    const int leaderLane = __ffs(mask) - 1;
+    const int peerRank = __shfl_sync(0xffffffff, dstRank, leaderLane);
+    const int peerSlot = __shfl_sync(0xffffffff, destinationSlot, leaderLane);
+    const int routeRank = __shfl_sync(0xffffffff, dstRank, routeSlot);
+    const int routeExpert = __shfl_sync(0xffffffff, candidateExpert, routeSlot);
+    const float routeWeight = __shfl_sync(0xffffffff, candidateWeight, routeSlot);
+    if (valid) {
+      const size_t outputIdx = (static_cast<size_t>(sourceRank) * maxTokensPerRank + peerSlot) * nTopk + routeSlot;
+      static_cast<int*>(transport.mappedBuffer(outputTopkIdx, peerRank))[outputIdx] =
+          routeRank == peerRank ? routeExpert : invalidTokenExpertId;
+      static_cast<float*>(transport.mappedBuffer(outputTopkWeights, peerRank))[outputIdx] =
+          routeRank == peerRank ? routeWeight : 0.0f;
+    }
+  }
+}
+
 // One warp stores a staged token, optional MXFP8 scales, and masked top-k metadata to intra-domain destinations.
 template <int Hidden, DispatchDataType DataType>
 MSCCLPP_DEVICE_INLINE void sendTokenIntraDomain(void* output, void* outputScales, int* outputIds, float* outputWeights,
@@ -81,9 +112,8 @@ MSCCLPP_DEVICE_INLINE void sendTokenIntraDomain(void* output, void* outputScales
   }
   const unsigned int leaderMask = __ballot_sync(0xffffffff, isLocalLeader);
   const int outputExpertIdx = workload.emitLocalExpertIds_ && expertIdx >= 0 ? expertIdx % nLocalExperts : expertIdx;
-  writeRankMajorMetadataIntraDomain(transport, outputIds, outputWeights, sourceRank, dstRank, slotIdx, outputExpertIdx,
-                                    weight, leaderMask, workload.numTopk_, workload.maxTokensPerRank_,
-                                    workload.invalidTokenExpertId_);
+  sendTokenMetaIntraDomain(transport, outputIds, outputWeights, sourceRank, dstRank, slotIdx, outputExpertIdx, weight,
+                           leaderMask, workload.numTopk_, workload.maxTokensPerRank_, workload.invalidTokenExpertId_);
   if (isLocalLeader) mscclpp::bulkStoreWait();
 }
 
@@ -347,9 +377,9 @@ MSCCLPP_DEVICE_INLINE void dispatchForward(void* output, void* outputScales, int
         [&](int, const Gateway::ForwardRoute& route, unsigned int leaderMask) {
           const int outputExpertIdx =
               workload.emitLocalExpertIds_ && expertIdx >= 0 ? expertIdx % nLocalExperts : expertIdx;
-          writeRankMajorMetadataIntraDomain(transport, outputIds, outputWeights, gateway.peerRank(), route.dstRank,
-                                            slotIdx, outputExpertIdx, weight, leaderMask, nTopk,
-                                            workload.maxTokensPerRank_, workload.invalidTokenExpertId_);
+          sendTokenMetaIntraDomain(transport, outputIds, outputWeights, gateway.peerRank(), route.dstRank, slotIdx,
+                                   outputExpertIdx, weight, leaderMask, nTopk, workload.maxTokensPerRank_,
+                                   workload.invalidTokenExpertId_);
         });
     syncNamedBarrier(warpGroupBarrierId, NWarpGroupThreads);
     if (warpIdx == 0) {
