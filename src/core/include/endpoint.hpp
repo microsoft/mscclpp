@@ -8,14 +8,12 @@
 #include <mscclpp/core.hpp>
 #include <vector>
 
-#include "ib.hpp"
+#include "rdma_provider.hpp"
 #include "socket.h"
 
 #define MAX_IF_NAME_SIZE 16
 
 namespace mscclpp {
-
-class GpuNetIoQp;
 
 struct Endpoint::Impl {
   Impl(const EndpointConfig& config, Context::Impl& contextImpl);
@@ -25,13 +23,7 @@ struct Endpoint::Impl {
   uint64_t hostHash_;
   uint64_t pidHash_;
 
-  // The following are only used for IB and are undefined for other transports.
-  bool ibLocal_;
-  bool ibNoAtomic_;
-  std::shared_ptr<IbQp> ibQp_;
-  IbQpInfo ibQpInfo_;
-  // Only used for EndpointConfig::Ib::Mode::Device, in place of ibQp_.
-  std::shared_ptr<GpuNetIoQp> gpuNetIoQp_;
+  std::shared_ptr<RdmaEndpoint> rdmaEndpoint_;
 
   // The following are only used for Ethernet and are undefined for other transports.
   std::unique_ptr<Socket> socket_;

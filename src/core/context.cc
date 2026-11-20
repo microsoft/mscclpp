@@ -8,7 +8,6 @@
 #include "api.h"
 #include "connection.hpp"
 #include "endpoint.hpp"
-#include "gpunetio.hpp"
 #include "logger.hpp"
 #include "registered_memory.hpp"
 
@@ -51,15 +50,14 @@ void CudaIpcStream::sync() {
   }
 }
 
-IbCtx* Context::Impl::getIbContext(Transport ibTransport) {
-  // Find IB context or create it
-  auto it = ibContexts_.find(ibTransport);
-  if (it == ibContexts_.end()) {
-    auto ibDev = getIBDeviceName(ibTransport);
-    ibContexts_[ibTransport] = std::make_unique<IbCtx>(ibDev);
-    return ibContexts_[ibTransport].get();
+std::shared_ptr<RdmaProvider> Context::Impl::getRdmaProvider(Transport transport) {
+  auto it = rdmaProviders_.find(transport);
+  if (it == rdmaProviders_.end()) {
+    auto provider = createRdmaProvider(transport);
+    rdmaProviders_.emplace(transport, provider);
+    return provider;
   }
-  return it->second.get();
+  return it->second;
 }
 
 std::shared_ptr<uint64_t> Context::Impl::getToken() {
@@ -90,26 +88,21 @@ MSCCLPP_API_CPP Connection Context::connect(const Endpoint& localEndpoint, const
   }
   auto localTransport = localEndpoint.transport();
   auto remoteTransport = remoteEndpoint.transport();
-  if (localTransport != remoteTransport &&
-      !(AllIBTransports.has(localTransport) && AllIBTransports.has(remoteTransport))) {
+  if (localTransport != remoteTransport && !areRdmaTransportsCompatible(localTransport, remoteTransport)) {
     THROW(CONN, Error, ErrorCode::InvalidUsage, "Transport mismatch between local (", localTransport, ") and remote (",
           remoteTransport, ") endpoints");
   }
   std::shared_ptr<BaseConnection> conn;
   if (localTransport == Transport::CudaIpc) {
     conn = std::make_shared<CudaIpcConnection>(shared_from_this(), localEndpoint, remoteEndpoint);
-  } else if (AllIBTransports.has(localTransport)) {
-    if (localEndpoint.config().ib.mode == EndpointConfig::Ib::Mode::Device) {
-      conn = std::make_shared<GpuNetIoConnection>(shared_from_this(), localEndpoint, remoteEndpoint);
-    } else {
-      conn = std::make_shared<IBConnection>(shared_from_this(), localEndpoint, remoteEndpoint);
-    }
+  } else if (getRdmaTransports().has(localTransport)) {
+    conn = localEndpoint.pimpl_->rdmaEndpoint_->createConnection(shared_from_this(), localEndpoint, remoteEndpoint);
   } else if (localTransport == Transport::Ethernet) {
     conn = std::make_shared<EthernetConnection>(shared_from_this(), localEndpoint, remoteEndpoint);
   } else {
     THROW(CONN, Error, ErrorCode::InternalError, "Unsupported transport: ", localTransport,
           " (this usually means EndpointConfig.transport was left at Transport::Unknown — "
-          "set it explicitly to CudaIpc, an IB transport, or Ethernet)");
+          "set it explicitly to CudaIpc, an RDMA transport, or Ethernet)");
   }
   return Connection(conn);
 }
