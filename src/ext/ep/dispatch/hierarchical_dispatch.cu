@@ -290,7 +290,6 @@ MSCCLPP_DEVICE_INLINE void dispatchForward(void* output, void* outputScales, int
       sharedMemory + dispatchSharedControlBytes(context->numRanks_, true));
 
   __shared__ int nIncomingTokens;
-  __shared__ bool isLastForwarder;
   if (threadIdx.x == 0) {
     nIncomingTokens = state->recvHeader.nRemoteTokens.read(flag, -1);
     if (forwarderIdx == 0) *hierarchicalCtx.nIncomingTokens_ = nIncomingTokens;
@@ -307,7 +306,6 @@ MSCCLPP_DEVICE_INLINE void dispatchForward(void* output, void* outputScales, int
 
   constexpr int NWarpGroupThreads = HierarchicalForwardWarps * WARP_SIZE;
   static_assert(NWarpGroupThreads <= DispatchNThreads);
-  static_assert(NWarpGroupThreads >= MaxNumRanks);
   const int warpGroupThreadIdx = static_cast<int>(threadIdx.x);
   if (warpGroupThreadIdx < NWarpGroupThreads) {
     constexpr int warpGroupBarrierId = DispatchWarpGroupBarrierBase;
@@ -347,9 +345,11 @@ MSCCLPP_DEVICE_INLINE void dispatchForward(void* output, void* outputScales, int
                                             workload.maxTokensPerRank_, workload.invalidTokenExpertId_);
         });
     syncNamedBarrier(warpGroupBarrierId, NWarpGroupThreads);
-    gateway.signalIntraDomain(&hierarchicalCtx.dispatchScratch_->nCompletedForwarders, nForwarders,
-                              &hierarchicalCtx.dispatchScratch_->forwardComplete, state->payloadReady, flag,
-                              &isLastForwarder, warpGroupThreadIdx, NWarpGroupThreads, warpGroupBarrierId);
+    if (warpIdx == 0) {
+      gateway.signalIntraDomain(&hierarchicalCtx.dispatchScratch_->nCompletedForwarders, nForwarders,
+                                &hierarchicalCtx.dispatchScratch_->forwardComplete, state->payloadReady, flag, laneIdx,
+                                WARP_SIZE);
+    }
   }
 }
 

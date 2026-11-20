@@ -239,31 +239,29 @@ class Gateway {
     threadBarrierFn();
   }
 
-  // Warp-group-cooperative intra-domain completion signal: last forwarder resets incoming QP counters, marks local
+  // Warp-cooperative intra-domain completion signal: the last forwarder resets incoming QP counters, marks local
   // forwarding complete, and notifies intra-domain receivers in parallel.
   MSCCLPP_DEVICE_INLINE void signalIntraDomain(int* nCompletedForwarders, int nForwarders, int* forwardComplete,
-                                               uint32_t* peerReadyFlags, uint32_t flag, bool* sharedIsLastForwarder,
-                                               int warpGroupThreadIdx, int nWarpGroupThreads,
-                                               int warpGroupBarrierId) const {
-    EP_DEVICE_ASSERT(sharedIsLastForwarder != nullptr);
-    EP_DEVICE_ASSERT(nWarpGroupThreads > 0 && nWarpGroupThreads % WARP_SIZE == 0);
-    EP_DEVICE_ASSERT(warpGroupThreadIdx >= 0 && warpGroupThreadIdx < nWarpGroupThreads);
-    EP_DEVICE_ASSERT(warpGroupBarrierId > 0);
+                                               uint32_t* peerReadyFlags, uint32_t flag, int laneIdx,
+                                               int nWarpThreads) const {
+    EP_DEVICE_ASSERT(__activemask() == 0xffffffffu);
+    EP_DEVICE_ASSERT(nCompletedForwarders != nullptr && nForwarders > 0 && forwardComplete != nullptr &&
+                     peerReadyFlags != nullptr);
+    EP_DEVICE_ASSERT(nWarpThreads == WARP_SIZE && laneIdx >= 0 && laneIdx < nWarpThreads && laneIdx == getLaneId());
     const int nRanks = transport_.numRanks_;
     const int nQps = transport_.portChannelCtx_->numQpsPerPeer;
-    if (warpGroupThreadIdx == 0) {
+    bool isLast = false;
+    if (laneIdx == 0) {
       const int nCompleted =
           mscclpp::atomicFetchAdd<int, mscclpp::scopeDevice>(nCompletedForwarders, 1, mscclpp::memoryOrderAcqRel);
-      const bool isLast = nCompleted == nForwarders - 1;
+      isLast = nCompleted == nForwarders - 1;
       if (isLast) {
         for (int queueIdx = 0; queueIdx < nQps; ++queueIdx) qpSignals_[queueIdx] = 0;
         mscclpp::atomicStore<int, mscclpp::scopeDevice>(forwardComplete, 1, mscclpp::memoryOrderRelease);
       }
-      *sharedIsLastForwarder = isLast;
     }
-    syncNamedBarrier(warpGroupBarrierId, nWarpGroupThreads);
-    if (*sharedIsLastForwarder) {
-      for (int peerIdx = warpGroupThreadIdx; peerIdx < nRanks; peerIdx += nWarpGroupThreads) {
+    if (__shfl_sync(0xffffffffu, isLast, 0)) {
+      for (int peerIdx = laneIdx; peerIdx < nRanks; peerIdx += nWarpThreads) {
         if (transport_.isIntraDomainPeer(peerIdx)) {
           auto* target = static_cast<uint32_t*>(transport_.mappedBuffer(peerReadyFlags, peerIdx));
           mscclpp::atomicStore<uint32_t, mscclpp::scopeSystem>(target + peerRank_, flag, mscclpp::memoryOrderRelease);
