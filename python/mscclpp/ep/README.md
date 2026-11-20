@@ -317,7 +317,7 @@ in the other domain:
   header (`nRemoteTokens` and per-rank counts), publishes local intra-domain counts and
   completion signals, and posts RDMA transfers. QP 0 sends the header
   (`Gateway::sendHeader`), all QPs stream ready chunks (`Gateway::send`), and
-  QP 0 signals the peer (`Gateway::complete`) once local forwarding finishes.
+  QP 0 signals the peer (`Gateway::signalForwardComplete`) once local forwarding finishes.
 - **Forwarder blocks (`1 .. min((gridBlocks - 1) // 2, 16)`).** Read the peer
   header (forwarder 0 relays per-rank counts to intra-domain peers), wait for
   per-QP `qpSignals`, TMA-load incoming tokens, forward payloads and metadata to
@@ -331,8 +331,8 @@ in the other domain:
   and `Gateway::waitIntraDomain` for cross-domain sources.
 
 Dispatch returns without draining QPs. The paired rank sends a completion signal
-(`Gateway::complete`) on QP 0 after its forwarders finish, and the next Combine
-control block consumes that completion (`Gateway::waitComplete`) before the next
+(`Gateway::signalForwardComplete`) on QP 0 after its forwarders finish, and the next Combine
+control block consumes that completion (`Gateway::waitForwardComplete`) before the next
 Dispatch reuses the buffers.
 
 ### Hierarchical combine

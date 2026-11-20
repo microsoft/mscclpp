@@ -159,9 +159,7 @@ void LatencyRuntimeContext::initialize() {
         auto semaphore =
             std::make_shared<mscclpp::PortDevice2DeviceSemaphore>(communicator_, rdmaConnectionFutures[r][q].get());
         portChannels_.emplace_back(semaphore, peerBufferMemories_[r], rdmaLocalMemory_);
-        auto handle = portChannels_.back().deviceHandle();
-        handle.device_.blueFlameLimit = 2 * 1024 * 1024;
-        portChannelHandles[static_cast<size_t>(r) * qpsPerPeer_ + q] = handle;
+        portChannelHandles[static_cast<size_t>(r) * qpsPerPeer_ + q] = portChannels_.back().deviceHandle();
       }
     }
   }

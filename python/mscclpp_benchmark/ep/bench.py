@@ -336,6 +336,7 @@ def run_backend(
     parse_kernels=None,
     graph_group_size=1,
     graph=None,
+    summary_meta=None,
 ):
     _, _, _, num_valid_selections = inputs
     hidden = args.hidden
@@ -597,6 +598,7 @@ def _run_backends(args, comm, rank, num_ranks, inputs, backends):
                 parse_kernels=_PARSE_KINETO[name],
                 graph_group_size=effective_group_size,
                 graph=graph,
+                summary_meta=summary_meta,
             )
         finally:
             torch.cuda.synchronize()

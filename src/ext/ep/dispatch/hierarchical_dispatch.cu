@@ -188,8 +188,9 @@ MSCCLPP_DEVICE_INLINE void dispatchProduce(void* output, void* outputScales, int
     mscclpp::bulkFence();
     syncNamedBarrier(groupBarrierId, nGroupThreads);
 
-    gateway.enqueue<PayloadBytes>(groupRemoteTokenIndices[groupIdx], staged, groupThreadIdx, nGroupThreads,
-                                  [&] { syncNamedBarrier(groupBarrierId, nGroupThreads); });
+    gateway.enqueue<Gateway::Scope::ThreadGroup, PayloadBytes>(
+        groupRemoteTokenIndices[groupIdx], staged, groupThreadIdx, nGroupThreads,
+        [&] { syncNamedBarrier(groupBarrierId, nGroupThreads); });
 
     if (subWarpIdx == 0) {
       const bool isLocalLeader = route.dstRank >= 0 && route.isLeader && !isRemote;
@@ -249,7 +250,8 @@ MSCCLPP_DEVICE_INLINE void dispatchControl(const int64_t* routes, const Workload
 
   for (int peerIdx = threadIdx.x; peerIdx < nRanks; peerIdx += blockDim.x) rankTokenCounts[peerIdx] = 0;
   if (threadIdx.x == 0) nRemoteTokens = 0;
-  combineGateway.reset(hierarchicalCtx.maxTokensPerRank_, static_cast<int>(threadIdx.x), static_cast<int>(blockDim.x));
+  combineGateway.reset<Gateway::Scope::ThreadGroup>(hierarchicalCtx.maxTokensPerRank_, static_cast<int>(threadIdx.x),
+                                                    static_cast<int>(blockDim.x));
   __syncthreads();
   dispatchCountRoutes(routes, workload, transport, rankTokenCounts, nRemoteTokens);
   __syncthreads();
@@ -271,7 +273,7 @@ MSCCLPP_DEVICE_INLINE void dispatchControl(const int64_t* routes, const Workload
     const int nTokensPerChunk = gateway.nTokensPerChunk();
     gateway.send(warpIdx, warpIdx * nTokensPerChunk, nQps * nTokensPerChunk, nRemoteTokens);
     if (isControlQueue) {
-      gateway.complete(warpIdx, &hierarchicalCtx.dispatchScratch_->forwardComplete);
+      gateway.signalForwardComplete(warpIdx, &hierarchicalCtx.dispatchScratch_->forwardComplete);
     }
   }
 }
@@ -321,7 +323,7 @@ MSCCLPP_DEVICE_INLINE void dispatchForward(void* output, void* outputScales, int
     int expertIdx = -1;
     int slotIdx = -1;
     float weight = 0.0f;
-    gateway.forward<HiddenBytes, ScaleBytes>(
+    gateway.forward<Gateway::Scope::Warp, HiddenBytes, ScaleBytes>(
         firstTokenIdx, tokenStride, nIncomingTokens, workspaces[warpIdx], output, outputScales,
         [&](int tokenIdx, void* landing) {
           const InterDomainDispatchPayload payload(landing, Hidden, nTopk, sizeof(ElementType), ScaleBytes);
@@ -351,9 +353,9 @@ MSCCLPP_DEVICE_INLINE void dispatchForward(void* output, void* outputScales, int
         });
     syncNamedBarrier(warpGroupBarrierId, NWarpGroupThreads);
     if (warpIdx == 0) {
-      gateway.signalIntraDomain(&hierarchicalCtx.dispatchScratch_->nCompletedForwarders, nForwarders,
-                                &hierarchicalCtx.dispatchScratch_->forwardComplete, state->payloadReady, flag, laneIdx,
-                                WARP_SIZE);
+      gateway.signalIntraDomain<Gateway::Scope::Warp>(&hierarchicalCtx.dispatchScratch_->nCompletedForwarders,
+                                                      nForwarders, &hierarchicalCtx.dispatchScratch_->forwardComplete,
+                                                      state->payloadReady, flag);
     }
   }
 }

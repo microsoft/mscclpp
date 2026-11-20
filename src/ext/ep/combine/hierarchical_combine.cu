@@ -375,9 +375,9 @@ MSCCLPP_DEVICE_INLINE void combineControl(const DeviceContext* context, const Tr
       transport, hierarchicalCtx.gatewayRank_, hierarchicalCtx.nTokensPerChunk_, 0, hierarchicalCtx.dispatchSendBuffer_,
       hierarchicalCtx.dispatchRecvBuffer_, hierarchicalCtx.dispatchControl_->qpSignals,
       hierarchicalCtx.dispatchScratch_->chunkReadySignals, &hierarchicalCtx.dispatchControl_->completionSignal);
-  dispatchGateway.reset(hierarchicalCtx.maxTokensPerRank_, static_cast<int>(threadIdx.x), static_cast<int>(blockDim.x),
-                        /*resetRecv=*/false);
-  if (threadIdx.x == 0) dispatchGateway.waitComplete();
+  dispatchGateway.reset<Gateway::Scope::ThreadGroup>(hierarchicalCtx.maxTokensPerRank_, static_cast<int>(threadIdx.x),
+                                                     static_cast<int>(blockDim.x), /*resetRecv=*/false);
+  if (threadIdx.x == 0) dispatchGateway.waitForwardComplete();
 }
 
 #endif
@@ -408,7 +408,8 @@ __global__ __launch_bounds__(CombineNThreads, 1) void hierarchicalCombineKernel(
     const int groupIdx = warpIdx / HierarchicalCombineGroupWarps;
     const int groupWarpIdx = warpIdx % HierarchicalCombineGroupWarps;
     const int warpGroupThreadIdx = groupWarpIdx * WARP_SIZE + getLaneId();
-    const int warpGroupBarrierId = HierarchicalCombineGroupBarrierBase + groupIdx;
+    // Named barrier 0 is reserved for CTA-wide __syncthreads().
+    const int warpGroupBarrierId = groupIdx + 1;
     uint8_t* groupShared = sharedMemory + static_cast<size_t>(groupIdx) * GroupSharedBytes;
     auto& groupControl = *reinterpret_cast<HierarchicalCombineGroupControl<StageSlots>*>(groupShared + TokensBytes);
     const float dequantScale = DispatchType == DispatchDataType::FP8_E4M3_STATIC ? 1.0f / workload.combineScale_ : 1.0f;
@@ -437,7 +438,7 @@ __global__ __launch_bounds__(CombineNThreads, 1) void hierarchicalCombineKernel(
       const int nGatewayBlocks = static_cast<int>(gridDim.x) - 1;
       const int tokenIdx = groupIdx * nGatewayBlocks + (static_cast<int>(blockIdx.x) - 1);
       const int tokenStride = nGatewayBlocks * HierarchicalCombineNWarpGroups;
-      gateway.reduce(
+      gateway.reduce<Gateway::Scope::ThreadGroup>(
           tokenIdx, tokenStride, *hierarchicalCtx.nIncomingTokens_, group.threadIdx, HierarchicalCombineGroupThreads,
           [&] { group.sync(); },
           [&](uint8_t* dst, int idx, auto&& markLoadReady) {

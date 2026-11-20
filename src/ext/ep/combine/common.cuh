@@ -22,7 +22,6 @@ constexpr int DirectSendMaxNWorkers = WARP_SIZE;
 constexpr int HierarchicalCombineNWarpGroups = 2;
 constexpr int HierarchicalCombineGroupWarps = CombineNWarps / HierarchicalCombineNWarpGroups;
 constexpr int HierarchicalCombineGroupThreads = HierarchicalCombineGroupWarps * WARP_SIZE;
-constexpr int HierarchicalCombineGroupBarrierBase = 1;
 static_assert(CombineNWarps % HierarchicalCombineNWarpGroups == 0);
 
 MSCCLPP_HOST_DEVICE_INLINE size_t directSendControlBytes(int nLocalExperts) {

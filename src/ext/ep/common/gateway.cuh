@@ -26,10 +26,17 @@ struct alignas(BufferAlignmentBytes) WarpForwardWorkspace {
 // Cross-domain two-hop gateway channel over device-initiated RDMA PortChannels and intra-domain peers.
 class Gateway {
  public:
+  enum class Scope : uint8_t {
+    Thread,
+    Warp,
+    ThreadGroup,
+  };
+
   struct ForwardRoute {
     int dstRank = -1;
     size_t dstSlotIndex = 0;
   };
+
   MSCCLPP_DEVICE_INLINE Gateway(const TransportView& transport, int peerRank, int nTokensPerChunk, size_t tokenBytes,
                                 void* sendBuffer, void* recvBuffer, uint64_t* qpSignals, int* chunkReadySignals,
                                 uint64_t* completionSignal = nullptr, int* chunkLoadReadySignals = nullptr)
@@ -48,32 +55,13 @@ class Gateway {
   MSCCLPP_DEVICE_INLINE int nTokensPerChunk() const { return nTokensPerChunk_; }
   MSCCLPP_DEVICE_INLINE size_t tokenBytes() const { return tokenBytes_; }
 
-  // Reset per-round chunk counters and, when requested, the incoming QP counters.
-  MSCCLPP_DEVICE_INLINE void reset(int maxTokens, int tid, int nThreads, bool resetRecv = true) const {
-    EP_DEVICE_ASSERT(nThreads > 0 && tid >= 0 && tid < nThreads);
-    if (resetRecv) resetRecvSignals(tid, nThreads);
-    resetSendSignals(maxTokens, tid, nThreads);
-  }
+  // ---------------------------------------------------------------------------
+  // Single-thread operations (Scope::Thread)
+  // ---------------------------------------------------------------------------
 
-  // Copy payload into sendBuffer_ slot and enqueue it for RDMA chunk transmission.
-  template <size_t PayloadBytes, typename SyncFn>
-  MSCCLPP_DEVICE_INLINE void enqueue(int tokenIdx, const void* staged, int tid, int nThreads,
-                                     SyncFn&& threadBarrierFn) const {
-    static_assert(PayloadBytes % sizeof(mscclpp::u32x4) == 0);
-    if (tokenIdx < 0) return;
-    EP_DEVICE_ASSERT(nThreads > 0 && tid >= 0 && tid < nThreads);
-    EP_DEVICE_ASSERT(PayloadBytes <= tokenBytes_);
-    auto* sendToken = static_cast<uint8_t*>(sendBuffer_) + static_cast<size_t>(tokenIdx) * tokenBytes_;
-    for (int vectorIdx = tid; vectorIdx < static_cast<int>(PayloadBytes / sizeof(mscclpp::u32x4));
-         vectorIdx += nThreads) {
-      reinterpret_cast<mscclpp::u32x4*>(sendToken)[vectorIdx] =
-          reinterpret_cast<const mscclpp::u32x4*>(staged)[vectorIdx];
-    }
-    threadBarrierFn();
-    if (tid == 0) ready(tokenIdx);
-  }
-
+  template <Scope Mode = Scope::Thread>
   MSCCLPP_DEVICE_INLINE void sendHeader(int queueIdx, void* dstHeader, const void* srcHeader, size_t headerBytes) {
+    static_assert(Mode == Scope::Thread);
     auto& channel = getChannel(queueIdx);
     constexpr auto kExclusive = PortChannelDeviceHandle::Concurrency::Exclusive;
     channel.put<kExclusive, MaxQpsPerPeer>(transport_.symmetricOffset(dstHeader), transport_.symmetricOffset(srcHeader),
@@ -82,7 +70,9 @@ class Gateway {
   }
 
   // Stream ready chunk-aligned tokens starting at tokenIdx with step tokenStride up to nTokens on queueIdx.
+  template <Scope Mode = Scope::Thread>
   MSCCLPP_DEVICE_INLINE void send(int queueIdx, int tokenIdx, int tokenStride, int nTokens) {
+    static_assert(Mode == Scope::Thread);
     EP_DEVICE_ASSERT(queueIdx >= 0 && tokenIdx >= 0 && tokenStride > 0 && nTokens >= 0);
     EP_DEVICE_ASSERT(tokenIdx % nTokensPerChunk_ == 0 && tokenStride % nTokensPerChunk_ == 0);
     auto& channel = getChannel(queueIdx);
@@ -110,8 +100,10 @@ class Gateway {
     }
   }
 
-  // Wait on local waitSignal, then notify the peer so the next round can reuse the receive buffers.
-  MSCCLPP_DEVICE_INLINE void complete(int queueIdx, int* waitSignal) {
+  // Wait on local waitSignal, then notify the peer that forwarding is complete so the next round can reuse recvBuffer_.
+  template <Scope Mode = Scope::Thread>
+  MSCCLPP_DEVICE_INLINE void signalForwardComplete(int queueIdx, int* waitSignal) {
+    static_assert(Mode == Scope::Thread);
     EP_DEVICE_ASSERT(completionSignal_ != nullptr && waitSignal != nullptr);
     auto& channel = getChannel(queueIdx);
     const uint64_t signalOffset = transport_.symmetricOffset(completionSignal_);
@@ -121,22 +113,62 @@ class Gateway {
     channel.accumulate<kExclusive, MaxQpsPerPeer>(signalOffset, 1, queueIdx);
   }
 
-  // Wait for and consume the peer's completion signal before starting the next round.
-  MSCCLPP_DEVICE_INLINE void waitComplete() const {
+  // Wait for and consume the peer's forward-completion signal before starting the next round.
+  template <Scope Mode = Scope::Thread>
+  MSCCLPP_DEVICE_INLINE void waitForwardComplete() const {
+    static_assert(Mode == Scope::Thread);
     EP_DEVICE_ASSERT(completionSignal_ != nullptr);
     while (mscclpp::atomicLoad<uint64_t, mscclpp::scopeSystem>(completionSignal_, mscclpp::memoryOrderAcquire) == 0) {
     }
     *completionSignal_ = 0;
   }
 
-  // Warp-cooperative multi-dst intra-domain forward: all 32 lanes pass the same (tokenIdx, tokenStride, nTokens) and
-  // per-warp workspace; lane 0 waits for incoming RDMA chunks and TMA-loads each token, lanes resolve destinations
-  // during bulkLoad, unique intra-domain leaders TMA-store payload (and optional AuxBytes), and overlapFn runs while
-  // bulkStore is in flight.
-  template <size_t PrimaryBytes, size_t AuxBytes = 0, typename ResolveRouteFn, typename OverlapFn>
+  // 1-dst RDMA receiver poll/wait.
+  template <Scope Mode = Scope::Thread>
+  MSCCLPP_DEVICE_INLINE bool poll(int tokenIdx) const {
+    static_assert(Mode == Scope::Thread);
+    const int nQps = transport_.portChannelCtx_->numQpsPerPeer;
+    const int chunkIdx = tokenIdx / nTokensPerChunk_;
+    const int queueIdx = chunkIdx % nQps;
+    const uint64_t target = static_cast<uint64_t>(chunkIdx / nQps + 1);
+    return mscclpp::atomicLoad<uint64_t, mscclpp::scopeSystem>(qpSignals_ + queueIdx, mscclpp::memoryOrderAcquire) >=
+           target;
+  }
+
+  template <Scope Mode = Scope::Thread>
+  MSCCLPP_DEVICE_INLINE void wait(int tokenIdx) const {
+    static_assert(Mode == Scope::Thread);
+    while (!poll(tokenIdx)) {
+    }
+  }
+
+  // Intra-domain poll/wait (paired with signalIntraDomain).
+  template <Scope Mode = Scope::Thread>
+  MSCCLPP_DEVICE_INLINE static bool pollIntraDomain(const uint32_t* peerReadyFlags, int sourceRank, uint32_t flag) {
+    static_assert(Mode == Scope::Thread);
+    return mscclpp::atomicLoad<uint32_t, mscclpp::scopeSystem>(const_cast<uint32_t*>(peerReadyFlags + sourceRank),
+                                                               mscclpp::memoryOrderAcquire) == flag;
+  }
+
+  template <Scope Mode = Scope::Thread>
+  MSCCLPP_DEVICE_INLINE static void waitIntraDomain(const uint32_t* peerReadyFlags, int sourceRank, uint32_t flag) {
+    static_assert(Mode == Scope::Thread);
+    while (!pollIntraDomain(peerReadyFlags, sourceRank, flag)) {
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Warp-cooperative operations (Scope::Warp, 32 convergent lanes)
+  // ---------------------------------------------------------------------------
+
+  // Multi-dst intra-domain forward: all 32 lanes pass the same (tokenIdx, tokenStride, nTokens) and per-warp workspace;
+  // lane 0 waits for incoming RDMA chunks and TMA-loads each token, lanes resolve destinations during bulkLoad, unique
+  // intra-domain leaders TMA-store payload (and optional AuxBytes), and overlapFn runs while bulkStore is in flight.
+  template <Scope Mode, size_t PrimaryBytes, size_t AuxBytes = 0, typename ResolveRouteFn, typename OverlapFn>
   MSCCLPP_DEVICE_INLINE void forward(int tokenIdx, int tokenStride, int nTokens,
                                      WarpForwardWorkspace<PrimaryBytes, AuxBytes>& workspace, void* dstBuffer,
                                      void* dstAuxBuffer, ResolveRouteFn&& resolveRoute, OverlapFn&& overlapFn) const {
+    static_assert(Mode == Scope::Warp);
     static_assert(PrimaryBytes > 0 && PrimaryBytes % 16 == 0);
     EP_DEVICE_ASSERT(__activemask() == 0xffffffffu);
     EP_DEVICE_ASSERT(tokenIdx >= 0 && tokenStride > 0 && nTokens >= 0);
@@ -189,12 +221,76 @@ class Gateway {
     if (laneIdx == 0) workspace.barrier.invalidate();
   }
 
-  // Thread-group-cooperative reduction into sendBuffer_: all nThreads threads pass the same (tokenIdx, tokenStride,
-  // nTokens), wave-pace intra-domain TMA loads across chunks, synchronize via threadBarrierFn, and publish ready
-  // chunks for RDMA transmission.
-  template <typename SyncFn, typename ReduceTokenFn>
+  // Intra-domain completion signal: the last forwarder resets incoming QP counters, marks local forwarding complete,
+  // and notifies intra-domain receivers across warp lanes.
+  template <Scope Mode>
+  MSCCLPP_DEVICE_INLINE void signalIntraDomain(int* nCompletedForwarders, int nForwarders, int* forwardComplete,
+                                               uint32_t* peerReadyFlags, uint32_t flag) const {
+    static_assert(Mode == Scope::Warp);
+    EP_DEVICE_ASSERT(__activemask() == 0xffffffffu);
+    EP_DEVICE_ASSERT(nCompletedForwarders != nullptr && nForwarders > 0 && forwardComplete != nullptr &&
+                     peerReadyFlags != nullptr);
+    const int laneIdx = getLaneId();
+    const int nRanks = transport_.numRanks_;
+    const int nQps = transport_.portChannelCtx_->numQpsPerPeer;
+    bool isLast = false;
+    if (laneIdx == 0) {
+      const int nCompleted =
+          mscclpp::atomicFetchAdd<int, mscclpp::scopeDevice>(nCompletedForwarders, 1, mscclpp::memoryOrderAcqRel);
+      isLast = nCompleted == nForwarders - 1;
+      if (isLast) {
+        for (int queueIdx = 0; queueIdx < nQps; ++queueIdx) qpSignals_[queueIdx] = 0;
+        mscclpp::atomicStore<int, mscclpp::scopeDevice>(forwardComplete, 1, mscclpp::memoryOrderRelease);
+      }
+    }
+    if (__shfl_sync(0xffffffffu, isLast, 0)) {
+      for (int peerIdx = laneIdx; peerIdx < nRanks; peerIdx += WARP_SIZE) {
+        if (transport_.isIntraDomainPeer(peerIdx)) {
+          auto* target = static_cast<uint32_t*>(transport_.mappedBuffer(peerReadyFlags, peerIdx));
+          mscclpp::atomicStore<uint32_t, mscclpp::scopeSystem>(target + peerRank_, flag, mscclpp::memoryOrderRelease);
+        }
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Thread-group-cooperative operations (Scope::ThreadGroup, tid in [0, nThreads))
+  // ---------------------------------------------------------------------------
+
+  // Reset per-round chunk counters and, when requested, the incoming QP counters.
+  template <Scope Mode>
+  MSCCLPP_DEVICE_INLINE void reset(int maxTokens, int tid, int nThreads, bool resetRecv = true) const {
+    static_assert(Mode == Scope::ThreadGroup);
+    EP_DEVICE_ASSERT(nThreads > 0 && tid >= 0 && tid < nThreads);
+    if (resetRecv) resetRecvSignals(tid, nThreads);
+    resetSendSignals(maxTokens, tid, nThreads);
+  }
+
+  // Copy payload into sendBuffer_ slot and enqueue it for RDMA chunk transmission.
+  template <Scope Mode, size_t PayloadBytes, typename SyncFn>
+  MSCCLPP_DEVICE_INLINE void enqueue(int tokenIdx, const void* staged, int tid, int nThreads,
+                                     SyncFn&& threadBarrierFn) const {
+    static_assert(Mode == Scope::ThreadGroup);
+    static_assert(PayloadBytes % sizeof(mscclpp::u32x4) == 0);
+    if (tokenIdx < 0) return;
+    EP_DEVICE_ASSERT(nThreads > 0 && tid >= 0 && tid < nThreads);
+    EP_DEVICE_ASSERT(PayloadBytes <= tokenBytes_);
+    auto* sendToken = static_cast<uint8_t*>(sendBuffer_) + static_cast<size_t>(tokenIdx) * tokenBytes_;
+    for (int vectorIdx = tid; vectorIdx < static_cast<int>(PayloadBytes / sizeof(mscclpp::u32x4));
+         vectorIdx += nThreads) {
+      reinterpret_cast<mscclpp::u32x4*>(sendToken)[vectorIdx] =
+          reinterpret_cast<const mscclpp::u32x4*>(staged)[vectorIdx];
+    }
+    threadBarrierFn();
+    if (tid == 0) ready(tokenIdx);
+  }
+
+  // Cooperative reduction into sendBuffer_: all nThreads threads pass the same (tokenIdx, tokenStride, nTokens),
+  // wave-pace intra-domain TMA loads across chunks, synchronize via threadBarrierFn, and publish ready chunks.
+  template <Scope Mode, typename SyncFn, typename ReduceTokenFn>
   MSCCLPP_DEVICE_INLINE void reduce(int tokenIdx, int tokenStride, int nTokens, int tid, int nThreads,
                                     SyncFn&& threadBarrierFn, ReduceTokenFn&& reduceTokenFn) const {
+    static_assert(Mode == Scope::ThreadGroup);
     EP_DEVICE_ASSERT(chunkLoadReadySignals_ != nullptr);
     EP_DEVICE_ASSERT(tokenIdx >= 0 && tokenStride > 0 && nTokens >= 0);
     EP_DEVICE_ASSERT(nThreads > 0 && nThreads % WARP_SIZE == 0 && static_cast<int>(blockDim.x) >= nThreads);
@@ -237,63 +333,6 @@ class Gateway {
       }
     }
     threadBarrierFn();
-  }
-
-  // Warp-cooperative intra-domain completion signal: the last forwarder resets incoming QP counters, marks local
-  // forwarding complete, and notifies intra-domain receivers in parallel.
-  MSCCLPP_DEVICE_INLINE void signalIntraDomain(int* nCompletedForwarders, int nForwarders, int* forwardComplete,
-                                               uint32_t* peerReadyFlags, uint32_t flag, int laneIdx,
-                                               int nWarpThreads) const {
-    EP_DEVICE_ASSERT(__activemask() == 0xffffffffu);
-    EP_DEVICE_ASSERT(nCompletedForwarders != nullptr && nForwarders > 0 && forwardComplete != nullptr &&
-                     peerReadyFlags != nullptr);
-    EP_DEVICE_ASSERT(nWarpThreads == WARP_SIZE && laneIdx >= 0 && laneIdx < nWarpThreads && laneIdx == getLaneId());
-    const int nRanks = transport_.numRanks_;
-    const int nQps = transport_.portChannelCtx_->numQpsPerPeer;
-    bool isLast = false;
-    if (laneIdx == 0) {
-      const int nCompleted =
-          mscclpp::atomicFetchAdd<int, mscclpp::scopeDevice>(nCompletedForwarders, 1, mscclpp::memoryOrderAcqRel);
-      isLast = nCompleted == nForwarders - 1;
-      if (isLast) {
-        for (int queueIdx = 0; queueIdx < nQps; ++queueIdx) qpSignals_[queueIdx] = 0;
-        mscclpp::atomicStore<int, mscclpp::scopeDevice>(forwardComplete, 1, mscclpp::memoryOrderRelease);
-      }
-    }
-    if (__shfl_sync(0xffffffffu, isLast, 0)) {
-      for (int peerIdx = laneIdx; peerIdx < nRanks; peerIdx += nWarpThreads) {
-        if (transport_.isIntraDomainPeer(peerIdx)) {
-          auto* target = static_cast<uint32_t*>(transport_.mappedBuffer(peerReadyFlags, peerIdx));
-          mscclpp::atomicStore<uint32_t, mscclpp::scopeSystem>(target + peerRank_, flag, mscclpp::memoryOrderRelease);
-        }
-      }
-    }
-  }
-
-  // 1-dst RDMA receiver poll/wait.
-  MSCCLPP_DEVICE_INLINE bool poll(int tokenIdx) const {
-    const int nQps = transport_.portChannelCtx_->numQpsPerPeer;
-    const int chunkIdx = tokenIdx / nTokensPerChunk_;
-    const int queueIdx = chunkIdx % nQps;
-    const uint64_t target = static_cast<uint64_t>(chunkIdx / nQps + 1);
-    return mscclpp::atomicLoad<uint64_t, mscclpp::scopeSystem>(qpSignals_ + queueIdx, mscclpp::memoryOrderAcquire) >=
-           target;
-  }
-
-  MSCCLPP_DEVICE_INLINE void wait(int tokenIdx) const {
-    while (!poll(tokenIdx)) {
-    }
-  }
-
-  // Intra-domain poll/wait (paired with signalIntraDomain).
-  MSCCLPP_DEVICE_INLINE static bool pollIntraDomain(const uint32_t* peerReadyFlags, int sourceRank, uint32_t flag) {
-    return mscclpp::atomicLoad<uint32_t, mscclpp::scopeSystem>(const_cast<uint32_t*>(peerReadyFlags + sourceRank),
-                                                               mscclpp::memoryOrderAcquire) == flag;
-  }
-
-  MSCCLPP_DEVICE_INLINE static void waitIntraDomain(const uint32_t* peerReadyFlags, int sourceRank, uint32_t flag) {
-    while (!pollIntraDomain(peerReadyFlags, sourceRank, flag)) {
-    }
   }
 
  private:
