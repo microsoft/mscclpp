@@ -60,8 +60,7 @@ struct alignas(16) HierarchicalCombineGroupControl {
   float routeWeights[NSlots];
   int pendingTokens[HierarchicalCombineMaxPendingTokens];
   int nPendingTokens;
-  int nRoundRoutes;
-  int nTotalRounds;
+  int nRoutes;
   bool interDomainTokenReady;
 };
 
