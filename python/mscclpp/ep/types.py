@@ -114,8 +114,8 @@ class MoECommunicatorConfig:
                 raise ValueError(f"{name} must be a positive int32")
         if self.topk > 16:
             raise ValueError("topk must be in [1, 16]")
-        if self.qps_per_peer not in (1, 4):
-            raise ValueError("qps_per_peer must be 1 or 4")
+        if not 1 <= self.qps_per_peer <= 4:
+            raise ValueError("qps_per_peer must be in [1, 4]")
         if not 1 <= self.n_tokens_per_chunk <= 128:
             raise ValueError("n_tokens_per_chunk must be in [1, 128]")
         if not isinstance(self.mode, MoEMode):

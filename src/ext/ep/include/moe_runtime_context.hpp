@@ -114,7 +114,7 @@ struct LatencyRuntimeContext {
   int qpsPerPeer_ = 4;
   int nTokensPerChunk_ = 8;
   mscclpp::DataType combineInterDomainDtype_ = mscclpp::DataType::FLOAT32;
-  bool isHybrid_ = false;
+  bool isHierarchical_ = false;
   int64_t symmetricBufferBytes_;
   size_t workspaceBytes_;
   uint32_t epoch_ = 1;
@@ -130,11 +130,11 @@ struct LatencyRuntimeContext {
   std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> baseMemoryChannelHandles_;
   std::vector<mscclpp::PortChannel<mscclpp::PortChannelBackend::Device>> portChannels_;
   std::shared_ptr<PortChannelDeviceHandle> portChannelHandles_;
-  std::shared_ptr<PortChannelDeviceContext> portChannelContext_;
-  std::shared_ptr<int> hybridDispatchScratch_;
-  std::shared_ptr<int> hybridCombineMetadata_;
-  std::shared_ptr<float> hybridCombineLocal_;
-  std::shared_ptr<int> hybridCombineChunkReady_;
+  std::shared_ptr<ChannelCtx> portChannelCtx_;
+  std::shared_ptr<int> hierarchicalDispatchScratch_;
+  std::shared_ptr<int> hierarchicalCombineMetadata_;
+  std::shared_ptr<float> hierarchicalCombineLocal_;
+  std::shared_ptr<int> hierarchicalCombineChunkReady_;
 };
 
 struct ThroughputRuntimeContext {

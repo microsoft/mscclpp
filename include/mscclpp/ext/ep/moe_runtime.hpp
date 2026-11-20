@@ -42,10 +42,10 @@ class MoERuntime {
   /// @param numTopk Number of routed experts per token, in [1, 8].
   /// @param outputLayout Dispatch output layout.
   /// @param combineMode Latency-mode combine algorithm.
-  /// @param qpsPerPeer Queue pairs per peer for cross-domain hybrid EP (1 or 4).
-  /// @param nTokensPerChunk Tokens per RDMA chunk for cross-domain hybrid EP, in [1, 128].
+  /// @param qpsPerPeer Queue pairs per peer for cross-domain hierarchical EP, in [1, 4].
+  /// @param nTokensPerChunk Tokens per RDMA chunk for cross-domain hierarchical EP, in [1, 128].
   /// @param combineInterDomainDtype Data type (`FLOAT32` or `BFLOAT16`) used to transfer remote-domain partial sums
-  /// over RDMA in cross-domain hybrid combine.
+  /// over RDMA in cross-domain hierarchical combine.
   /// @throws EPException For an unsupported mode or invalid configuration.
   /// @warning @p communicator is retained by reference and must remain alive
   /// until initialize() returns.
@@ -147,7 +147,7 @@ class MoERuntime {
   /// handle requests automatic GPU preparation; a non-empty handle skips count
   /// recomputation. Both paths support CUDA graph capture. Keep routing
   /// unchanged when replaying a graph that does not recompute preparation.
-  /// @warning Hybrid aggregate combine requires a fresh dispatch before each
+  /// @warning Hierarchical aggregate combine requires a fresh dispatch before each
   /// combine, including graph replays.
   /// @param request Dispatch inputs, outputs, and CUDA stream.
   /// @return A non-owning handle identifying this dispatch. The matching

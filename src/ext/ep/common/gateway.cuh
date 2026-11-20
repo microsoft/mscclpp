@@ -86,7 +86,7 @@ class Gateway {
   MSCCLPP_DEVICE_INLINE void send(int queueIdx, int nTokens) {
     auto& channel = getChannel(queueIdx);
     constexpr auto kExclusive = PortChannelDeviceHandle::Concurrency::Exclusive;
-    const int nQps = transport_.portChannels_->numQpsPerPeer;
+    const int nQps = transport_.portChannelCtx_->numQpsPerPeer;
     const uint64_t dstOffset = transport_.symmetricOffset(recvBuffer_);
     const uint64_t srcOffset = transport_.symmetricOffset(sendBuffer_);
     const uint64_t flagOffset = transport_.symmetricOffset(qpSignals_ + queueIdx);
@@ -222,7 +222,7 @@ class Gateway {
                                            int posterQueueIdx, int warpGroupThreadIdx, int warpGroupBarrierId,
                                            ReduceTokenFn&& reduceToken) {
     if (isPoster) {
-      const int nQps = transport_.portChannels_->numQpsPerPeer;
+      const int nQps = transport_.portChannelCtx_->numQpsPerPeer;
       if (posterQueueIdx >= 0 && posterQueueIdx < nQps && getLaneId() == 0) {
         send(posterQueueIdx, nTokens);
       }
@@ -276,7 +276,7 @@ class Gateway {
     EP_DEVICE_ASSERT(warpGroupThreadIdx >= 0 && warpGroupThreadIdx < nWarpGroupThreads);
     EP_DEVICE_ASSERT(warpGroupBarrierId > 0);
     const int nRanks = transport_.numRanks_;
-    const int nQps = transport_.portChannels_->numQpsPerPeer;
+    const int nQps = transport_.portChannelCtx_->numQpsPerPeer;
     if (warpGroupThreadIdx == 0) {
       const int nCompleted =
           mscclpp::atomicFetchAdd<int, mscclpp::scopeDevice>(nCompletedForwarders, 1, mscclpp::memoryOrderAcqRel);
@@ -300,7 +300,7 @@ class Gateway {
 
   // 1-dst RDMA receiver poll/wait.
   MSCCLPP_DEVICE_INLINE bool poll(int tokenIdx) const {
-    const int nQps = transport_.portChannels_->numQpsPerPeer;
+    const int nQps = transport_.portChannelCtx_->numQpsPerPeer;
     const int chunkIdx = tokenIdx / nTokensPerChunk_;
     const int queueIdx = chunkIdx % nQps;
     const uint64_t target = static_cast<uint64_t>(chunkIdx / nQps + 1);
@@ -327,7 +327,7 @@ class Gateway {
  private:
   MSCCLPP_DEVICE_INLINE PortChannelDeviceHandle& getChannel(int queueIdx) {
     if (cachedQueueIdx_ != queueIdx) {
-      cachedChannel_ = transport_.portChannels_->channel(peerRank_, queueIdx);
+      cachedChannel_ = transport_.portChannelCtx_->channel(peerRank_, queueIdx);
       cachedQueueIdx_ = queueIdx;
     }
     return cachedChannel_;
@@ -340,7 +340,7 @@ class Gateway {
   MSCCLPP_DEVICE_INLINE void clearQpFlush(int queueIdx) { needQpFlushMask_ &= ~(1u << queueIdx); }
 
   MSCCLPP_DEVICE_INLINE void resetRecvSignals(int tid, int nThreads) const {
-    const int nQps = transport_.portChannels_->numQpsPerPeer;
+    const int nQps = transport_.portChannelCtx_->numQpsPerPeer;
     for (int queueIdx = tid; queueIdx < nQps; queueIdx += nThreads) {
       qpSignals_[queueIdx] = 0;
     }

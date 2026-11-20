@@ -126,7 +126,7 @@ def test_generic_config_matches_any_dtype():
 
 
 @pytest.mark.parametrize("chunk", [1, 7, 16, 24, 32, 48, 64, 96, 128])
-def test_ep_hybrid_cli_options(monkeypatch, chunk):
+def test_ep_hierarchical_cli_options(monkeypatch, chunk):
     from mscclpp_benchmark.ep.bench import parse_args
 
     monkeypatch.setattr(
@@ -154,7 +154,7 @@ def test_ep_hybrid_cli_options(monkeypatch, chunk):
     assert args.hidden == 4096 and args.num_experts == 512
 
 
-def test_ep_hybrid_cli_preserves_defaults(monkeypatch):
+def test_ep_hierarchical_cli_preserves_defaults(monkeypatch):
     from mscclpp_benchmark.ep.bench import parse_args
 
     monkeypatch.setattr(sys, "argv", ["ep-bench", "--backend", "mscclpp"])
@@ -356,7 +356,7 @@ def test_ep_nccl_quantization_api_compatibility(monkeypatch, explicit_recipe, la
 
 
 @pytest.mark.parametrize("chunk", ["0", "129"])
-def test_ep_hybrid_cli_rejects_bad_chunk(monkeypatch, chunk):
+def test_ep_hierarchical_cli_rejects_bad_chunk(monkeypatch, chunk):
     from mscclpp_benchmark.ep.bench import parse_args
 
     monkeypatch.setattr(sys, "argv", ["ep-bench", "--n-tokens-per-chunk", chunk])

@@ -8,7 +8,7 @@ and cross-rank statistics. Kineto optionally reports kernel-only phase times.
 Input tensors and synthetic BF16 expert output are prepared outside the timed loop.
 NCCL-EP runs first, matching the ordering in the feature/ep benchmark.
 
-Launch with mpirun and mpi4py. MSCCL++ requires CUDA SM90+; its hybrid latency
+Launch with mpirun and mpi4py. MSCCL++ requires CUDA SM90+; its hierarchical latency
 rank-major path supports two equal IPC domains connected by GPUNetIO. Both latency and throughput support CUDA graph
 replay. See python/mscclpp/ep/README.md for dependencies,
 launch examples, layouts, and timing limitations.
@@ -89,15 +89,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--qps-per-peer",
         type=int,
-        choices=(1, 4),
         default=None,
-        help="MSCCL++ hybrid QPs per remote peer and NCCL-EP QPs per rank; omitted uses backend defaults.",
+        help="MSCCL++ hierarchical QPs per remote peer (1-4) and NCCL-EP QPs per rank; omitted uses backend defaults.",
     )
     p.add_argument(
         "--n-tokens-per-chunk",
         type=int,
         default=None,
-        help="MSCCL++ hybrid latency tokens per RDMA chunk (1-128); omitted uses the runtime default.",
+        help="MSCCL++ hierarchical latency tokens per RDMA chunk (1-128); omitted uses the runtime default.",
     )
     p.add_argument(
         "--dispatch-dtype",
@@ -119,7 +118,7 @@ def parse_args() -> argparse.Namespace:
         "--combine-inter-domain-dtype",
         choices=("fp32", "bf16"),
         default="fp32",
-        help="MSCCL++ hybrid latency rank_major combine: inter-domain partial-sum transfer format.",
+        help="MSCCL++ hierarchical latency rank_major combine: inter-domain partial-sum transfer format.",
     )
     p.add_argument(
         "--fp8-scale",
@@ -187,6 +186,11 @@ def parse_args() -> argparse.Namespace:
         raise SystemExit("--num-warmup must be non-negative and --num-iters must be positive")
     if args.num_sms < 0:
         raise SystemExit("--num-sms must be non-negative")
+    if args.qps_per_peer is not None:
+        if args.qps_per_peer <= 0:
+            raise SystemExit("--qps-per-peer must be positive")
+        if args.backend == "mscclpp" and args.qps_per_peer > 4:
+            raise SystemExit("MSCCL++ --qps-per-peer must be in [1, 4]")
     if args.n_tokens_per_chunk is not None and not 1 <= args.n_tokens_per_chunk <= 128:
         raise SystemExit("--n-tokens-per-chunk must be in [1, 128]")
     if args.iters_per_graph <= 0:

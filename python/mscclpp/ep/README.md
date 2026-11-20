@@ -140,7 +140,7 @@ means one per valid route. Routing values are not read or validated on the host.
 RANK_MAJOR and throughput outputs include CUDA int32 `topk_ids` and FP32
 `weights` with shape `tokens.shape[:-1] + (K,)`. Latency IDs are global by
 default, with `invalid_token_expert_id` (default `num_experts`) marking dropped
-or non-local entries. Latency RANK_MAJOR, including hybrid inter-domain dispatch,
+or non-local entries. Latency RANK_MAJOR, including hierarchical inter-domain dispatch,
 can set `emit_local_expert_ids=True` to emit valid IDs in
 `[0, num_local_experts)` instead; its default invalid ID is `-1`.
 Input routing IDs remain global. Throughput IDs are local to the destination rank, with `-1` marking
@@ -297,23 +297,21 @@ Runtime views are reused by later operations, not independent results.
 * The API does not automatically overlap communication with expert computation
   or provide PyTorch autograd backward support.
 
-## Cross-domain hybrid latency `RANK_MAJOR`
+## Cross-domain hierarchical latency `RANK_MAJOR`
 
-Cross-domain EP uses `MSCCLPP_HCA_DEVICES` to map each GPU to its IB transport
-(`IB0`–`IB7`), or discovers IB devices via `ibverbs` when `MSCCLPP_HCA_DEVICES`
-is unset. If a rank's process sets `MSCCLPP_HCA_DEVICES` to a single HCA name
-(for example `export MSCCLPP_HCA_DEVICES=mlx5_0`), that rank uses `IB0`.
-`qps_per_peer` (`qpsPerPeer`, 1 or 4, default 4) sets the QPs per peer, and
+Cross-domain EP maps each GPU to its RDMA transport using `MSCCLPP_HCA_DEVICES`
+when set, or the default `ibverbs` device order otherwise.
+`qps_per_peer` (`qpsPerPeer`, 1–4, default 4) sets the QPs per peer, and
 `n_tokens_per_chunk` (`nTokensPerChunk`, 1–128, default 8) sets the tokens per
-RDMA chunk. Hybrid dispatch and combine stripe chunks round-robin across all
+RDMA chunk. Hierarchical dispatch and combine stripe chunks round-robin across all
 configured QPs.
 
-### Hybrid dispatch
+### Hierarchical dispatch
 
-Latency `RANK_MAJOR` EP automatically uses the hybrid algorithm when ranks span
+Latency `RANK_MAJOR` EP automatically uses the hierarchical algorithm when ranks span
 two equal, fully IPC-mapped domains (`topk <= 16`; BF16, `FP8_E4M3_STATIC`, or
 `MXFP8_E4M3`). Rank `r` pairs with gateway rank `(r + domainSize) % worldSize`
-in the other domain. The dispatch grid requires at least 10 resident blocks:
+in the other domain:
 
 - **Control block (block 0).** Counts routes, writes a self-validating `LL8Packet`
   header (`nRemoteTokens` and per-rank counts), publishes local intra-domain counts and
@@ -337,9 +335,9 @@ Dispatch returns without draining QPs. The paired rank sends a completion signal
 control block consumes that completion (`Gateway::waitComplete`) before the next
 Dispatch reuses the buffers.
 
-### Hybrid combine
+### Hierarchical combine
 
-Hybrid combine uses gateway aggregation for both `RANK_LOCAL_REDUCE` and
+Hierarchical combine uses gateway aggregation for both `RANK_LOCAL_REDUCE` and
 `DIRECT_SEND`. Each gateway reduces local-domain expert outputs in FP32 and
 streams compact partial sums back over RDMA in per-QP chunks (FP32 by default, or
 BF16 when `combine_inter_domain_dtype` / `combineInterDomainDtype` is set to
@@ -399,7 +397,7 @@ DeepEP and the NCCL profiling barrier require `MASTER_ADDR` on rank 0. For
 multi-node runs, set it to rank 0's IP or hostname reachable by every rank
 instead of a loopback address. `MASTER_PORT` defaults to `29700`.
 
-The MSCCL++ backend requires SM90+. Hybrid latency `rank_major` also supports
+The MSCCL++ backend requires SM90+. Hierarchical latency `rank_major` also supports
 two equal NVLink/IPC domains connected by GPUNetIO. Set `MSCCLPP_HCA_DEVICES`
 to the GPU-index-ordered HCA list for the hosts; NCCL-EP uses its own
 `NCCL_IB_HCA`/GIN configuration. The benchmark reports the discovered IPC
@@ -421,7 +419,7 @@ Run the same command with `--backend nccl` for NCCL-EP. `--qps-per-peer` also
 sets NCCL-EP's QPs per rank; `--n-tokens-per-chunk` is MSCCL++-specific.
 Omitting these options preserves each backend's defaults. NCCL-EP rank-major
 supports rank-local reduction, not MSCCL++'s per-top-k direct-send input layout.
-MSCCL++ hybrid `--n-tokens-per-chunk` accepts any integer from 1 through 128,
+MSCCL++ hierarchical `--n-tokens-per-chunk` accepts any integer from 1 through 128,
 including 16, 24, 32, and 48; it need not be a power of two. Partial final
 chunks are supported. All ranks must use the same chunk setting.
 

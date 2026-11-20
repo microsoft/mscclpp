@@ -9,14 +9,14 @@ namespace mscclpp::ep {
 
 #if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS) && MSCCLPP_BULK_AVAILABLE
 
-MSCCLPP_DEVICE_INLINE int hybridNumForwardBlocks(int nGridBlocks) {
+MSCCLPP_DEVICE_INLINE int hierarchicalNumForwardBlocks(int nGridBlocks) {
   const int nForwardBlocks = (nGridBlocks - 1) / 2;
-  return nForwardBlocks < HybridMaxForwardBlocks ? nForwardBlocks : HybridMaxForwardBlocks;
+  return nForwardBlocks < HierarchicalMaxForwardBlocks ? nForwardBlocks : HierarchicalMaxForwardBlocks;
 }
 
-MSCCLPP_DEVICE_INLINE int hybridNumProduceGroups(int nTokens, int nProducers) {
-  static_assert(HybridMaxProduceGroups == 4);
-  return nTokens <= nProducers ? 1 : (nTokens <= 2 * nProducers ? 2 : HybridMaxProduceGroups);
+MSCCLPP_DEVICE_INLINE int hierarchicalNumProduceGroups(int nTokens, int nProducers) {
+  static_assert(HierarchicalMaxProduceGroups == 4);
+  return nTokens <= nProducers ? 1 : (nTokens <= 2 * nProducers ? 2 : HierarchicalMaxProduceGroups);
 }
 
 MSCCLPP_DEVICE_INLINE void dispatchCountRoutes(const int64_t* routes, const Workload& workload,
@@ -92,8 +92,8 @@ MSCCLPP_DEVICE_INLINE void dispatchProduce(void* output, void* outputScales, int
                                            const Workload& workload, const DeviceContext* context,
                                            const TransportView& transport, const Gateway& gateway,
                                            uint8_t* sharedMemory, int producerIdx, int nProducers) {
-  static_assert(DispatchNWarps % HybridMaxProduceGroups == 0);
-  const int nGroups = hybridNumProduceGroups(workload.numTokens_, nProducers);
+  static_assert(DispatchNWarps % HierarchicalMaxProduceGroups == 0);
+  const int nGroups = hierarchicalNumProduceGroups(workload.numTokens_, nProducers);
   const int nWarpsPerGroup = DispatchNWarps / nGroups;
   const int nGroupThreads = nWarpsPerGroup * WARP_SIZE;
   const int warpIdx = static_cast<int>(threadIdx.x) / WARP_SIZE;
@@ -107,15 +107,15 @@ MSCCLPP_DEVICE_INLINE void dispatchProduce(void* output, void* outputScales, int
   constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(ElementType);
   constexpr size_t ScaleBytes = DataType == DispatchDataType::MXFP8_E4M3 ? Hidden / 32 : 0;
   constexpr size_t PayloadBytes = InterDomainDispatchPayload::payloadBytes(Hidden, sizeof(ElementType), ScaleBytes);
-  constexpr size_t Stride = hybridDispatchStageStride<Hidden, DataType>();
-  const auto& hybridCtx = context->hybridCtx_;
+  constexpr size_t Stride = hierarchicalDispatchStageStride<Hidden, DataType>();
+  const auto& hierarchicalCtx = context->hierarchicalCtx_;
   const int nTopk = workload.numTopk_;
   const int nLocalExperts = workload.numExperts_ / context->numRanks_;
   auto* base = sharedMemory + dispatchSharedControlBytes(context->numRanks_, true);
   auto* staged = base + static_cast<size_t>(groupIdx) * Stride;
-  auto& barrier =
-      reinterpret_cast<mscclpp::BulkBarrier*>(base + static_cast<size_t>(HybridMaxProduceGroups) * Stride)[groupIdx];
-  __shared__ int groupRemoteTokenIndices[HybridMaxProduceGroups];
+  auto& barrier = reinterpret_cast<mscclpp::BulkBarrier*>(base + static_cast<size_t>(HierarchicalMaxProduceGroups) *
+                                                                     Stride)[groupIdx];
+  __shared__ int groupRemoteTokenIndices[HierarchicalMaxProduceGroups];
   const bool quantizeInput =
       DataType == DispatchDataType::MXFP8_E4M3 ||
       (DataType == DispatchDataType::FP8_E4M3_STATIC && workload.inputMode_ == QuantConfig::InputMode::QUANTIZE);
@@ -164,15 +164,15 @@ MSCCLPP_DEVICE_INLINE void dispatchProduce(void* output, void* outputScales, int
       isRemote = route.dstRank >= 0 && !transport.isIntraDomainPeer(route.dstRank);
       const bool hasRemote = __any_sync(0xffffffff, isRemote);
       int remoteTokenIdx = -1;
-      if (laneIdx == 0 && hasRemote) remoteTokenIdx = atomicAdd(&hybridCtx.dispatchScratch_->nRemoteTokens, 1);
+      if (laneIdx == 0 && hasRemote) remoteTokenIdx = atomicAdd(&hierarchicalCtx.dispatchScratch_->nRemoteTokens, 1);
       remoteTokenIdx = __shfl_sync(0xffffffff, remoteTokenIdx, 0);
       if (laneIdx == 0) {
-        hybridCtx.combineRemoteTokenIndices_[tokenIdx] = remoteTokenIdx;
+        hierarchicalCtx.combineRemoteTokenIndices_[tokenIdx] = remoteTokenIdx;
         groupRemoteTokenIndices[groupIdx] = remoteTokenIdx;
       }
       if (hasRemote && laneIdx < nTopk) {
-        EP_DEVICE_ASSERT(remoteTokenIdx < hybridCtx.maxTokensPerRank_);
-        auto* sendToken = static_cast<uint8_t*>(hybridCtx.dispatchSendBuffer_) +
+        EP_DEVICE_ASSERT(remoteTokenIdx < hierarchicalCtx.maxTokensPerRank_);
+        auto* sendToken = static_cast<uint8_t*>(hierarchicalCtx.dispatchSendBuffer_) +
                           static_cast<size_t>(remoteTokenIdx) * gateway.tokenBytes();
         const InterDomainDispatchPayload payload(sendToken, Hidden, nTopk, sizeof(ElementType), ScaleBytes);
         payload.expertIds_[laneIdx] = route.expertIdx;
@@ -234,19 +234,19 @@ MSCCLPP_DEVICE_INLINE void dispatchControl(const int64_t* routes, const Workload
   const int nRanks = context->numRanks_;
   const int laneIdx = getLaneId();
   const int warpIdx = static_cast<int>(threadIdx.x) / WARP_SIZE;
-  const auto& hybridCtx = context->hybridCtx_;
-  auto* state = hybridCtx.dispatchControl_;
-  const int nQps = transport.portChannels_->numQpsPerPeer;
+  const auto& hierarchicalCtx = context->hierarchicalCtx_;
+  auto* state = hierarchicalCtx.dispatchControl_;
+  const int nQps = transport.portChannelCtx_->numQpsPerPeer;
   __shared__ int nRemoteTokens;
   WorkspaceView workspace(context->workspace_, nRanks, workload.numExperts_);
-  const Gateway combineGateway(transport, hybridCtx.gatewayRank_, hybridCtx.nTokensPerChunk_, 0,
-                               hybridCtx.combineSendBuffer_, hybridCtx.combineRecvBuffer_,
-                               hybridCtx.combineControl_->qpSignals, hybridCtx.combineChunkReady_);
+  const Gateway combineGateway(transport, hierarchicalCtx.gatewayRank_, hierarchicalCtx.nTokensPerChunk_, 0,
+                               hierarchicalCtx.combineSendBuffer_, hierarchicalCtx.combineRecvBuffer_,
+                               hierarchicalCtx.combineControl_->qpSignals, hierarchicalCtx.combineChunkReady_);
 
   for (int peerIdx = threadIdx.x; peerIdx < nRanks; peerIdx += blockDim.x) rankTokenCounts[peerIdx] = 0;
   if (threadIdx.x == 0) nRemoteTokens = 0;
-  combineGateway.reset(hybridCtx.maxTokensPerRank_, static_cast<int>(threadIdx.x), static_cast<int>(blockDim.x), true,
-                       hybridCtx.combineChunkLoadReady_);
+  combineGateway.reset(hierarchicalCtx.maxTokensPerRank_, static_cast<int>(threadIdx.x), static_cast<int>(blockDim.x),
+                       true, hierarchicalCtx.combineChunkLoadReady_);
   __syncthreads();
   dispatchCountRoutes(routes, workload, transport, rankTokenCounts, nRemoteTokens);
   __syncthreads();
@@ -261,13 +261,13 @@ MSCCLPP_DEVICE_INLINE void dispatchControl(const int64_t* routes, const Workload
 
   dispatchPublishIntraDomain(recvBuffer, rankTokenCounts, transport, workspace, nQps, flag);
   if (warpIdx < nQps && laneIdx == 0) {
-    const bool isControlQueue = warpIdx == HybridDispatchControlQueueIdx;
+    const bool isControlQueue = warpIdx == HierarchicalDispatchControlQueueIdx;
     if (isControlQueue) {
       gateway.sendHeader(warpIdx, &state->recvHeader, &state->sendHeader, InterDomainDispatchHeader::wireBytes(nRanks));
     }
     gateway.send(warpIdx, nRemoteTokens);
     if (isControlQueue) {
-      gateway.complete(warpIdx, &hybridCtx.dispatchScratch_->forwardComplete);
+      gateway.complete(warpIdx, &hierarchicalCtx.dispatchScratch_->forwardComplete);
     }
   }
 }
@@ -281,9 +281,9 @@ MSCCLPP_DEVICE_INLINE void dispatchForward(void* output, void* outputScales, int
   using ElementType = DispatchElementType<DataType>;
   constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(ElementType);
   constexpr size_t ScaleBytes = DataType == DispatchDataType::MXFP8_E4M3 ? Hidden / 32 : 0;
-  constexpr size_t Stride = hybridDispatchStageStride<Hidden, DataType>();
-  const auto& hybridCtx = context->hybridCtx_;
-  auto* state = hybridCtx.dispatchControl_;
+  constexpr size_t Stride = hierarchicalDispatchStageStride<Hidden, DataType>();
+  const auto& hierarchicalCtx = context->hierarchicalCtx_;
+  auto* state = hierarchicalCtx.dispatchControl_;
   const int laneIdx = getLaneId();
   const int nTopk = workload.numTopk_;
   const int nLocalExperts = workload.numExperts_ / context->numRanks_;
@@ -293,7 +293,7 @@ MSCCLPP_DEVICE_INLINE void dispatchForward(void* output, void* outputScales, int
   __shared__ bool isLastForwarder;
   if (threadIdx.x == 0) {
     nIncomingTokens = state->recvHeader.nRemoteTokens.read(flag, -1);
-    if (forwarderIdx == 0) *hybridCtx.nIncomingTokens_ = nIncomingTokens;
+    if (forwarderIdx == 0) *hierarchicalCtx.nIncomingTokens_ = nIncomingTokens;
   }
   if (forwarderIdx == 0) {
     for (int peerIdx = threadIdx.x; peerIdx < context->numRanks_; peerIdx += blockDim.x) {
@@ -305,7 +305,7 @@ MSCCLPP_DEVICE_INLINE void dispatchForward(void* output, void* outputScales, int
   }
   __syncthreads();
 
-  constexpr int NWarpGroupThreads = HybridForwardWarps * WARP_SIZE;
+  constexpr int NWarpGroupThreads = HierarchicalForwardWarps * WARP_SIZE;
   static_assert(NWarpGroupThreads <= DispatchNThreads);
   static_assert(NWarpGroupThreads >= MaxNumRanks);
   const int warpGroupThreadIdx = static_cast<int>(threadIdx.x);
@@ -314,7 +314,7 @@ MSCCLPP_DEVICE_INLINE void dispatchForward(void* output, void* outputScales, int
     int expertIdx = -1;
     int slotIdx = -1;
     float weight = 0.0f;
-    gateway.forward<HiddenBytes, Stride, HybridForwardWarps, ScaleBytes>(
+    gateway.forward<HiddenBytes, Stride, HierarchicalForwardWarps, ScaleBytes>(
         base, output, outputScales, nIncomingTokens, forwarderIdx, nForwarders, warpGroupThreadIdx, warpGroupBarrierId,
         [&](int tokenIdx, void* landing) {
           const InterDomainDispatchPayload payload(landing, Hidden, nTopk, sizeof(ElementType), ScaleBytes);
@@ -323,7 +323,7 @@ MSCCLPP_DEVICE_INLINE void dispatchForward(void* output, void* outputScales, int
           weight = laneIdx < nTopk ? payload.topkWeights_[laneIdx] : 0.0f;
           if (laneIdx < nTopk) {
             // Preserve routes for combine before releasing recvBuffer for the next dispatch round.
-            auto* cached = hybridCtx.combineRoutes_ + static_cast<size_t>(tokenIdx) * 3 * nTopk;
+            auto* cached = hierarchicalCtx.combineRoutes_ + static_cast<size_t>(tokenIdx) * 3 * nTopk;
             cached[laneIdx] = expertIdx;
             cached[nTopk + laneIdx] = slotIdx;
             reinterpret_cast<float*>(cached + 2 * nTopk)[laneIdx] = weight;
@@ -342,21 +342,19 @@ MSCCLPP_DEVICE_INLINE void dispatchForward(void* output, void* outputScales, int
                                             slotIdx, outputExpertIdx, weight, leaderMask, nTopk,
                                             workload.maxTokensPerRank_, workload.invalidTokenExpertId_);
         });
-    gateway.signalIntraDomain(&hybridCtx.dispatchScratch_->nCompletedForwarders, nForwarders,
-                              &hybridCtx.dispatchScratch_->forwardComplete, state->payloadReady, flag, &isLastForwarder,
-                              warpGroupThreadIdx, NWarpGroupThreads, warpGroupBarrierId);
+    gateway.signalIntraDomain(&hierarchicalCtx.dispatchScratch_->nCompletedForwarders, nForwarders,
+                              &hierarchicalCtx.dispatchScratch_->forwardComplete, state->payloadReady, flag,
+                              &isLastForwarder, warpGroupThreadIdx, NWarpGroupThreads, warpGroupBarrierId);
   }
 }
 
 #endif
 
 template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
-__global__ __launch_bounds__(DispatchNThreads,
-                             1) void hybridDispatchKernel(void* output, void* outputScales, int* outputSrcInfo,
-                                                          int* outputIds, float* outputWeights, int64_t* outputLayout,
-                                                          int* outputCount, const int64_t* routes, const float* weights,
-                                                          const void* input, Workload workload, void* recvBuffer,
-                                                          const DeviceContext* context) {
+__global__ __launch_bounds__(DispatchNThreads, 1) void hierarchicalDispatchKernel(
+    void* output, void* outputScales, int* outputSrcInfo, int* outputIds, float* outputWeights, int64_t* outputLayout,
+    int* outputCount, const int64_t* routes, const float* weights, const void* input, Workload workload,
+    void* recvBuffer, const DeviceContext* context) {
 #if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS) && MSCCLPP_BULK_AVAILABLE
   static_assert(DataType == DispatchDataType::BF16 || DataType == DispatchDataType::FP8_E4M3_STATIC ||
                 DataType == DispatchDataType::MXFP8_E4M3);
@@ -365,19 +363,20 @@ __global__ __launch_bounds__(DispatchNThreads,
   WorkspaceView workspace(context->workspace_, context->numRanks_, workload.numExperts_);
   const uint32_t flag = getDispatchFlag(workspace) + 1;
   const TransportView transport(context);
-  const auto& hybridCtx = context->hybridCtx_;
+  const auto& hierarchicalCtx = context->hierarchicalCtx_;
   const size_t stride =
       InterDomainDispatchPayload::stride(Hidden, workload.numTopk_, sizeof(DispatchElementType<DataType>), ScaleBytes);
-  Gateway gateway(transport, hybridCtx.gatewayRank_, hybridCtx.nTokensPerChunk_, stride, hybridCtx.dispatchSendBuffer_,
-                  hybridCtx.dispatchRecvBuffer_, hybridCtx.dispatchControl_->qpSignals,
-                  hybridCtx.dispatchScratch_->chunkReadySignals, &hybridCtx.dispatchControl_->completionSignal);
+  Gateway gateway(transport, hierarchicalCtx.gatewayRank_, hierarchicalCtx.nTokensPerChunk_, stride,
+                  hierarchicalCtx.dispatchSendBuffer_, hierarchicalCtx.dispatchRecvBuffer_,
+                  hierarchicalCtx.dispatchControl_->qpSignals, hierarchicalCtx.dispatchScratch_->chunkReadySignals,
+                  &hierarchicalCtx.dispatchControl_->completionSignal);
   if (blockIdx.x == 0) {
     dispatchControl(routes, workload, recvBuffer, context, transport, gateway, flag,
                     reinterpret_cast<int*>(sharedMemory));
   } else {
     const int nGridBlocks = static_cast<int>(gridDim.x);
     const int nWorkers = nGridBlocks - 1;
-    const int nForwarders = hybridNumForwardBlocks(nGridBlocks);
+    const int nForwarders = hierarchicalNumForwardBlocks(nGridBlocks);
     const int workerIdx = static_cast<int>(blockIdx.x) - 1;
     if (workerIdx < nForwarders) {
       dispatchForward<Hidden, DataType>(output, outputScales, outputIds, outputWeights, workload, recvBuffer, context,
@@ -395,26 +394,26 @@ __global__ __launch_bounds__(DispatchNThreads,
       dispatchRankMajorRecvSource(outputIds, outputWeights, outputCount, transport, workspace, sourceRank,
                                   workload.numTopk_, workload.maxTokensPerRank_, workload.invalidTokenExpertId_,
                                   recvBuffer, flag, reinterpret_cast<int*>(sharedMemory),
-                                  context->hybridCtx_.dispatchControl_->payloadReady);
+                                  context->hierarchicalCtx_.dispatchControl_->payloadReady);
     }
   }
   updateDispatchFlag(workspace, flag);
 #endif
 }
 
-struct HybridDispatchKernelSelector {
+struct HierarchicalDispatchKernelSelector {
   template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
   static auto get() {
-    return hybridDispatchKernel<Hidden, DataType, ScaleBlockSize>;
+    return hierarchicalDispatchKernel<Hidden, DataType, ScaleBlockSize>;
   }
 };
 
-void hybridDispatch(void* output, void* outputScales, int* outputTopkIdx, float* outputTopkWeights, int* outputCount,
-                    const void* input, const int64_t* topkIdx, const float* topkWeights, const Workload& workload,
-                    void* recvBuffer, const DeviceContext& context, int numBlocks, cudaStream_t stream) {
-  EP_HOST_ASSERT(context.hybridCtx_.portChannels_ != nullptr);
-  EP_HOST_ASSERT(numBlocks > HybridForwardBlocks + 1);
-  dispatchAlgorithm<DispatchLayout::RANK_MAJOR, HybridDispatchKernelSelector, true>(
+void hierarchicalDispatch(void* output, void* outputScales, int* outputTopkIdx, float* outputTopkWeights,
+                          int* outputCount, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                          const Workload& workload, void* recvBuffer, const DeviceContext& context, int numBlocks,
+                          cudaStream_t stream) {
+  EP_HOST_ASSERT(context.hierarchicalCtx_.portChannelCtx_ != nullptr);
+  dispatchAlgorithm<DispatchLayout::RANK_MAJOR, HierarchicalDispatchKernelSelector, true>(
       output, outputScales, nullptr, outputTopkIdx, outputTopkWeights, nullptr, outputCount, input, topkIdx,
       topkWeights, workload, recvBuffer, context, numBlocks, stream);
 }

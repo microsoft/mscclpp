@@ -12,7 +12,7 @@ namespace ep {
 
 using PortChannelDeviceHandle = mscclpp::PortChannelDeviceHandle<mscclpp::PortChannelBackend::Device>;
 
-struct PortChannelDeviceContext {
+struct ChannelCtx {
   PortChannelDeviceHandle* channels;
   int numPeers;
   int numQpsPerPeer;
@@ -26,31 +26,31 @@ struct PortChannelDeviceContext {
 #endif
 };
 
-struct HybridDispatchControl;
-struct HybridCombineControl;
-struct HybridDispatchScratch;
+struct HierarchicalDispatchControl;
+struct HierarchicalCombineControl;
+struct HierarchicalDispatchScratch;
 
-struct HybridDeviceContext {
-  /// Cross-domain PortChannel device context for peers outside this rank's NVLink/IPC domain,
+struct HierarchicalDeviceContext {
+  /// Cross-domain PortChannel context for peers outside this rank's NVLink/IPC domain,
   /// or nullptr when every peer is intra-domain mapped.
-  PortChannelDeviceContext* portChannels_ = nullptr;
-  /// Tokens per hybrid dispatch/combine RDMA chunk.
+  ChannelCtx* portChannelCtx_ = nullptr;
+  /// Tokens per hierarchical dispatch/combine RDMA chunk.
   int nTokensPerChunk_ = 0;
   int gatewayRank_ = -1;
   int maxTokensPerRank_ = 0;
   void* dispatchSendBuffer_ = nullptr;
   void* dispatchRecvBuffer_ = nullptr;
-  HybridDispatchControl* dispatchControl_ = nullptr;
-  HybridDispatchScratch* dispatchScratch_ = nullptr;
+  HierarchicalDispatchControl* dispatchControl_ = nullptr;
+  HierarchicalDispatchScratch* dispatchScratch_ = nullptr;
   int* combineRemoteTokenIndices_ = nullptr;
   int* nIncomingTokens_ = nullptr;
   /// Private [compact token, IDs then destination slots then weights] cache, never exposed to remote writes.
   int* combineRoutes_ = nullptr;
   float* combineLocalBuffer_ = nullptr;
-  /// Independent registered FP32 send/landing tokens, indexed by compact remote token.
-  float* combineSendBuffer_ = nullptr;
-  float* combineRecvBuffer_ = nullptr;
-  HybridCombineControl* combineControl_ = nullptr;
+  /// Independent registered RDMA send/landing tokens (FP32 or BF16), indexed by compact remote token.
+  void* combineSendBuffer_ = nullptr;
+  void* combineRecvBuffer_ = nullptr;
+  HierarchicalCombineControl* combineControl_ = nullptr;
   /// Private completed-token and TMA-load counters, reset during dispatch.
   int* combineChunkReady_ = nullptr;
   int* combineChunkLoadReady_ = nullptr;
@@ -79,8 +79,8 @@ struct DeviceContext {
   int numRanks_;
   /// Persistent device copy used by kernel launches. Host launch code only.
   DeviceContext* devicePtr_ = nullptr;
-  /// Cross-domain resources for hybrid dispatch and combine.
-  HybridDeviceContext hybridCtx_{};
+  /// Cross-domain resources for hierarchical dispatch and combine.
+  HierarchicalDeviceContext hierarchicalCtx_{};
 };
 
 struct TransportView {
@@ -89,7 +89,7 @@ struct TransportView {
   mscclpp::BaseMemoryChannelDeviceHandle* baseMemoryChannels_;
   int rank_;
   int numRanks_;
-  PortChannelDeviceContext* portChannels_;
+  ChannelCtx* portChannelCtx_;
 
   MSCCLPP_HOST_DEVICE_INLINE explicit TransportView(const DeviceContext* context)
       : symmetricBufferBase_(context->localBufferBase_),
@@ -97,7 +97,7 @@ struct TransportView {
         baseMemoryChannels_(context->channels_),
         rank_(context->rank_),
         numRanks_(context->numRanks_),
-        portChannels_(context->hybridCtx_.portChannels_) {}
+        portChannelCtx_(context->hierarchicalCtx_.portChannelCtx_) {}
 
   MSCCLPP_HOST_DEVICE_INLINE bool isSelf(int peerRank) const { return peerRank == rank_; }
 

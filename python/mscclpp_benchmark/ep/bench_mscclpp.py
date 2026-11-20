@@ -202,13 +202,13 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
     )
     quant = _build_quant_config(args, mode, layout)
     group = CommGroup(mpi_comm=comm)
-    hybrid_options = {}
+    hierarchical_options = {}
     if args.qps_per_peer is not None:
-        hybrid_options["qps_per_peer"] = args.qps_per_peer
+        hierarchical_options["qps_per_peer"] = args.qps_per_peer
     if args.n_tokens_per_chunk is not None:
-        hybrid_options["n_tokens_per_chunk"] = args.n_tokens_per_chunk
+        hierarchical_options["n_tokens_per_chunk"] = args.n_tokens_per_chunk
     if getattr(args, "combine_inter_domain_dtype", "fp32") == "bf16":
-        hybrid_options["combine_inter_domain_dtype"] = torch.bfloat16
+        hierarchical_options["combine_inter_domain_dtype"] = torch.bfloat16
     config = ep.MoECommunicatorConfig(
         comm=group,
         num_experts=args.num_experts,
@@ -220,7 +220,7 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         combine_mode=combine_mode,
         output_layout=layout,
         quant=quant,
-        **hybrid_options,
+        **hierarchical_options,
     )
     moe = ep.MoECommunicator(config)
     if not moe.is_available():

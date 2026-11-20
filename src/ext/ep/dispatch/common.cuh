@@ -193,7 +193,7 @@ MSCCLPP_DEVICE_INLINE void countRankMajorRoutes(int* rankTokenCounts, const int6
 #endif  // MSCCLPP_BULK_AVAILABLE
 
 template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, DispatchLayout Layout, typename KernelSelector,
-          bool Hybrid = false>
+          bool Hierarchical = false>
 inline void dispatchHiddenMode(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
                                float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
                                const int64_t* topkIdx, const float* topkWeights, const Workload& workload,
@@ -207,7 +207,7 @@ inline void dispatchHiddenMode(void* output, void* outputScales, int* outputSrcI
   const int nTopk = workload.numTopk_;
 
   const size_t dynamicSharedBytes =
-      dispatchSharedBytes<Hidden, DataType, ScaleBlockSize, Hybrid>(nRanks, nExperts, nTopk);
+      dispatchSharedBytes<Hidden, DataType, ScaleBlockSize, Hierarchical>(nRanks, nExperts, nTopk);
   static thread_local KernelConfigCache kernelConfig;
   auto kernel = KernelSelector::template get<Hidden, DataType, ScaleBlockSize>();
   const int residentBlocks = configureKernel(kernel, DispatchNThreads, dynamicSharedBytes, context, kernelConfig);
@@ -218,12 +218,12 @@ inline void dispatchHiddenMode(void* output, void* outputScales, int* outputSrcI
   MSCCLPP_CUDATHROW(cudaGetLastError());
 }
 
-template <int Hidden, DispatchLayout Layout, typename KernelSelector, bool Hybrid = false>
+template <int Hidden, DispatchLayout Layout, typename KernelSelector, bool Hierarchical = false>
 inline void dispatchHidden(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
                            float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
                            const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,
                            const DeviceContext& context, int numBlocks, cudaStream_t stream) {
-  if constexpr (Hybrid) {
+  if constexpr (Hierarchical) {
     static_assert(Layout == DispatchLayout::RANK_MAJOR);
     switch (workload.dispatchDataType_) {
       case DispatchDataType::BF16:
@@ -241,7 +241,7 @@ inline void dispatchHidden(void* output, void* outputScales, int* outputSrcInfo,
       case DispatchDataType::FP8_E4M3:
         break;
     }
-    EP_HOST_ASSERT(false && "unsupported hybrid dispatch data type");
+    EP_HOST_ASSERT(false && "unsupported hierarchical dispatch data type");
   } else if constexpr (Layout == DispatchLayout::RANK_MAJOR) {
     switch (workload.dispatchDataType_) {
       case DispatchDataType::BF16:
@@ -296,7 +296,7 @@ inline void dispatchLayout(void* output, void* outputScales, int* outputSrcInfo,
   EP_HOST_ASSERT(false && "unsupported dispatch layout");
 }
 
-template <DispatchLayout Layout, typename KernelSelector, bool Hybrid = false>
+template <DispatchLayout Layout, typename KernelSelector, bool Hierarchical = false>
 inline void dispatchAlgorithm(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
                               float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,
                               const int64_t* topkIdx, const float* topkWeights, const Workload& workload,
@@ -313,7 +313,7 @@ inline void dispatchAlgorithm(void* output, void* outputScales, int* outputSrcIn
   EP_HOST_ASSERT(context.channels_ != nullptr);
   EP_HOST_ASSERT(workload.numTokens_ >= 0);
   EP_HOST_ASSERT(workload.numTopk_ > 0 && workload.numTopk_ <= MaxNumTopk);
-  EP_HOST_ASSERT(numWorkerBlocks >= (Hybrid ? HybridForwardBlocks : nRanks) && numWorkerBlocks <= MaxWorkerBlocks);
+  EP_HOST_ASSERT(numWorkerBlocks >= nRanks && numWorkerBlocks <= MaxWorkerBlocks);
   EP_HOST_ASSERT(output != nullptr);
   EP_HOST_ASSERT(workload.outputLayout_ == Layout);
   EP_HOST_ASSERT(isSupportedDispatchDataType(workload.dispatchDataType_));
@@ -346,75 +346,75 @@ inline void dispatchAlgorithm(void* output, void* outputScales, int* outputSrcIn
 
   switch (workload.hidden_) {
     case 256:
-      return dispatchHidden<256, Layout, KernelSelector, Hybrid>(
+      return dispatchHidden<256, Layout, KernelSelector, Hierarchical>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
           topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 512:
-      return dispatchHidden<512, Layout, KernelSelector, Hybrid>(
+      return dispatchHidden<512, Layout, KernelSelector, Hierarchical>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
           topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 768:
-      return dispatchHidden<768, Layout, KernelSelector, Hybrid>(
+      return dispatchHidden<768, Layout, KernelSelector, Hierarchical>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
           topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 1024:
-      return dispatchHidden<1024, Layout, KernelSelector, Hybrid>(
+      return dispatchHidden<1024, Layout, KernelSelector, Hierarchical>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
           topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 1280:
-      return dispatchHidden<1280, Layout, KernelSelector, Hybrid>(
+      return dispatchHidden<1280, Layout, KernelSelector, Hierarchical>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
           topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 1536:
-      return dispatchHidden<1536, Layout, KernelSelector, Hybrid>(
+      return dispatchHidden<1536, Layout, KernelSelector, Hierarchical>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
           topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 1792:
-      return dispatchHidden<1792, Layout, KernelSelector, Hybrid>(
+      return dispatchHidden<1792, Layout, KernelSelector, Hierarchical>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
           topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 2048:
-      return dispatchHidden<2048, Layout, KernelSelector, Hybrid>(
+      return dispatchHidden<2048, Layout, KernelSelector, Hierarchical>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
           topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 2560:
-      return dispatchHidden<2560, Layout, KernelSelector, Hybrid>(
+      return dispatchHidden<2560, Layout, KernelSelector, Hierarchical>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
           topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 4096:
-      return dispatchHidden<4096, Layout, KernelSelector, Hybrid>(
+      return dispatchHidden<4096, Layout, KernelSelector, Hierarchical>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
           topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 4352:
-      return dispatchHidden<4352, Layout, KernelSelector, Hybrid>(
+      return dispatchHidden<4352, Layout, KernelSelector, Hierarchical>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
           topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 5120:
-      return dispatchHidden<5120, Layout, KernelSelector, Hybrid>(
+      return dispatchHidden<5120, Layout, KernelSelector, Hierarchical>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
           topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 5376:
-      return dispatchHidden<5376, Layout, KernelSelector, Hybrid>(
+      return dispatchHidden<5376, Layout, KernelSelector, Hierarchical>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
           topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 6656:
-      return dispatchHidden<6656, Layout, KernelSelector, Hybrid>(
+      return dispatchHidden<6656, Layout, KernelSelector, Hierarchical>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
           topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 7168:
-      return dispatchHidden<7168, Layout, KernelSelector, Hybrid>(
+      return dispatchHidden<7168, Layout, KernelSelector, Hierarchical>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
           topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 8192:
-      return dispatchHidden<8192, Layout, KernelSelector, Hybrid>(
+      return dispatchHidden<8192, Layout, KernelSelector, Hierarchical>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
           topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 8704:
-      return dispatchHidden<8704, Layout, KernelSelector, Hybrid>(
+      return dispatchHidden<8704, Layout, KernelSelector, Hierarchical>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
           topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     case 9216:
-      return dispatchHidden<9216, Layout, KernelSelector, Hybrid>(
+      return dispatchHidden<9216, Layout, KernelSelector, Hierarchical>(
           output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount, input,
           topkIdx, topkWeights, workload, recvBuffer, context, numBlocks, stream);
     default:

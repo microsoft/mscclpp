@@ -9,15 +9,15 @@ namespace mscclpp::ep {
 #if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS) && MSCCLPP_BULK_AVAILABLE
 
 template <int StageSlots>
-struct HybridCombineGroup {
+struct HierarchicalCombineGroup {
   uint8_t* sharedTokens;
-  HybridCombineGroupControl<StageSlots>& control;
+  HierarchicalCombineGroupControl<StageSlots>& control;
   uint32_t& phase;
   int warpIdx;
   int threadIdx;
   int barrierId;
 
-  MSCCLPP_DEVICE_INLINE void sync() const { syncNamedBarrier(barrierId, HybridCombineGroupThreads); }
+  MSCCLPP_DEVICE_INLINE void sync() const { syncNamedBarrier(barrierId, HierarchicalCombineGroupThreads); }
 };
 
 struct IntraDomainRoute {
@@ -26,8 +26,8 @@ struct IntraDomainRoute {
   float weight = 1.0f;
 };
 
-MSCCLPP_DEVICE_INLINE bool useBf16InterDomainCombine(const HybridDeviceContext& hybridCtx) {
-  return hybridCtx.combineInterDomainDtype_ == mscclpp::DataType::BFLOAT16;
+MSCCLPP_DEVICE_INLINE bool useBf16InterDomainCombine(const HierarchicalDeviceContext& hierarchicalCtx) {
+  return hierarchicalCtx.combineInterDomainDtype_ == mscclpp::DataType::BFLOAT16;
 }
 
 template <int Hidden>
@@ -35,14 +35,14 @@ MSCCLPP_DEVICE_INLINE void combineStoreFinalVector(void* output, mscclpp::f32x8 
                                                    int vectorIdx, const DeviceContext* context) {
   constexpr int NHiddenVectors = Hidden / mscclpp::f32x8::Size;
   constexpr int NPairsPerVector = mscclpp::f32x8::Size / mscclpp::f32x2::Size;
-  const auto& hybridCtx = context->hybridCtx_;
+  const auto& hierarchicalCtx = context->hierarchicalCtx_;
   if (remoteTokenIdx >= 0) {
     const size_t remoteVecIdx = static_cast<size_t>(remoteTokenIdx) * NHiddenVectors + vectorIdx;
     const mscclpp::f32x8 partial =
-        useBf16InterDomainCombine(hybridCtx)
+        useBf16InterDomainCombine(hierarchicalCtx)
             ? mscclpp::to<mscclpp::f32x8>(
-                  reinterpret_cast<const mscclpp::bf16x8*>(hybridCtx.combineRecvBuffer_)[remoteVecIdx])
-            : reinterpret_cast<const mscclpp::f32x8*>(hybridCtx.combineRecvBuffer_)[remoteVecIdx];
+                  reinterpret_cast<const mscclpp::bf16x8*>(hierarchicalCtx.combineRecvBuffer_)[remoteVecIdx])
+            : reinterpret_cast<const mscclpp::f32x8*>(hierarchicalCtx.combineRecvBuffer_)[remoteVecIdx];
     auto* sumPairs = reinterpret_cast<mscclpp::f32x2*>(&sum);
     const auto* partialPairs = reinterpret_cast<const mscclpp::f32x2*>(&partial);
 #pragma unroll
@@ -56,15 +56,15 @@ MSCCLPP_DEVICE_INLINE void combineStoreFinalVector(void* output, mscclpp::f32x8 
 
 template <int Hidden, int StageSlots>
 MSCCLPP_DEVICE_INLINE void combineFinalize(void* output, int tokenIdx, const DeviceContext* context,
-                                           const Gateway& gateway, const HybridCombineGroup<StageSlots>& group) {
+                                           const Gateway& gateway, const HierarchicalCombineGroup<StageSlots>& group) {
   constexpr int NHiddenVectors = Hidden / mscclpp::f32x8::Size;
-  const auto& hybridCtx = context->hybridCtx_;
-  const int remoteTokenIdx = hybridCtx.combineRemoteTokenIndices_[tokenIdx];
+  const auto& hierarchicalCtx = context->hierarchicalCtx_;
+  const int remoteTokenIdx = hierarchicalCtx.combineRemoteTokenIndices_[tokenIdx];
   if (group.threadIdx == 0 && remoteTokenIdx >= 0) gateway.wait(remoteTokenIdx);
   group.sync();
-  const auto* local =
-      reinterpret_cast<const mscclpp::f32x8*>(hybridCtx.combineLocalBuffer_ + static_cast<size_t>(tokenIdx) * Hidden);
-  for (int vectorIdx = group.threadIdx; vectorIdx < NHiddenVectors; vectorIdx += HybridCombineGroupThreads) {
+  const auto* local = reinterpret_cast<const mscclpp::f32x8*>(hierarchicalCtx.combineLocalBuffer_ +
+                                                              static_cast<size_t>(tokenIdx) * Hidden);
+  for (int vectorIdx = group.threadIdx; vectorIdx < NHiddenVectors; vectorIdx += HierarchicalCombineGroupThreads) {
     combineStoreFinalVector<Hidden>(output, local[vectorIdx], tokenIdx, remoteTokenIdx, vectorIdx, context);
   }
 }
@@ -75,7 +75,7 @@ MSCCLPP_DEVICE_INLINE IntraDomainRoute resolveGatewayRoute(int tokenIdx, int lan
   constexpr bool IsDirectSend = Mode == CombineMode::DIRECT_SEND;
   const int nTopk = workload.numTopk_;
   if (laneIdx >= nTopk) return {};
-  const auto* cached = context->hybridCtx_.combineRoutes_ + static_cast<size_t>(tokenIdx) * 3 * nTopk;
+  const auto* cached = context->hierarchicalCtx_.combineRoutes_ + static_cast<size_t>(tokenIdx) * 3 * nTopk;
   const int expertIdx = cached[laneIdx];
   const int nLocalExperts = workload.numExperts_ / context->numRanks_;
   const int peerRank = expertIdx >= 0 && expertIdx < workload.numExperts_ ? expertIdx / nLocalExperts : -1;
@@ -103,8 +103,9 @@ MSCCLPP_DEVICE_INLINE IntraDomainRoute resolveLocalRoute(int tokenIdx, int laneI
 }
 
 template <CombineMode Mode, int Hidden, DispatchDataType DispatchType, int StageSlots>
-MSCCLPP_DEVICE_INLINE void accumulateHybridVector(mscclpp::f32x8& sum, int vectorIdx, const uint8_t* sharedTokens,
-                                                  const float* routeWeights, int nRoundRoutes, float dequantScale) {
+MSCCLPP_DEVICE_INLINE void accumulateHierarchicalVector(mscclpp::f32x8& sum, int vectorIdx, const uint8_t* sharedTokens,
+                                                        const float* routeWeights, int nRoundRoutes,
+                                                        float dequantScale) {
   constexpr bool IsDirectSend = Mode == CombineMode::DIRECT_SEND;
   constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(DispatchElementType<DispatchType>);
   constexpr int NPairsPerVector = mscclpp::f32x8::Size / mscclpp::f32x2::Size;
@@ -140,15 +141,15 @@ MSCCLPP_DEVICE_INLINE void accumulateHybridVector(mscclpp::f32x8& sum, int vecto
 template <CombineMode Mode, int Hidden, DispatchDataType DispatchType, int MaxNTopk, int StageSlots,
           typename OnLastLoadFn>
 MSCCLPP_DEVICE_INLINE void reduceIntraDomainToken(
-    mscclpp::f32x8 (&tokenSum)[configCellDiv(Hidden / mscclpp::f32x8::Size, HybridCombineGroupThreads)], int ownerRank,
-    const IntraDomainRoute& laneRoute, const void* expertOutput, const Workload& workload,
+    mscclpp::f32x8 (&tokenSum)[configCellDiv(Hidden / mscclpp::f32x8::Size, HierarchicalCombineGroupThreads)],
+    int ownerRank, const IntraDomainRoute& laneRoute, const void* expertOutput, const Workload& workload,
     const TransportView& transport, const WorkspaceView& workspace, uint32_t flag, float dequantScale,
-    const HybridCombineGroup<StageSlots>& group, OnLastLoadFn&& onLastLoad) {
+    const HierarchicalCombineGroup<StageSlots>& group, OnLastLoadFn&& onLastLoad) {
   constexpr bool IsDirectSend = Mode == CombineMode::DIRECT_SEND;
   using ElementType = DispatchElementType<DispatchType>;
   constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(ElementType);
   constexpr int NHiddenVectors = Hidden / mscclpp::f32x8::Size;
-  constexpr int MaxVectorsPerThread = configCellDiv(NHiddenVectors, HybridCombineGroupThreads);
+  constexpr int MaxVectorsPerThread = configCellDiv(NHiddenVectors, HierarchicalCombineGroupThreads);
   constexpr int NPairsPerVector = mscclpp::f32x8::Size / mscclpp::f32x2::Size;
   constexpr bool SingleRound = StageSlots >= MaxNTopk;
   const int laneIdx = getLaneId();
@@ -227,9 +228,9 @@ MSCCLPP_DEVICE_INLINE void reduceIntraDomainToken(
     if (nRoundRoutes > 0) {
 #pragma unroll
       for (int stepIdx = 0; stepIdx < MaxVectorsPerThread; ++stepIdx) {
-        const int vectorIdx = group.threadIdx + stepIdx * HybridCombineGroupThreads;
+        const int vectorIdx = group.threadIdx + stepIdx * HierarchicalCombineGroupThreads;
         if (vectorIdx < NHiddenVectors) {
-          accumulateHybridVector<Mode, Hidden, DispatchType, StageSlots>(
+          accumulateHierarchicalVector<Mode, Hidden, DispatchType, StageSlots>(
               tokenSum[stepIdx], vectorIdx, group.sharedTokens, group.control.routeWeights, nRoundRoutes, dequantScale);
         }
       }
@@ -248,9 +249,10 @@ MSCCLPP_DEVICE_INLINE void combineGatewayToken(void* dst, const void* expertOutp
                                                const Workload& workload, const DeviceContext* context,
                                                const TransportView& transport, const Gateway& gateway,
                                                const WorkspaceView& workspace, uint32_t flag, float dequantScale,
-                                               const HybridCombineGroup<StageSlots>& group, LoadReadyFn&& loadReady) {
+                                               const HierarchicalCombineGroup<StageSlots>& group,
+                                               LoadReadyFn&& loadReady) {
   constexpr int NHiddenVectors = Hidden / mscclpp::f32x8::Size;
-  constexpr int MaxVectorsPerThread = configCellDiv(NHiddenVectors, HybridCombineGroupThreads);
+  constexpr int MaxVectorsPerThread = configCellDiv(NHiddenVectors, HierarchicalCombineGroupThreads);
   const IntraDomainRoute laneRoute =
       group.warpIdx == 0 ? resolveGatewayRoute<Mode>(tokenIdx, getLaneId(), workload, context) : IntraDomainRoute{};
   mscclpp::f32x8 tokenSum[MaxVectorsPerThread];
@@ -258,10 +260,10 @@ MSCCLPP_DEVICE_INLINE void combineGatewayToken(void* dst, const void* expertOutp
                                                                workload, transport, workspace, flag, dequantScale,
                                                                group, loadReady);
 
-  const bool bf16InterDomain = useBf16InterDomainCombine(context->hybridCtx_);
+  const bool bf16InterDomain = useBf16InterDomainCombine(context->hierarchicalCtx_);
 #pragma unroll
   for (int stepIdx = 0; stepIdx < MaxVectorsPerThread; ++stepIdx) {
-    const int vectorIdx = group.threadIdx + stepIdx * HybridCombineGroupThreads;
+    const int vectorIdx = group.threadIdx + stepIdx * HierarchicalCombineGroupThreads;
     if (vectorIdx < NHiddenVectors) {
       if (bf16InterDomain) {
         static_cast<mscclpp::bf16x8*>(dst)[vectorIdx] = mscclpp::to<mscclpp::bf16x8>(tokenSum[stepIdx]);
@@ -278,11 +280,11 @@ MSCCLPP_DEVICE_INLINE void combineLocalTokens(void* output, const void* expertOu
                                               const float* topkWeights, const Workload& workload,
                                               const DeviceContext* context, const TransportView& transport,
                                               const Gateway& gateway, const WorkspaceView& workspace, uint32_t flag,
-                                              float dequantScale, const HybridCombineGroup<StageSlots>& group,
+                                              float dequantScale, const HierarchicalCombineGroup<StageSlots>& group,
                                               int localWorkerIdx, int nLocalWorkers) {
   constexpr int NHiddenVectors = Hidden / mscclpp::f32x8::Size;
-  constexpr int MaxVectorsPerThread = configCellDiv(NHiddenVectors, HybridCombineGroupThreads);
-  const auto& hybridCtx = context->hybridCtx_;
+  constexpr int MaxVectorsPerThread = configCellDiv(NHiddenVectors, HierarchicalCombineGroupThreads);
+  const auto& hierarchicalCtx = context->hierarchicalCtx_;
   const int laneIdx = getLaneId();
 
   auto flushPending = [&] {
@@ -305,7 +307,7 @@ MSCCLPP_DEVICE_INLINE void combineLocalTokens(void* output, const void* expertOu
         tokenSum, context->rank_, laneRoute, expertOutput, workload, transport, workspace, flag, dequantScale, group,
         [&] {
           if (overlapRemote) {
-            const int remoteTokenIdx = hybridCtx.combineRemoteTokenIndices_[tokenIdx];
+            const int remoteTokenIdx = hierarchicalCtx.combineRemoteTokenIndices_[tokenIdx];
             group.control.interDomainTokenReady = remoteTokenIdx < 0 || gateway.poll(remoteTokenIdx);
           }
         });
@@ -313,30 +315,30 @@ MSCCLPP_DEVICE_INLINE void combineLocalTokens(void* output, const void* expertOu
     if (overlapRemote && !group.control.interDomainTokenReady) {
       // Remote RDMA partial is still in flight; stash local FP32 sum so earlier pending tokens or the next local token
       // can proceed without blocking on this RDMA chunk.
-      auto* localScratch =
-          reinterpret_cast<mscclpp::f32x8*>(hybridCtx.combineLocalBuffer_ + static_cast<size_t>(tokenIdx) * Hidden);
+      auto* localScratch = reinterpret_cast<mscclpp::f32x8*>(hierarchicalCtx.combineLocalBuffer_ +
+                                                             static_cast<size_t>(tokenIdx) * Hidden);
 #pragma unroll
       for (int stepIdx = 0; stepIdx < MaxVectorsPerThread; ++stepIdx) {
-        const int vectorIdx = group.threadIdx + stepIdx * HybridCombineGroupThreads;
+        const int vectorIdx = group.threadIdx + stepIdx * HierarchicalCombineGroupThreads;
         if (vectorIdx < NHiddenVectors) localScratch[vectorIdx] = tokenSum[stepIdx];
       }
       if (group.threadIdx == 0) group.control.pendingTokens[group.control.nPendingTokens++] = tokenIdx;
       group.sync();
-      if (group.control.nPendingTokens == HybridCombineMaxPendingTokens) {
+      if (group.control.nPendingTokens == HierarchicalCombineMaxPendingTokens) {
         flushPending();
         group.sync();
       }
       continue;
     }
 
-    const int remoteTokenIdx = hybridCtx.combineRemoteTokenIndices_[tokenIdx];
+    const int remoteTokenIdx = hierarchicalCtx.combineRemoteTokenIndices_[tokenIdx];
     if (!overlapRemote && remoteTokenIdx >= 0) {
       if (group.threadIdx == 0) gateway.wait(remoteTokenIdx);
       group.sync();
     }
 #pragma unroll
     for (int stepIdx = 0; stepIdx < MaxVectorsPerThread; ++stepIdx) {
-      const int vectorIdx = group.threadIdx + stepIdx * HybridCombineGroupThreads;
+      const int vectorIdx = group.threadIdx + stepIdx * HierarchicalCombineGroupThreads;
       if (vectorIdx < NHiddenVectors) {
         combineStoreFinalVector<Hidden>(output, tokenSum[stepIdx], tokenIdx, remoteTokenIdx, vectorIdx, context);
       }
@@ -350,7 +352,7 @@ MSCCLPP_DEVICE_INLINE void combineControl(const DeviceContext* context, const Tr
                                           const WorkspaceView& workspace, uint32_t flag) {
   const int peerIdx = threadIdx.x;
   const int nRanks = context->numRanks_;
-  const auto& hybridCtx = context->hybridCtx_;
+  const auto& hierarchicalCtx = context->hierarchicalCtx_;
   if (peerIdx < nRanks && transport.isIntraDomainPeer(peerIdx)) {
     if (!transport.isSelf(peerIdx)) {
       transport.baseMemoryChannels_[peerIdx].signal();
@@ -365,15 +367,15 @@ MSCCLPP_DEVICE_INLINE void combineControl(const DeviceContext* context, const Tr
     workspace.dispatchRankPayloadCompletions_[idx] = 0;
   }
   if (threadIdx.x == 0) {
-    hybridCtx.dispatchScratch_->nRemoteTokens = 0;
-    hybridCtx.dispatchScratch_->nCompletedForwarders = 0;
-    hybridCtx.dispatchScratch_->forwardComplete = 0;
+    hierarchicalCtx.dispatchScratch_->nRemoteTokens = 0;
+    hierarchicalCtx.dispatchScratch_->nCompletedForwarders = 0;
+    hierarchicalCtx.dispatchScratch_->forwardComplete = 0;
   }
-  const Gateway dispatchGateway(transport, hybridCtx.gatewayRank_, hybridCtx.nTokensPerChunk_, 0,
-                                hybridCtx.dispatchSendBuffer_, hybridCtx.dispatchRecvBuffer_,
-                                hybridCtx.dispatchControl_->qpSignals, hybridCtx.dispatchScratch_->chunkReadySignals,
-                                &hybridCtx.dispatchControl_->completionSignal);
-  dispatchGateway.reset(hybridCtx.maxTokensPerRank_, static_cast<int>(threadIdx.x), static_cast<int>(blockDim.x),
+  const Gateway dispatchGateway(
+      transport, hierarchicalCtx.gatewayRank_, hierarchicalCtx.nTokensPerChunk_, 0, hierarchicalCtx.dispatchSendBuffer_,
+      hierarchicalCtx.dispatchRecvBuffer_, hierarchicalCtx.dispatchControl_->qpSignals,
+      hierarchicalCtx.dispatchScratch_->chunkReadySignals, &hierarchicalCtx.dispatchControl_->completionSignal);
+  dispatchGateway.reset(hierarchicalCtx.maxTokensPerRank_, static_cast<int>(threadIdx.x), static_cast<int>(blockDim.x),
                         /*resetRecv=*/false);
   if (threadIdx.x == 0) dispatchGateway.waitComplete();
 }
@@ -382,44 +384,42 @@ MSCCLPP_DEVICE_INLINE void combineControl(const DeviceContext* context, const Tr
 
 template <CombineMode Mode, int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout,
           int MaxNTopk>
-__global__ __launch_bounds__(CombineNThreads,
-                             1) void hybridCombineKernel(void* output, const void* expertOutput,
-                                                         const int64_t* topkIndices, const float* topkWeights,
-                                                         const int* srcInfo, const int64_t* layoutRange,
-                                                         Workload workload, void* combineRecvBuffer,
-                                                         const void* dispatchRecvBuffer, const DeviceContext* context) {
+__global__ __launch_bounds__(CombineNThreads, 1) void hierarchicalCombineKernel(
+    void* output, const void* expertOutput, const int64_t* topkIndices, const float* topkWeights, const int* srcInfo,
+    const int64_t* layoutRange, Workload workload, void* combineRecvBuffer, const void* dispatchRecvBuffer,
+    const DeviceContext* context) {
 #if defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS) && MSCCLPP_BULK_AVAILABLE
   if constexpr (Layout == DispatchLayout::RANK_MAJOR &&
                 (DispatchType == DispatchDataType::BF16 || DispatchType == DispatchDataType::FP8_E4M3_STATIC)) {
     extern __shared__ __align__(128) uint8_t sharedMemory[];
     const TransportView transport(context);
-    const auto& hybridCtx = context->hybridCtx_;
+    const auto& hierarchicalCtx = context->hierarchicalCtx_;
     const int nGatewayBlocks = static_cast<int>(gridDim.x) - 1;
     const Gateway::ReduceConfig reduceConfig{
         .nWorkerBlocks = nGatewayBlocks,
-        .nWorkers = nGatewayBlocks * HybridCombineNWarpGroups,
+        .nWorkers = nGatewayBlocks * HierarchicalCombineNWarpGroups,
     };
-    const size_t wireElemBytes = useBf16InterDomainCombine(hybridCtx) ? sizeof(Bf16) : sizeof(float);
-    Gateway gateway(transport, hybridCtx.gatewayRank_, hybridCtx.nTokensPerChunk_,
-                    static_cast<size_t>(Hidden) * wireElemBytes, hybridCtx.combineSendBuffer_,
-                    hybridCtx.combineRecvBuffer_, hybridCtx.combineControl_->qpSignals, hybridCtx.combineChunkReady_,
-                    reduceConfig);
+    const size_t wireElemBytes = useBf16InterDomainCombine(hierarchicalCtx) ? sizeof(Bf16) : sizeof(float);
+    Gateway gateway(transport, hierarchicalCtx.gatewayRank_, hierarchicalCtx.nTokensPerChunk_,
+                    static_cast<size_t>(Hidden) * wireElemBytes, hierarchicalCtx.combineSendBuffer_,
+                    hierarchicalCtx.combineRecvBuffer_, hierarchicalCtx.combineControl_->qpSignals,
+                    hierarchicalCtx.combineChunkReady_, reduceConfig);
     const WorkspaceView workspace(context->workspace_, context->numRanks_, workload.numExperts_);
     const uint32_t flag = getDispatchFlag(workspace);
-    constexpr int StageSlots = hybridCombineGroupStageSlots<Hidden, DispatchType, MaxNTopk>();
+    constexpr int StageSlots = hierarchicalCombineGroupStageSlots<Hidden, DispatchType, MaxNTopk>();
     constexpr size_t TokensBytes = static_cast<size_t>(StageSlots) * Hidden * sizeof(DispatchElementType<DispatchType>);
-    constexpr size_t GroupSharedBytes = hybridCombineGroupSharedBytesForSlots<Hidden, DispatchType, StageSlots>();
+    constexpr size_t GroupSharedBytes = hierarchicalCombineGroupSharedBytesForSlots<Hidden, DispatchType, StageSlots>();
     const int warpIdx = static_cast<int>(threadIdx.x) / WARP_SIZE;
-    const int groupIdx = warpIdx / HybridCombineGroupWarps;
-    const int groupWarpIdx = warpIdx % HybridCombineGroupWarps;
+    const int groupIdx = warpIdx / HierarchicalCombineGroupWarps;
+    const int groupWarpIdx = warpIdx % HierarchicalCombineGroupWarps;
     const int warpGroupThreadIdx = groupWarpIdx * WARP_SIZE + getLaneId();
-    const int warpGroupBarrierId = HybridCombineGroupBarrierBase + groupIdx;
+    const int warpGroupBarrierId = HierarchicalCombineGroupBarrierBase + groupIdx;
     uint8_t* groupShared = sharedMemory + static_cast<size_t>(groupIdx) * GroupSharedBytes;
-    auto& groupControl = *reinterpret_cast<HybridCombineGroupControl<StageSlots>*>(groupShared + TokensBytes);
+    auto& groupControl = *reinterpret_cast<HierarchicalCombineGroupControl<StageSlots>*>(groupShared + TokensBytes);
     const float dequantScale = DispatchType == DispatchDataType::FP8_E4M3_STATIC ? 1.0f / workload.combineScale_ : 1.0f;
     uint32_t phase = 0;
-    const HybridCombineGroup<StageSlots> group{groupShared,  groupControl,       phase,
-                                               groupWarpIdx, warpGroupThreadIdx, warpGroupBarrierId};
+    const HierarchicalCombineGroup<StageSlots> group{groupShared,  groupControl,       phase,
+                                                     groupWarpIdx, warpGroupThreadIdx, warpGroupBarrierId};
 
     if (group.threadIdx == 0) {
       group.control.barrier.init();
@@ -435,8 +435,8 @@ __global__ __launch_bounds__(CombineNThreads,
     const bool isPoster = blockIdx.x == 0;
     const int workerIdx = groupIdx * nGatewayBlocks + (static_cast<int>(blockIdx.x) - 1);
     const int posterQueueIdx = warpIdx - configCellDiv(context->numRanks_, WARP_SIZE);
-    gateway.reduceAndSend<HybridCombineGroupThreads>(
-        *hybridCtx.nIncomingTokens_, hybridCtx.combineChunkLoadReady_, isPoster, workerIdx, posterQueueIdx,
+    gateway.reduceAndSend<HierarchicalCombineGroupThreads>(
+        *hierarchicalCtx.nIncomingTokens_, hierarchicalCtx.combineChunkLoadReady_, isPoster, workerIdx, posterQueueIdx,
         warpGroupThreadIdx, warpGroupBarrierId, [&](uint8_t* dst, int tokenIdx, auto&& loadReady) {
           combineGatewayToken<Mode, Hidden, DispatchType, MaxNTopk>(dst, expertOutput, tokenIdx, workload, context,
                                                                     transport, gateway, workspace, flag, dequantScale,
@@ -449,9 +449,9 @@ __global__ __launch_bounds__(CombineNThreads,
     // Assign local workers in reverse group/block order so small-T local work lands on idle groups/SMs first and
     // block 0 / gateway tail workers sit at the end of the range.
     const int nLocalBlocks = static_cast<int>(gridDim.x);
-    const int nLocalWorkers = nLocalBlocks * HybridCombineNWarpGroups;
+    const int nLocalWorkers = nLocalBlocks * HierarchicalCombineNWarpGroups;
     const int revBlockIdx = blockIdx.x == 0 ? nLocalBlocks - 1 : nLocalBlocks - 1 - static_cast<int>(blockIdx.x);
-    const int localWorkerIdx = (HybridCombineNWarpGroups - 1 - groupIdx) * nLocalBlocks + revBlockIdx;
+    const int localWorkerIdx = (HierarchicalCombineNWarpGroups - 1 - groupIdx) * nLocalBlocks + revBlockIdx;
     combineLocalTokens<Mode, Hidden, DispatchType, MaxNTopk>(output, expertOutput, topkIndices, topkWeights, workload,
                                                              context, transport, gateway, workspace, flag, dequantScale,
                                                              group, localWorkerIdx, nLocalWorkers);
@@ -462,31 +462,31 @@ __global__ __launch_bounds__(CombineNThreads,
 }
 
 template <CombineMode Mode>
-struct HybridCombineKernelSelector {
+struct HierarchicalCombineKernelSelector {
   template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout, int MaxNTopk>
   static auto get() {
-    return hybridCombineKernel<Mode, Hidden, DispatchType, ScaleBlockSize, Layout, MaxNTopk>;
+    return hierarchicalCombineKernel<Mode, Hidden, DispatchType, ScaleBlockSize, Layout, MaxNTopk>;
   }
 };
 
-void hybridCombine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
-                   const Workload& workload, CombineMode combineMode, void* recvBuffer, void* dispatchRecvBuffer,
-                   const DeviceContext& context, int numBlocks, cudaStream_t stream) {
-  EP_HOST_ASSERT(context.hybridCtx_.portChannels_ != nullptr && workload.numTopk_ <= MaxNumTopk);
+void hierarchicalCombine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                         const Workload& workload, CombineMode combineMode, void* recvBuffer, void* dispatchRecvBuffer,
+                         const DeviceContext& context, int numBlocks, cudaStream_t stream) {
+  EP_HOST_ASSERT(context.hierarchicalCtx_.portChannelCtx_ != nullptr && workload.numTopk_ <= MaxNumTopk);
   EP_HOST_ASSERT(workload.outputLayout_ == DispatchLayout::RANK_MAJOR);
   EP_HOST_ASSERT(workload.dispatchDataType_ == DispatchDataType::BF16 ||
                  workload.dispatchDataType_ == DispatchDataType::FP8_E4M3_STATIC ||
                  workload.dispatchDataType_ == DispatchDataType::MXFP8_E4M3);
   EP_HOST_ASSERT(isSupportedCombineDataType(workload.combineDataType_));
   if (combineMode == CombineMode::DIRECT_SEND) {
-    combineAlgorithm<CombineMode::DIRECT_SEND, HybridCombineKernelSelector<CombineMode::DIRECT_SEND>, true>(
+    combineAlgorithm<CombineMode::DIRECT_SEND, HierarchicalCombineKernelSelector<CombineMode::DIRECT_SEND>, true>(
         output, input, topkIdx, topkWeights, nullptr, nullptr, workload, recvBuffer, dispatchRecvBuffer, context,
         numBlocks, stream);
   } else {
     EP_HOST_ASSERT(combineMode == CombineMode::RANK_LOCAL_REDUCE);
-    combineAlgorithm<CombineMode::RANK_LOCAL_REDUCE, HybridCombineKernelSelector<CombineMode::RANK_LOCAL_REDUCE>, true>(
-        output, input, topkIdx, nullptr, nullptr, nullptr, workload, recvBuffer, dispatchRecvBuffer, context, numBlocks,
-        stream);
+    combineAlgorithm<CombineMode::RANK_LOCAL_REDUCE, HierarchicalCombineKernelSelector<CombineMode::RANK_LOCAL_REDUCE>,
+                     true>(output, input, topkIdx, nullptr, nullptr, nullptr, workload, recvBuffer, dispatchRecvBuffer,
+                           context, numBlocks, stream);
   }
 }
 

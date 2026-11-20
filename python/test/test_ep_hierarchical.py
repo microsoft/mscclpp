@@ -8,7 +8,7 @@ including chunked dispatch, gateway distribution, and FP32 aggregate combine.
 Example (two nodes, four GPUs each)::
 
     mpirun -np 8 --map-by ppr:4:node \\
-        python3 -m pytest python/test/test_ep_hybrid.py -vx
+        python3 -m pytest python/test/test_ep_hierarchical.py -vx
 """
 
 from contextlib import contextmanager
@@ -121,7 +121,7 @@ def _check_dispatch_metadata(ep_group, result, num_tokens):
 
 @pytest.mark.parametrize("combine_mode", [CombineMode.RANK_LOCAL_REDUCE, CombineMode.DIRECT_SEND])
 @pytest.mark.parametrize("hidden", [HIDDEN, 2048])
-def test_latency_hybrid_dispatch_combine(ep_group, hidden, combine_mode):
+def test_latency_hierarchical_dispatch_combine(ep_group, hidden, combine_mode):
     num_tokens, capacity = 5, 8
     layout = DispatchLayout.RANK_MAJOR
     with initialized_runtime(
@@ -168,7 +168,7 @@ def test_latency_hybrid_dispatch_combine(ep_group, hidden, combine_mode):
             torch.testing.assert_close(combined.float(), expected, rtol=0, atol=0)
 
 
-def test_latency_hybrid_multi_iteration_graph_replay(ep_group):
+def test_latency_hierarchical_multi_iteration_graph_replay(ep_group):
     layout = DispatchLayout.RANK_MAJOR
     num_tokens, capacity = 5, 8
     with initialized_runtime(
@@ -225,10 +225,10 @@ def _alternate_routes(rank, num_tokens):
     return routes
 
 
-def test_latency_hybrid_single_round_graph_changing_routes(ep_group):
+def test_latency_hierarchical_single_round_graph_changing_routes(ep_group):
     """A graph holding one dispatch/combine round must not reuse the previous replay's metadata."""
-    hybrid_rank_major = ep_group.nranks_per_ipc_domain < ep_group.nranks
-    if not hybrid_rank_major:
+    hierarchical_rank_major = ep_group.nranks_per_ipc_domain < ep_group.nranks
+    if not hierarchical_rank_major:
         pytest.skip("Single-domain RANK_MAJOR uses the IPC path, whose graphs need two captured rounds")
     layout = DispatchLayout.RANK_MAJOR
     num_tokens, capacity = 5, 8
@@ -285,6 +285,7 @@ def test_latency_hybrid_single_round_graph_changing_routes(ep_group):
     "qps_per_peer,chunk_rows,hidden",
     [
         (1, 8, 7168),
+        (2, 8, 7168),
         (4, 8, 7168),
         (4, 7, 7168),
         (1, 7, 2048),
@@ -296,7 +297,7 @@ def test_latency_hybrid_single_round_graph_changing_routes(ep_group):
 )
 @pytest.mark.parametrize("emit_local_expert_ids", [False, True])
 @pytest.mark.parametrize("combine_mode", [CombineMode.RANK_LOCAL_REDUCE, CombineMode.DIRECT_SEND])
-def test_latency_hybrid_send_distribute(
+def test_latency_hierarchical_send_distribute(
     ep_group, qps_per_peer, chunk_rows, hidden, combine_mode, emit_local_expert_ids
 ):
     """Single-copy RDMA chunks, gateway-excluding routes, and credit reuse across changing graph rounds."""
@@ -480,7 +481,7 @@ def test_latency_hybrid_send_distribute(
 
 @pytest.mark.parametrize("qps_per_peer", [1, 4])
 @pytest.mark.parametrize("combine_inter_domain_dtype", [torch.float32, torch.bfloat16])
-def test_latency_hybrid_aggregate_combine_partials(ep_group, qps_per_peer, combine_inter_domain_dtype):
+def test_latency_hierarchical_aggregate_combine_partials(ep_group, qps_per_peer, combine_inter_domain_dtype):
     """FP32 group sums, random BF16 partials, asymmetric tokens, and optional BF16 inter-domain rounding."""
     domain = ep_group.nranks_per_ipc_domain
     if not (ep_group.nranks == 2 * domain and domain >= 3):
@@ -618,7 +619,7 @@ def test_latency_hybrid_aggregate_combine_partials(ep_group, qps_per_peer, combi
     ],
 )
 @pytest.mark.parametrize("input_mode", [QuantConfig.InputMode.PREQUANTIZED, QuantConfig.InputMode.QUANTIZE])
-def test_latency_hybrid_static_fp8(
+def test_latency_hierarchical_static_fp8(
     ep_group, combine_mode, combine_format, combine_scale, input_mode, emit_local_expert_ids
 ):
     num_tokens, capacity, scale = 5, 8, 0.5
@@ -741,7 +742,7 @@ def _reference_mxfp8_quantize(bf16_input):
 @pytest.mark.parametrize("emit_local_expert_ids", [False, True])
 @pytest.mark.parametrize("hidden", [2048, 4352])
 @pytest.mark.parametrize("combine_inter_domain_dtype", [torch.float32, torch.bfloat16])
-def test_latency_hybrid_mxfp8(ep_group, combine_mode, emit_local_expert_ids, hidden, combine_inter_domain_dtype):
+def test_latency_hierarchical_mxfp8(ep_group, combine_mode, emit_local_expert_ids, hidden, combine_inter_domain_dtype):
     """MXFP8 E4M3 payload + E8M0 block scales across NVLink and RDMA, including non-16B-aligned H=4352 and graphs."""
     num_tokens, capacity = 9, 16
     quant = QuantConfig(format=DispatchDataType.MXFP8_E4M3)
@@ -885,8 +886,8 @@ def test_latency_hybrid_mxfp8(ep_group, combine_mode, emit_local_expert_ids, hid
 @pytest.mark.parametrize("combine_mode", [CombineMode.RANK_LOCAL_REDUCE, CombineMode.DIRECT_SEND])
 @pytest.mark.parametrize("hidden", [5376, 9216])
 @pytest.mark.parametrize("fmt", ["bf16", "mxfp8", "fp8_static"])
-def test_latency_hybrid_topk_16(ep_group, combine_mode, hidden, fmt):
-    """Hybrid top-k=16 across single-round (H=5376) and two-round (H=9216) combine staging and all formats."""
+def test_latency_hierarchical_topk_16(ep_group, combine_mode, hidden, fmt):
+    """Hierarchical top-k=16 across single-round (H=5376) and two-round (H=9216) combine staging and all formats."""
     topk, num_tokens, capacity = 16, 9, 16
     num_experts = NUM_LOCAL_EXPERTS * ep_group.nranks
     quant = (

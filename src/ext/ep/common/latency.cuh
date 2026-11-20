@@ -180,9 +180,9 @@ MSCCLPP_HOST_DEVICE_INLINE int dispatchSharedSendSlots(int nRanks) {
   return nRanks > NSendSlots ? nRanks : NSendSlots;
 }
 
-MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSharedControlBytes(int nRanks, bool hybrid = false) {
+MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSharedControlBytes(int nRanks, bool hierarchical = false) {
   constexpr int NSendSlots = DispatchMaxNWarpGroups * WARP_SIZE;
-  const int counts = nRanks + (hybrid ? 1 : 0);
+  const int counts = nRanks + (hierarchical ? 1 : 0);
   const int nSlots = counts > NSendSlots ? counts : NSendSlots;
   return configAlign<size_t>(static_cast<size_t>(nSlots) * sizeof(int), BufferAlignmentBytes);
 }
@@ -210,7 +210,7 @@ MSCCLPP_HOST_DEVICE_INLINE size_t dispatchRecvTmaBytes() {
 }
 
 template <int Hidden, DispatchDataType DataType>
-MSCCLPP_HOST_DEVICE_INLINE constexpr size_t hybridDispatchStageStride() {
+MSCCLPP_HOST_DEVICE_INLINE constexpr size_t hierarchicalDispatchStageStride() {
   static_assert(Hidden % 128 == 0);
   constexpr size_t ScaleBytes = DataType == DispatchDataType::MXFP8_E4M3 ? Hidden / 32 : 0;
   return configAlign<size_t>(static_cast<size_t>(Hidden) * sizeof(DispatchElementType<DataType>) + ScaleBytes,
@@ -218,17 +218,19 @@ MSCCLPP_HOST_DEVICE_INLINE constexpr size_t hybridDispatchStageStride() {
 }
 
 template <int Hidden, DispatchDataType DataType>
-MSCCLPP_HOST_DEVICE_INLINE constexpr size_t hybridDispatchTmaBytes() {
-  constexpr int NSlots = HybridForwardWarps > HybridMaxProduceGroups ? HybridForwardWarps : HybridMaxProduceGroups;
-  return static_cast<size_t>(NSlots) * (hybridDispatchStageStride<Hidden, DataType>() + sizeof(mscclpp::BulkBarrier));
+MSCCLPP_HOST_DEVICE_INLINE constexpr size_t hierarchicalDispatchTmaBytes() {
+  constexpr int NSlots =
+      HierarchicalForwardWarps > HierarchicalMaxProduceGroups ? HierarchicalForwardWarps : HierarchicalMaxProduceGroups;
+  return static_cast<size_t>(NSlots) *
+         (hierarchicalDispatchStageStride<Hidden, DataType>() + sizeof(mscclpp::BulkBarrier));
 }
 
-template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, bool Hybrid = false>
+template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, bool Hierarchical = false>
 MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSharedBytes(int nRanks, int nExperts, int nTopk) {
-  const size_t controlBytes = dispatchSharedControlBytes(nRanks, Hybrid);
-  const size_t sendBytes = Hybrid ? hybridDispatchTmaBytes<Hidden, DataType>()
-                                  : dispatchSendTmaBytes<Hidden, DataType, ScaleBlockSize>(nTopk);
-  const size_t recvBytes = Hybrid ? 0 : dispatchRecvTmaBytes<Hidden, DataType>();
+  const size_t controlBytes = dispatchSharedControlBytes(nRanks, Hierarchical);
+  const size_t sendBytes = Hierarchical ? hierarchicalDispatchTmaBytes<Hidden, DataType>()
+                                        : dispatchSendTmaBytes<Hidden, DataType, ScaleBlockSize>(nTopk);
+  const size_t recvBytes = Hierarchical ? 0 : dispatchRecvTmaBytes<Hidden, DataType>();
   const size_t tmaBytes = controlBytes + (sendBytes > recvBytes ? sendBytes : recvBytes);
   const size_t metadataBytes = static_cast<size_t>(nRanks + nExperts) * sizeof(int);
   return tmaBytes > metadataBytes ? tmaBytes : metadataBytes;
