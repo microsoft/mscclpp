@@ -158,6 +158,30 @@ def runtime_name() -> str:
     return _get_runtime().name
 
 
+def get_device_properties(device_id: int) -> tuple[Any, ...]:
+    """Return a single-element tuple containing the native device properties."""
+    runtime = _get_runtime()
+    if runtime.name == "hip":
+        from hip import hip
+
+        props = hip.hipDeviceProp_t()
+        runtime.call("get_device_properties", props, device_id)
+        return (props,)
+    return runtime.call("get_device_properties", device_id)
+
+
+def pointer_get_attributes(ptr: int) -> tuple[Any, ...]:
+    """Return a single-element tuple containing the native pointer attributes."""
+    runtime = _get_runtime()
+    if runtime.name == "hip":
+        from hip import hip
+
+        attributes = hip.hipPointerAttribute_t()
+        runtime.call("pointer_get_attributes", attributes, ptr)
+        return (attributes,)
+    return runtime.call("pointer_get_attributes", ptr)
+
+
 def _runtime_version_raw() -> int:
     return int(_api("runtime_get_version")()[0])
 

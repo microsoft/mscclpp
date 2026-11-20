@@ -25,6 +25,8 @@ struct ibv_sge;
 namespace mscclpp {
 
 struct TransportInfo;
+struct GpuNetIoDevice;
+class GpuNetIoQp;
 
 struct IbMrInfo {
   uint64_t addr;
@@ -151,6 +153,14 @@ class IbCtx {
   bool isMlx5() const;
   bool isDataDirect() const;
   bool isVirtualFunction() const;
+
+  /// Resolve `port` (or pick any usable port if it is -1) and return the local port/GID addressing info that a
+  /// remote QP needs to connect to a QP on this port. `qpn` is left as 0.
+  IbQpInfo getPortInfo(int& port, int gidIndex) const;
+  ibv_pd* getPd() const { return pd_; }
+
+  /// DOCA GPUNetIO handles opened on this device's protection domain, created on first use. Requires GPUNetIO.
+  GpuNetIoDevice& gpuNetIoDevice();
 #else
   IbCtx([[maybe_unused]] const std::string& devName) {}
   ~IbCtx() {}
@@ -163,6 +173,8 @@ class IbCtx {
   bool isMlx5() const { return false; }
   bool isDataDirect() const { return false; }
   bool isVirtualFunction() const { return false; }
+  IbQpInfo getPortInfo(int&, int) const { return {}; }
+  ibv_pd* getPd() const { return nullptr; }
 #endif
 
   const std::string& getDevName() const { return devName_; };
@@ -178,6 +190,9 @@ class IbCtx {
   bool isMlx5_;
   bool isDataDirect_;
   bool isVF_;
+#if defined(USE_IBVERBS)
+  std::unique_ptr<GpuNetIoDevice> gpuNetIoDevice_;
+#endif
 };
 
 class IbMemory final : public RdmaMemory {
@@ -198,11 +213,12 @@ class IbEndpoint final : public RdmaEndpoint {
  public:
   IbEndpoint(std::shared_ptr<RdmaProvider> provider, IbCtx& context, EndpointConfig& config);
   IbEndpoint(const IbQpInfo& info, bool noAtomic);
-  bool isLocal() const override { return qp_ != nullptr; }
+  bool isLocal() const override { return qp_ != nullptr || gpuNetIoQp_ != nullptr; }
   void serialize(std::vector<char>& data) const override;
   std::shared_ptr<BaseConnection> createConnection(std::shared_ptr<Context> context, const Endpoint& local,
                                                    const Endpoint& remote) const override;
   const std::shared_ptr<IbQp>& qp() const { return qp_; }
+  const std::shared_ptr<GpuNetIoQp>& gpuNetIoQp() const { return gpuNetIoQp_; }
   const IbQpInfo& info() const { return info_; }
   bool noAtomic() const { return noAtomic_; }
   const IbCtx& context() const { return *context_; }
@@ -210,6 +226,7 @@ class IbEndpoint final : public RdmaEndpoint {
  private:
   IbCtx* context_ = nullptr;
   std::shared_ptr<IbQp> qp_;
+  std::shared_ptr<GpuNetIoQp> gpuNetIoQp_;
   IbQpInfo info_;
   bool noAtomic_;
 };

@@ -41,6 +41,9 @@ parameters:
 - name: sglangImage
   type: string
   default: ''
+- name: setupNvme
+  type: boolean
+  default: false
 
 steps:
 # 0. Ensure Azure CLI exists before running AzureCLI@2 tasks.
@@ -155,6 +158,7 @@ steps:
   name: DeployTestEnv
   displayName: Deploy Test Env
   env:
+    MSCCLPP_SETUP_NVME: '${{ parameters.setupNvme }}'
     ${{ if or(eq(parameters.vmssName, 'mscclpp-h100-ci'), eq(parameters.vmssName, 'mscclpp-h100-multinode-ci')) }}:
       MSCCLPP_PRUNE_DANGLING_IMAGES: 'true'
     ${{ else }}:

@@ -10,7 +10,7 @@
 
 #define MAGIC_CONST 777
 
-__constant__ mscclpp::PortChannelDeviceHandle gPortChannel;
+__constant__ mscclpp::PortChannelDeviceHandle<> gPortChannel;
 
 __global__ void kernelLocalPortChannelTest(void* dst, void* src, size_t bytes, int* ret) {
   if (blockIdx.x == 0) {

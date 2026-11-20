@@ -121,7 +121,7 @@ struct ExecutionContext {
   std::vector<mscclpp::RegisteredMemory> localRegisteredMemories;
 
   std::vector<mscclpp::BaseMemoryChannel> memoryChannels;
-  std::vector<mscclpp::BasePortChannel> portChannels;
+  std::vector<mscclpp::BasePortChannel<>> portChannels;
   std::vector<mscclpp::SwitchChannel> nvlsChannels;
   std::unordered_map<DeviceExecutionPlanKey, std::vector<DeviceExecutionPlan>> deviceExecutionPlans;
   std::unordered_map<DeviceExecutionPlanKey, std::shared_ptr<char>> deviceExecutionPlansBuffers;

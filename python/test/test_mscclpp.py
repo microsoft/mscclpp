@@ -33,6 +33,7 @@ from mscclpp import (
     DeviceType,
 )
 from mscclpp import CommGroup, GpuBuffer
+from mscclpp_benchmark.arrays import array_module, to_array, to_buffer, copy_to
 from mscclpp._mscclpp import is_hip
 from mscclpp.utils import Kernel, KernelBuilder, pack
 from mscclpp.gpu import (
@@ -69,6 +70,33 @@ def test_gpu_buffer_external_view(mpi_group: MpiGroup):
     np.testing.assert_array_equal(original.to_numpy(), expected)
     del original, wrapped
     np.testing.assert_array_equal(view.to_numpy(), expected[2:4])
+
+
+@pytest.mark.parametrize(
+    "dtype, storage",
+    [
+        (DataType.int32, np.int32),
+        (DataType.uint32, np.uint32),
+        (DataType.float16, np.float16),
+        (DataType.float32, np.float32),
+        (DataType.bfloat16, np.uint16),
+        (DataType.float8_e4m3fn, np.uint8),
+        (DataType.float8_e4m3fnuz, np.uint8),
+        (DataType.float8_e5m2, np.uint8),
+        (DataType.float8_e5m2fnuz, np.uint8),
+        (DataType.uint8, np.uint8),
+        (DataType.float8_e4m3b15, np.uint8),
+    ],
+)
+def test_gpu_buffer_native_dtype_layout(dtype, storage):
+    assert dtype.name == dtype.__name__
+    with pytest.raises(AttributeError):
+        dtype.name = "float64"
+    buffer = GpuBuffer.from_ptr(0, 0, object(), dtype=dtype)
+    assert buffer.dtype == dtype
+    assert buffer.itemsize == np.dtype(storage).itemsize
+    assert buffer.shape == (0,)
+    assert buffer.nbytes == 0
 
 
 @parametrize_mpi_groups(1)
@@ -382,13 +410,14 @@ def test_gpu_buffer(mpi_group: MpiGroup, nelem: int, dtype: np.dtype, expected_d
 @pytest.mark.parametrize("connection_type", ["IB", "NVLink"])
 @pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
 def test_connection_write(mpi_group: MpiGroup, connection_type: str, nelem: int):
+    xp = array_module()
     group, connections = create_group_and_connection(mpi_group, connection_type)
     memory = GpuBuffer(nelem, dtype=np.int32)
     nelemPerRank = nelem // group.nranks
     sizePerRank = nelemPerRank * memory.itemsize
     view = memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))]
-    view.copy_from_numpy(np.full(view.shape, group.my_rank + 1, dtype=np.int32))
-    memory_expected = np.zeros(memory.shape, dtype=np.int32)
+    copy_to(view, xp.full(view.shape, group.my_rank + 1, dtype=np.int32))
+    memory_expected = xp.zeros(memory.shape, dtype=np.int32)
     for rank in range(group.nranks):
         memory_expected[(nelemPerRank * rank) : (nelemPerRank * (rank + 1))] = rank + 1
     group.barrier()
@@ -403,7 +432,7 @@ def test_connection_write(mpi_group: MpiGroup, connection_type: str, nelem: int)
         )
     poll_for = 100
     for i in range(poll_for):
-        all_correct = np.array_equal(memory.to_numpy(), memory_expected)
+        all_correct = bool(xp.array_equal(to_array(memory), memory_expected))
         if all_correct:
             break
         time.sleep(0.1)
@@ -424,15 +453,16 @@ def test_connection_write_and_signal(mpi_group: MpiGroup, connection_type: str, 
 
     if device == "cpu" and connection_type == "NVLink":
         pytest.skip("nvlink doesn't work with host allocated memory")
+    xp = array_module() if device == "cuda" else np
     group, connections = create_group_and_connection(mpi_group, connection_type)
     if group.my_rank == 0:
-        memory = np.random.randn(nelem).astype(np.float32)
+        memory = xp.random.randn(nelem).astype(np.float32)
         memory_expected = memory.copy()
     else:
-        memory = np.zeros(nelem, dtype=np.float32)
+        memory = xp.zeros(nelem, dtype=np.float32)
     signal_memory = np.zeros(1, dtype=np.int64)
     if device == "cuda":
-        memory = GpuBuffer.from_numpy(memory)
+        memory = to_buffer(memory)
         signal_memory = GpuBuffer.from_numpy(signal_memory.view(np.uint8))
 
     all_reg_memories = group.register_tensor_with_connections(memory, connections)
@@ -450,7 +480,7 @@ def test_connection_write_and_signal(mpi_group: MpiGroup, connection_type: str, 
     connections[next_rank].flush()
     if group.my_rank == 0:
         if device == "cuda":
-            memory.copy_from_numpy(np.zeros(memory.shape, dtype=np.float32))
+            copy_to(memory, xp.zeros(memory.shape, dtype=np.float32))
             device_synchronize()
         else:
             memory.fill(0)
@@ -461,7 +491,7 @@ def test_connection_write_and_signal(mpi_group: MpiGroup, connection_type: str, 
     if group.my_rank == 0:
         while (signal_memory.to_numpy().view(np.int64)[0] if device == "cuda" else signal_memory[0]) != signal_val:
             time.sleep(0.1)
-        all_correct = np.array_equal(memory.to_numpy() if device == "cuda" else memory, memory_expected)
+        all_correct = bool(xp.array_equal(to_array(memory) if device == "cuda" else memory, memory_expected))
     group.barrier()
     all_correct = mpi_group.comm.bcast(all_correct, 0)
     assert all_correct
@@ -680,6 +710,7 @@ def test_d2d_semaphores(mpi_group: MpiGroup):
 @pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
 @pytest.mark.parametrize("use_packet", [False, True])
 def test_memory_channels(mpi_group: MpiGroup, nelem: int, use_packet: bool):
+    xp = array_module()
     group, connections = create_group_and_connection(mpi_group, "NVLink")
 
     memory = GpuBuffer(nelem, dtype=np.int32)
@@ -689,8 +720,8 @@ def test_memory_channels(mpi_group: MpiGroup, nelem: int, use_packet: bool):
         scratch = None
     nelemPerRank = nelem // group.nranks
     view = memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))]
-    view.copy_from_numpy(np.full(view.shape, group.my_rank + 1, dtype=np.int32))
-    memory_expected = np.zeros(memory.shape, dtype=np.int32)
+    copy_to(view, xp.full(view.shape, group.my_rank + 1, dtype=np.int32))
+    memory_expected = xp.zeros(memory.shape, dtype=np.int32)
     for rank in range(group.nranks):
         memory_expected[(nelemPerRank * rank) : (nelemPerRank * (rank + 1))] = rank + 1
 
@@ -705,7 +736,7 @@ def test_memory_channels(mpi_group: MpiGroup, nelem: int, use_packet: bool):
     kernel()
     device_synchronize()
     group.barrier()
-    assert np.array_equal(memory.to_numpy(), memory_expected)
+    assert bool(xp.array_equal(to_array(memory), memory_expected))
 
 
 @parametrize_mpi_groups(2, 4, 8, 16)
@@ -729,14 +760,15 @@ def test_fifo(
 @pytest.mark.parametrize("nelem", [2**i for i in [10, 15, 20]])
 @pytest.mark.parametrize("connection_type", ["IB", "NVLink"])
 def test_proxy(mpi_group: MpiGroup, nelem: int, connection_type: str):
+    xp = array_module()
     group, connections = create_group_and_connection(mpi_group, connection_type)
 
     memory = GpuBuffer(nelem, dtype=np.int32)
     nelemPerRank = nelem // group.nranks
     nelemPerRank * memory.itemsize
     view = memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))]
-    view.copy_from_numpy(np.full(view.shape, group.my_rank + 1, dtype=np.int32))
-    memory_expected = np.zeros(memory.shape, dtype=np.int32)
+    copy_to(view, xp.full(view.shape, group.my_rank + 1, dtype=np.int32))
+    memory_expected = xp.zeros(memory.shape, dtype=np.int32)
     for rank in range(group.nranks):
         memory_expected[(nelemPerRank * rank) : (nelemPerRank * (rank + 1))] = rank + 1
     group.barrier()
@@ -772,7 +804,7 @@ def test_proxy(mpi_group: MpiGroup, nelem: int, connection_type: str):
     device_synchronize()
     proxy.stop()
     group.barrier()
-    assert np.array_equal(memory.to_numpy(), memory_expected)
+    assert bool(xp.array_equal(to_array(memory), memory_expected))
 
 
 @parametrize_mpi_groups(2, 4, 8, 16)
@@ -780,6 +812,7 @@ def test_proxy(mpi_group: MpiGroup, nelem: int, connection_type: str):
 @pytest.mark.parametrize("connection_type", ["NVLink", "IB"])
 @pytest.mark.parametrize("use_packet", [False, True])
 def test_port_channel(mpi_group: MpiGroup, nelem: int, connection_type: str, use_packet: bool):
+    xp = array_module()
     group, connections = create_group_and_connection(mpi_group, connection_type)
 
     memory = GpuBuffer(nelem, dtype=np.int32)
@@ -790,8 +823,8 @@ def test_port_channel(mpi_group: MpiGroup, nelem: int, connection_type: str, use
     nelemPerRank = nelem // group.nranks
     nelemPerRank * memory.itemsize
     view = memory[(nelemPerRank * group.my_rank) : (nelemPerRank * (group.my_rank + 1))]
-    view.copy_from_numpy(np.full(view.shape, group.my_rank + 1, dtype=np.int32))
-    memory_expected = np.zeros(memory.shape, dtype=np.int32)
+    copy_to(view, xp.full(view.shape, group.my_rank + 1, dtype=np.int32))
+    memory_expected = xp.zeros(memory.shape, dtype=np.int32)
     for rank in range(group.nranks):
         memory_expected[(nelemPerRank * rank) : (nelemPerRank * (rank + 1))] = rank + 1
     group.barrier()
@@ -818,7 +851,7 @@ def test_port_channel(mpi_group: MpiGroup, nelem: int, connection_type: str, use
     device_synchronize()
     proxy_service.stop_proxy()
     group.barrier()
-    assert np.array_equal(memory.to_numpy(), memory_expected)
+    assert bool(xp.array_equal(to_array(memory), memory_expected))
 
 
 @parametrize_mpi_groups(4, 8)
@@ -863,12 +896,13 @@ def test_executor(mpi_group: MpiGroup, filename: str):
     )
 
     nelems = 1024 * 1024
-    np.random.seed(42)
-    buffer = np.random.random(nelems).astype(np.float16)
-    sub_arrays = np.split(buffer, mpi_group.comm.size)
+    xp = array_module()
+    xp.random.seed(42)
+    buffer = xp.random.random(nelems).astype(np.float16)
+    sub_arrays = xp.split(buffer, mpi_group.comm.size)
     nelems_per_rank = int(nelems / mpi_group.comm.size)
-    sendbuf = GpuBuffer.from_numpy(sub_arrays[mpi_group.comm.rank])
-    expected = np.zeros(nelems_per_rank, dtype=np.float16)
+    sendbuf = to_buffer(sub_arrays[mpi_group.comm.rank])
+    expected = xp.zeros(nelems_per_rank, dtype=np.float16)
     for i in range(mpi_group.comm.size):
         expected += sub_arrays[i]
     mscclpp_group.barrier()
@@ -888,12 +922,12 @@ def test_executor(mpi_group: MpiGroup, filename: str):
             stream_ptr,
         )
         stream_synchronize(stream)
-        assert np.allclose(sendbuf.to_numpy(), expected, atol=1e-3 * mpi_group.comm.size)
+        assert bool(xp.allclose(to_array(sendbuf), expected, atol=1e-3 * mpi_group.comm.size))
 
         mscclpp_group.barrier()
         executor.reset()
         mscclpp_group.barrier()
-        sendbuf.copy_from_numpy(sub_arrays[mpi_group.comm.rank])
+        copy_to(sendbuf, sub_arrays[mpi_group.comm.rank])
         executor.execute(
             mpi_group.comm.rank,
             sendbuf.data.ptr,
@@ -905,7 +939,7 @@ def test_executor(mpi_group: MpiGroup, filename: str):
             stream_ptr,
         )
         stream_synchronize(stream)
-        assert np.allclose(sendbuf.to_numpy(), expected, atol=1e-3 * mpi_group.comm.size)
+        assert bool(xp.allclose(to_array(sendbuf), expected, atol=1e-3 * mpi_group.comm.size))
 
         if npkit_dump_dir is not None:
             npkit.dump(npkit_dump_dir)
