@@ -186,7 +186,7 @@ MSCCLPP_DEVICE_INLINE void dispatchProduce(void* output, void* outputScales, int
     syncNamedBarrier(groupBarrierId, nGroupThreads);
 
     gateway.enqueue<PayloadBytes>(groupRemoteTokenIndices[groupIdx], staged, groupThreadIdx, nGroupThreads,
-                                  groupBarrierId);
+                                  [&] { syncNamedBarrier(groupBarrierId, nGroupThreads); });
 
     if (subWarpIdx == 0) {
       const bool isLocalLeader = route.dstRank >= 0 && route.isLeader && !isRemote;
@@ -265,7 +265,8 @@ MSCCLPP_DEVICE_INLINE void dispatchControl(const int64_t* routes, const Workload
     if (isControlQueue) {
       gateway.sendHeader(warpIdx, &state->recvHeader, &state->sendHeader, InterDomainDispatchHeader::wireBytes(nRanks));
     }
-    gateway.send(warpIdx, nRemoteTokens);
+    const int nTokensPerChunk = gateway.nTokensPerChunk();
+    gateway.send(warpIdx, warpIdx * nTokensPerChunk, nQps * nTokensPerChunk, nRemoteTokens);
     if (isControlQueue) {
       gateway.complete(warpIdx, &hierarchicalCtx.dispatchScratch_->forwardComplete);
     }
