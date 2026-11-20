@@ -464,98 +464,69 @@ def test_latency_hierarchical_aggregate_combine_partials(ep_group, qps_per_peer,
             collective_check(lambda: [check(a, e, m) for a, e, m in zip(observed, refs, modes)])
 
 
+def _quantized_bf16_inputs(source, num_tokens, hidden, scale_factor):
+    t_idx = torch.arange(num_tokens, device="cuda", dtype=torch.float32)[:, None]
+    b_idx = torch.arange(hidden // 32, device="cuda", dtype=torch.float32)[None, :]
+    b_scale = torch.where(b_idx == 1, 0.0, torch.ldexp(torch.ones_like(b_idx), (b_idx % 5).int() - 2))
+    pat = ((torch.arange(32, device="cuda", dtype=torch.float32) % 7) - 3.0) * 1.5
+    vals = ((t_idx + source + 1.0)[..., None] * b_scale[..., None] * pat).reshape(num_tokens, hidden) * scale_factor
+    vals[:, 0], vals[:, 1] = t_idx[:, 0] + 1.0, float(source + 1)
+    return vals.to(torch.bfloat16).contiguous()
+
+
 @pytest.mark.parametrize("combine_mode", [CombineMode.RANK_LOCAL_REDUCE, CombineMode.DIRECT_SEND])
 @pytest.mark.parametrize("emit_local_expert_ids", [False, True])
 @pytest.mark.parametrize(
-    "combine_format,combine_scale",
+    "hidden,quant,inter_domain_dtype",
     [
-        (DispatchDataType.BF16, None),
-        (DispatchDataType.FP8_E4M3_STATIC, None),
-        (DispatchDataType.FP8_E4M3_STATIC, 0.25),
-        (DispatchDataType.FP8_E4M3_STATIC, 448 / 79488.0),
+        (2048, QuantConfig(format=DispatchDataType.FP8_E4M3_STATIC, scale=0.5), torch.float32),
+        (
+            2048,
+            QuantConfig(
+                format=DispatchDataType.FP8_E4M3_STATIC,
+                scale=0.5,
+                input_mode=QuantConfig.InputMode.QUANTIZE,
+                combine_format=DispatchDataType.FP8_E4M3_STATIC,
+            ),
+            torch.float32,
+        ),
+        (
+            2048,
+            QuantConfig(
+                format=DispatchDataType.FP8_E4M3_STATIC,
+                scale=(0.5, 0.25),
+                input_mode=QuantConfig.InputMode.QUANTIZE,
+                combine_format=DispatchDataType.FP8_E4M3_STATIC,
+            ),
+            torch.float32,
+        ),
+        (
+            2048,
+            QuantConfig(
+                format=DispatchDataType.FP8_E4M3_STATIC,
+                scale=(0.5, 448 / 79488.0),
+                combine_format=DispatchDataType.FP8_E4M3_STATIC,
+            ),
+            torch.bfloat16,
+        ),
+        (2048, QuantConfig(format=DispatchDataType.MXFP8_E4M3), torch.float32),
+        (4352, QuantConfig(format=DispatchDataType.MXFP8_E4M3), torch.bfloat16),
     ],
 )
-@pytest.mark.parametrize("input_mode", [QuantConfig.InputMode.PREQUANTIZED, QuantConfig.InputMode.QUANTIZE])
-def test_latency_hierarchical_static_fp8(
-    ep_group, combine_mode, combine_format, combine_scale, input_mode, emit_local_expert_ids
+def test_latency_hierarchical_quantized(
+    ep_group, combine_mode, emit_local_expert_ids, hidden, quant, inter_domain_dtype
 ):
-    num_tokens, capacity, scale = 5, 8, 0.5
-    expert_scale = scale if combine_scale is None else combine_scale
-    quant = QuantConfig(
-        format=DispatchDataType.FP8_E4M3_STATIC,
-        scale=(scale, combine_scale) if combine_scale is not None else scale,
-        input_mode=input_mode,
-        combine_format=combine_format,
-    )
-    with initialized_runtime(
-        ep_group,
-        mode=MoEMode.LATENCY,
-        output_layout=DispatchLayout.RANK_MAJOR,
-        combine_mode=combine_mode,
-        emit_local_expert_ids=emit_local_expert_ids,
-        num_experts=NUM_LOCAL_EXPERTS * ep_group.nranks,
-        hidden_size=2048,
-        topk=NUM_TOPK,
-        max_tokens_per_rank=capacity,
-        quant=quant,
-    ) as runtime:
-        stream = torch.cuda.Stream()
-        with torch.cuda.stream(stream):
-            routes = torch.tensor(
-                [token_routes(ep_group.my_rank, ep_group.nranks, t, num_tokens) for t in range(num_tokens)],
-                dtype=torch.int64,
-                device="cuda",
-            )
-            weights = torch.full((num_tokens, NUM_TOPK), 1.0 / NUM_TOPK, device="cuda")
-            bf16_in = (
-                token_values(ep_group.my_rank, num_tokens, 1.0)[:, None]
-                .expand(-1, 2048)
-                .to(torch.bfloat16)
-                .contiguous()
-            )
-            fp8_in = (bf16_in.float() * scale).to(torch.float8_e4m3fn)
-            res, handle = runtime.dispatch(
-                fp8_in if input_mode == QuantConfig.InputMode.PREQUANTIZED else bf16_in, routes, weights, stream=stream
-            )
-            combine_fp8 = combine_format == DispatchDataType.FP8_E4M3_STATIC
-
-            def check_dispatch():
-                assert res.tokens.dtype == torch.float8_e4m3fn
-                assert res.combine_input_buffer.dtype == (torch.float8_e4m3fn if combine_fp8 else torch.bfloat16)
-                assert res.quant.scale == ((scale, expert_scale) if combine_fp8 else scale)
-                stream.synchronize()
-                _check_dispatch_metadata(ep_group, res, num_tokens)
-
-            collective_check(check_dispatch)
-            combined = runtime.combine(_stage_identity_expert(res, capacity, combine_mode), handle, stream=stream)
-            expected = _expected_hierarchical_combine(
-                fp8_in.float() / scale,
-                routes,
-                weights,
-                ep_group,
-                combine_mode,
-                combine_scale=expert_scale if combine_fp8 else None,
-            )
-            stream.synchronize()
-            collective_check(lambda: torch.testing.assert_close(combined.float(), expected, rtol=0, atol=0))
-
-
-@pytest.mark.parametrize("combine_mode", [CombineMode.RANK_LOCAL_REDUCE, CombineMode.DIRECT_SEND])
-@pytest.mark.parametrize("emit_local_expert_ids", [False, True])
-@pytest.mark.parametrize("hidden", [2048, 4352])
-@pytest.mark.parametrize("combine_inter_domain_dtype", [torch.float32, torch.bfloat16])
-def test_latency_hierarchical_mxfp8(ep_group, combine_mode, emit_local_expert_ids, hidden, combine_inter_domain_dtype):
-    """MXFP8 E4M3 payload + E8M0 block scales across NVLink and RDMA, including non-16B-aligned H=4352 and graphs."""
+    """Static FP8 (prequantized/fused, dual scale) and MXFP8 (including non-16B-aligned H=4352) with graph replay."""
     num_tokens, capacity = 9, 16
+    is_mxfp8 = quant.format == DispatchDataType.MXFP8_E4M3
+    prequantized = not is_mxfp8 and quant.input_mode == QuantConfig.InputMode.PREQUANTIZED
+    combine_fp8 = quant.combine_format == DispatchDataType.FP8_E4M3_STATIC
+    dispatch_scale = None if is_mxfp8 else (quant.scale[0] if isinstance(quant.scale, tuple) else quant.scale)
+    combine_scale = (quant.scale[1] if isinstance(quant.scale, tuple) else quant.scale) if combine_fp8 else None
 
-    def mxfp8_inputs(src, sf):
-        t_idx = torch.arange(num_tokens, device="cuda", dtype=torch.float32)[:, None]
-        b_idx = torch.arange(hidden // 32, device="cuda", dtype=torch.float32)[None, :]
-        b_scale = torch.where(b_idx == 1, 0.0, torch.ldexp(torch.ones_like(b_idx), (b_idx % 5).int() - 2))
-        pat = ((torch.arange(32, device="cuda", dtype=torch.float32) % 7) - 3.0) * 1.5
-        vals = ((t_idx + src + 1.0)[..., None] * b_scale[..., None] * pat).reshape(num_tokens, hidden) * sf
-        vals[:, 0], vals[:, 1] = t_idx[:, 0] + 1.0, float(src + 1)
-        return vals.to(torch.bfloat16).contiguous()
+    def make_input(source, sf):
+        bf16 = _quantized_bf16_inputs(source, num_tokens, hidden, sf)
+        return (bf16.float() * dispatch_scale).to(torch.float8_e4m3fn) if prequantized else bf16
 
     with initialized_runtime(
         ep_group,
@@ -567,8 +538,8 @@ def test_latency_hierarchical_mxfp8(ep_group, combine_mode, emit_local_expert_id
         hidden_size=hidden,
         topk=NUM_TOPK,
         max_tokens_per_rank=capacity,
-        quant=QuantConfig(format=DispatchDataType.MXFP8_E4M3),
-        combine_inter_domain_dtype=combine_inter_domain_dtype,
+        quant=quant,
+        combine_inter_domain_dtype=inter_domain_dtype,
     ) as runtime:
         stream = torch.cuda.Stream()
         with torch.cuda.stream(stream):
@@ -578,11 +549,11 @@ def test_latency_hierarchical_mxfp8(ep_group, combine_mode, emit_local_expert_id
                 device="cuda",
             )
             weights = torch.full((num_tokens, NUM_TOPK), 1.0 / NUM_TOPK, device="cuda")
-            bf16_in = mxfp8_inputs(ep_group.my_rank, 1.0)
-            out = torch.empty_like(bf16_in)
+            dispatch_in = make_input(ep_group.my_rank, 1.0)
+            out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
 
             def run_round():
-                res, h = runtime.dispatch(bf16_in, routes, weights, stream=stream)
+                res, h = runtime.dispatch(dispatch_in, routes, weights, stream=stream)
                 return res, runtime.combine(
                     _stage_identity_expert(res, capacity, combine_mode), h, out=out, stream=stream
                 )
@@ -590,27 +561,39 @@ def test_latency_hierarchical_mxfp8(ep_group, combine_mode, emit_local_expert_id
             res, _ = run_round()
 
             def check_dispatch():
-                assert res.quant.block_scales.shape == (ep_group.nranks, capacity, hidden // 32)
+                assert res.tokens.dtype == torch.float8_e4m3fn
+                assert res.combine_input_buffer.dtype == (torch.float8_e4m3fn if combine_fp8 else torch.bfloat16)
                 stream.synchronize()
                 _check_dispatch_metadata(ep_group, res, num_tokens)
-                for src, count in enumerate(res.layout.num_tokens_per_rank.cpu().tolist()):
-                    if count == 0:
-                        continue
-                    ref_q, ref_s, _ = _reference_mxfp8_quantize(mxfp8_inputs(src, 1.0))
-                    row_ids = _dequantize_dispatch(res)[src, :count, 0].round().long() - 1
-                    torch.testing.assert_close(
-                        res.tokens[src, :count].view(torch.uint8), ref_q[row_ids].view(torch.uint8), rtol=0, atol=0
-                    )
-                    torch.testing.assert_close(res.quant.block_scales[src, :count], ref_s[row_ids], rtol=0, atol=0)
+                if is_mxfp8:
+                    assert res.quant.block_scales.shape == (ep_group.nranks, capacity, hidden // 32)
+                    for src, count in enumerate(res.layout.num_tokens_per_rank.cpu().tolist()):
+                        if count == 0:
+                            continue
+                        ref_q, ref_s, _ = _reference_mxfp8_quantize(
+                            _quantized_bf16_inputs(src, num_tokens, hidden, 1.0)
+                        )
+                        row_ids = _dequantize_dispatch(res)[src, :count, 0].round().long() - 1
+                        torch.testing.assert_close(
+                            res.tokens[src, :count].view(torch.uint8), ref_q[row_ids].view(torch.uint8), rtol=0, atol=0
+                        )
+                        torch.testing.assert_close(res.quant.block_scales[src, :count], ref_s[row_ids], rtol=0, atol=0)
 
             def check_combine(sf):
+                bf16 = _quantized_bf16_inputs(ep_group.my_rank, num_tokens, hidden, sf)
+                real_in = (
+                    _reference_mxfp8_quantize(bf16)[2]
+                    if is_mxfp8
+                    else (bf16.float() * dispatch_scale).to(torch.float8_e4m3fn).float() / dispatch_scale
+                )
                 expected = _expected_hierarchical_combine(
-                    _reference_mxfp8_quantize(mxfp8_inputs(ep_group.my_rank, sf))[2],
+                    real_in,
                     routes,
                     weights,
                     ep_group,
                     combine_mode,
-                    inter_domain_dtype=combine_inter_domain_dtype,
+                    combine_scale=combine_scale,
+                    inter_domain_dtype=inter_domain_dtype,
                 )
                 torch.testing.assert_close(out.float(), expected, rtol=0, atol=0)
 
@@ -618,7 +601,7 @@ def test_latency_hierarchical_mxfp8(ep_group, combine_mode, emit_local_expert_id
             collective_check(lambda: check_combine(1.0))
             graph, _ = _capture_graph(ep_group, stream, run_round)
             for sf in (0.5, 2.0):
-                bf16_in.copy_(mxfp8_inputs(ep_group.my_rank, sf))
+                dispatch_in.copy_(make_input(ep_group.my_rank, sf))
                 graph.replay()
                 stream.synchronize()
                 ep_group.barrier()
