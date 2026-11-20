@@ -48,4 +48,7 @@ void register_error(nb::module_& m) {
 
   nb::exception<IbError>(m, "IbError", m.attr("BaseError").ptr());
   REGISTER_EXCEPTION_TRANSLATOR(IbError);
+
+  nb::exception<MrcError>(m, "MrcError", m.attr("BaseError").ptr());
+  REGISTER_EXCEPTION_TRANSLATOR(MrcError);
 }

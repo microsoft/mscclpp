@@ -24,17 +24,30 @@ target_include_directories(mscclpp_obj PRIVATE
 
 target_link_libraries(mscclpp_obj PRIVATE ${GPU_LIBRARIES} ${NUMA_LIBRARIES} nlohmann_json::nlohmann_json Threads::Threads dl)
 
-if(MSCCLPP_USE_IB)
+if(MSCCLPP_USE_IB OR MSCCLPP_USE_MRC)
     target_include_directories(mscclpp_obj SYSTEM PRIVATE ${IBVERBS_INCLUDE_DIRS})
     target_link_libraries(mscclpp_obj PRIVATE ${IBVERBS_LIBRARIES})
-    target_compile_definitions(mscclpp_obj PUBLIC USE_IBVERBS)
-    if(MLX5_FOUND)
-        target_include_directories(mscclpp_obj SYSTEM PRIVATE ${MLX5_INCLUDE_DIRS})
-        target_compile_definitions(mscclpp_obj PRIVATE MSCCLPP_USE_MLX5DV)
-    endif()
+endif()
+
+if(MSCCLPP_USE_MRC)
+    target_compile_definitions(mscclpp_obj PRIVATE MSCCLPP_USE_MRC)
+    target_link_libraries(mscclpp_obj PRIVATE MSCCLPP::mrc)
+endif()
+
+if(MSCCLPP_USE_IB)
+    target_compile_definitions(mscclpp_obj PUBLIC USE_IBVERBS PRIVATE MSCCLPP_USE_IB)
     if(MSCCLPP_USE_CUDA)
         target_link_libraries(mscclpp_obj PUBLIC mscclpp_gpunetio_headers)
     endif()
+endif()
+
+if((MSCCLPP_USE_IB OR MSCCLPP_USE_MRC) AND MLX5_FOUND)
+    target_include_directories(mscclpp_obj SYSTEM PRIVATE ${MLX5_INCLUDE_DIRS})
+    target_compile_definitions(mscclpp_obj PRIVATE MSCCLPP_USE_MLX5DV)
+endif()
+
+if(MSCCLPP_USE_MRC_SHIM)
+    target_compile_definitions(mscclpp_obj PRIVATE MSCCLPP_USE_MRC_SHIM)
 endif()
 
 if(MSCCLPP_USE_GDRCOPY)
@@ -60,10 +73,6 @@ endif()
 
 if(MSCCLPP_NPKIT_FLAGS)
     target_compile_definitions(mscclpp_obj PRIVATE ${MSCCLPP_NPKIT_FLAGS})
-endif()
-
-if(MSCCLPP_USE_MRC)
-	target_compile_definitions(mscclpp_obj PRIVATE MSCCLPP_USE_MRC)
 endif()
 
 # libmscclpp

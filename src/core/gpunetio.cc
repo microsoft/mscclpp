@@ -206,15 +206,16 @@ GpuNetIoConnection::GpuNetIoConnection(std::shared_ptr<Context> context, const E
     : BaseConnection(context, localEndpoint),
       transport_(localEndpoint.transport()),
       remoteTransport_(remoteEndpoint.transport()),
-      qp_(getImpl(localEndpoint).gpuNetIoQp_) {
+      qp_(getIbEndpoint(*getImpl(localEndpoint).rdmaEndpoint_).gpuNetIoQp()) {
   if (!qp_) {
     THROW(CONN, Error, ErrorCode::InvalidUsage, "local endpoint was not created in IB Device mode");
   }
-  if (getImpl(remoteEndpoint).ibNoAtomic_) {
+  const auto& remoteIb = getIbEndpoint(*getImpl(remoteEndpoint).rdmaEndpoint_);
+  if (remoteIb.noAtomic()) {
     THROW(CONN, Error, ErrorCode::InvalidUsage,
           "IB Device mode signals with RDMA atomics; the remote endpoint must not use IB HostNoAtomic mode");
   }
-  qp_->connect(getImpl(remoteEndpoint).ibQpInfo_);
+  qp_->connect(remoteIb.info());
   CudaDeviceGuard deviceGuard(localEndpoint.device().id);
   atomicFetchBuff_ = detail::gpuCallocShared<uint64_t>();
   atomicFetchMem_ = context->registerMemory(atomicFetchBuff_.get(), sizeof(uint64_t), transport_);
@@ -239,12 +240,12 @@ void GpuNetIoConnection::accumulate(RegisteredMemory, uint64_t, int64_t) {
 void GpuNetIoConnection::flush(int64_t) { THROW(CONN, Error, ErrorCode::InvalidUsage, kGpuNetIoHostOpError); }
 
 DeviceBackendHandle GpuNetIoConnection::getDeviceBackendInfo() const {
-  const auto& fetchInfo = getImpl(atomicFetchMem_).getTransportInfo(transport_);
+  const auto& fetchMemory = getIbMemory(getImpl(atomicFetchMem_).getTransportInfo(transport_));
 
   DeviceBackendHandle handle = {};
   handle.qp = qp_->deviceQp();
-  handle.atomicFetchAddr = fetchInfo.ibMrInfo.addr;
-  handle.atomicFetchKey = htobe32(fetchInfo.ibMr->getLkey());
+  handle.atomicFetchAddr = fetchMemory.info().addr;
+  handle.atomicFetchKey = htobe32(fetchMemory.mr()->getLkey());
   handle.blueFlameLimit = DeviceBackendHandle::kDefaultBlueFlameLimit;
   return handle;
 }
@@ -252,12 +253,12 @@ DeviceBackendHandle GpuNetIoConnection::getDeviceBackendInfo() const {
 DeviceMemoryHandle GpuNetIoConnection::getDeviceMemoryInfo(const RegisteredMemory& memory) const {
   const auto& impl = getImpl(memory);
   if (impl.transports.has(transport_)) {
-    const auto& info = impl.getTransportInfo(transport_);
-    if (info.ibLocal) return {info.ibMrInfo.addr, htobe32(info.ibMr->getLkey())};
+    const auto& ibMemory = getIbMemory(impl.getTransportInfo(transport_));
+    if (ibMemory.isLocal()) return {ibMemory.info().addr, htobe32(ibMemory.mr()->getLkey())};
   }
   if (impl.transports.has(remoteTransport_)) {
-    const auto& info = impl.getTransportInfo(remoteTransport_);
-    if (!info.ibLocal) return {info.ibMrInfo.addr, htobe32(info.ibMrInfo.rkey)};
+    const auto& ibMemory = getIbMemory(impl.getTransportInfo(remoteTransport_));
+    if (!ibMemory.isLocal()) return {ibMemory.info().addr, htobe32(ibMemory.info().rkey)};
   }
   THROW(CONN, Error, ErrorCode::InvalidUsage, "RegisteredMemory does not support this transport");
 }
