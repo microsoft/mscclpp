@@ -8,7 +8,7 @@ context, endpoint, and registered-memory code. `Connection` is the I/O abstracti
 | Internal interface / IB implementation | Responsibility |
 | --- | --- |
 | `RdmaProvider` / `IbProvider` | Own `IbCtx`; provide endpoint and memory factories; cached per transport by `Context::Impl`. |
-| `RdmaEndpoint` / `IbEndpoint` | Own a local QP or imported metadata; serialize it; construct `IBConnection`. |
+| `RdmaEndpoint` / `IbEndpoint` | Own a local host or GPUNetIO QP, or imported metadata; serialize it; construct `IBConnection` or `GpuNetIoConnection`. |
 | `RdmaMemory` / `IbMemory` | Own a local MR or imported metadata; serialize it. |
 
 ```{mermaid}
@@ -48,6 +48,11 @@ device indices are compatible; classification as RDMA does not establish
 compatibility across provider families.
 
 ## Connection data path
+
+The diagram shows host-mode IB. Device mode creates `GpuNetIoConnection` through
+the same endpoint factory, but GPU PortChannel operations bypass the FIFO/proxy.
+GPUNetIO accesses endpoint and MR wrappers using the same provider-owned `IbCtx`
+and PD; its QP is released before the endpoint releases the provider.
 
 ```{mermaid}
 flowchart LR

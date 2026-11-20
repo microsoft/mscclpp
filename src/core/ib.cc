@@ -29,6 +29,7 @@
 #include "atomic.hpp"
 #include "connection.hpp"
 #include "gdr.hpp"
+#include "gpunetio.hpp"
 #if defined(USE_IBVERBS)
 #include "ibverbs_wrapper.hpp"
 #if defined(MSCCLPP_USE_MLX5DV)
@@ -554,6 +555,8 @@ IbCtx::IbCtx(const std::string& devName)
 }
 
 IbCtx::~IbCtx() {
+  // Opened on pd_.
+  gpuNetIoDevice_.reset();
   if (pd_ != nullptr) {
     IBVerbs::ibv_dealloc_pd(pd_);
   }
@@ -617,6 +620,39 @@ std::shared_ptr<IbQp> IbCtx::createQp(int port, int gidIndex, int maxSendCqSize,
   }
   return std::shared_ptr<IbQp>(new IbQp(ctx_, pd_, port, gidIndex, maxSendCqSize, maxSendCqPollNum, maxSendWr,
                                         maxRecvWr, maxWrPerSend, noAtomic));
+}
+
+IbQpInfo IbCtx::getPortInfo(int& port, int gidIndex) const {
+  if (port == -1) {
+    port = this->getAnyUsablePort(gidIndex);
+    if (port == -1) {
+      THROW(NET, Error, ErrorCode::InvalidUsage, "No usable port found (device: ", devName_, ")");
+    }
+  } else if (!this->isPortUsable(port, gidIndex)) {
+    THROW(NET, Error, ErrorCode::InvalidUsage, "invalid IB port: ", port);
+  }
+  struct ibv_port_attr portAttr;
+  if (IBVerbs::ibv_query_port(ctx_, port, &portAttr) != 0) {
+    THROW(NET, IbError, errno, "ibv_query_port failed (errno ", errno, ")");
+  }
+  IbQpInfo info = {};
+  info.lid = portAttr.lid;
+  info.linkLayer = portAttr.link_layer;
+  info.mtu = portAttr.active_mtu;
+  info.isGrh = (portAttr.flags & IBV_QPF_GRH_REQUIRED);
+  if (portAttr.link_layer != IBV_LINK_LAYER_INFINIBAND || info.isGrh) {
+    if (gidIndex < 0 || gidIndex >= portAttr.gid_tbl_len) {
+      THROW(NET, Error, ErrorCode::InvalidUsage, "invalid GID index ", gidIndex, " for port ", port, " (max index is ",
+            portAttr.gid_tbl_len - 1, ")");
+    }
+    union ibv_gid gid = {};
+    if (IBVerbs::ibv_query_gid(ctx_, port, gidIndex, &gid) != 0) {
+      THROW(NET, IbError, errno, "ibv_query_gid failed for port ", port, " index ", gidIndex, " (errno ", errno, ")");
+    }
+    info.spn = gid.global.subnet_prefix;
+    info.iid = gid.global.interface_id;
+  }
+  return info;
 }
 
 std::unique_ptr<const IbMr> IbCtx::registerMr(void* buff, std::size_t size) {
@@ -841,6 +877,18 @@ IbEndpoint::IbEndpoint(std::shared_ptr<RdmaProvider> provider, IbCtx& context, E
     config.maxWriteQueueSize = config.ib.maxCqSize;
   }
 
+  if (config.ib.mode == EndpointConfig::Ib::Mode::Device) {
+    if (config.device.type != DeviceType::GPU) {
+      THROW(NET, Error, ErrorCode::InvalidUsage, "IB Device mode requires a GPU endpoint");
+    }
+    if (config.ib.gidIndex < 0) {
+      config.ib.gidIndex = env()->ibGidIndex;
+    }
+    gpuNetIoQp_ = std::make_shared<GpuNetIoQp>(context, config.device.id, config.ib.port, config.ib.gidIndex);
+    std::memcpy(&info_, &gpuNetIoQp_->info(), sizeof(info_));
+    return;
+  }
+
   if (config.ib.mode == EndpointConfig::Ib::Mode::HostNoAtomic) {
     noAtomic_ = true;
   } else if (config.ib.mode == EndpointConfig::Ib::Mode::Default) {
@@ -876,6 +924,9 @@ std::shared_ptr<BaseConnection> IbEndpoint::createConnection(std::shared_ptr<Con
                                                              const Endpoint& remote) const {
   if (!isLocal()) {
     THROW(CONN, Error, ErrorCode::InvalidUsage, "Cannot create a connection from a remote IB endpoint");
+  }
+  if (gpuNetIoQp_) {
+    return std::make_shared<GpuNetIoConnection>(std::move(context), local, remote);
   }
   return std::make_shared<IBConnection>(std::move(context), local, remote);
 }

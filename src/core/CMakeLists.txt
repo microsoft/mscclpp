@@ -36,6 +36,9 @@ endif()
 
 if(MSCCLPP_USE_IB)
     target_compile_definitions(mscclpp_obj PUBLIC USE_IBVERBS PRIVATE MSCCLPP_USE_IB)
+    if(MSCCLPP_USE_CUDA)
+        target_link_libraries(mscclpp_obj PUBLIC mscclpp_gpunetio_headers)
+    endif()
 endif()
 
 if((MSCCLPP_USE_IB OR MSCCLPP_USE_MRC) AND MLX5_FOUND)
@@ -75,10 +78,16 @@ endif()
 # libmscclpp
 add_library(mscclpp SHARED)
 target_link_libraries(mscclpp PUBLIC mscclpp_obj)
+if(MSCCLPP_USE_IB AND MSCCLPP_USE_CUDA)
+    target_sources(mscclpp PRIVATE $<TARGET_OBJECTS:mscclpp_gpunetio_obj>)
+endif()
 set_target_properties(mscclpp PROPERTIES VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
 
 add_library(mscclpp_static STATIC)
 target_link_libraries(mscclpp_static PUBLIC mscclpp_obj)
+if(MSCCLPP_USE_IB AND MSCCLPP_USE_CUDA)
+    target_sources(mscclpp_static PRIVATE $<TARGET_OBJECTS:mscclpp_gpunetio_obj>)
+endif()
 set_target_properties(mscclpp_static PROPERTIES VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
 
 install(TARGETS mscclpp

@@ -39,7 +39,8 @@ __host__ __device__ uint32_t mrcPayloadValue(unsigned int round, unsigned int in
 
 constexpr unsigned int mrcProxyRounds = 4;
 
-__global__ void mrcPutAndFlush(mscclpp::PortChannelDeviceHandle channel, uint32_t* source, int rank) {
+__global__ void mrcPutAndFlush(mscclpp::PortChannelDeviceHandle<mscclpp::PortChannelBackend::Host> channel,
+                               uint32_t* source, int rank) {
   constexpr unsigned int bytes = mrcPayloadWords * sizeof(uint32_t);
   for (unsigned int round = 0; round < mrcProxyRounds; ++round) {
     for (unsigned int i = 0; i < mrcPayloadWords; ++i) source[i] = mrcPayloadValue(round, i, rank);

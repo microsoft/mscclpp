@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#include <endian.h>
+
 #include <array>
 #include <cstring>
 #include <mscclpp/core.hpp>
@@ -201,9 +203,12 @@ TEST(RdmaProviderTest, ImportedEndpointPreservesWireBytes) {
   info.mtu = 4;
   info.iid = 41;
   info.isGrh = true;
-  for (bool noAtomic : {false, true}) {
+  for (auto mode :
+       {EndpointConfig::Ib::Mode::Host, EndpointConfig::Ib::Mode::HostNoAtomic, EndpointConfig::Ib::Mode::Device}) {
+    bool noAtomic = mode == EndpointConfig::Ib::Mode::HostNoAtomic;
     EndpointConfig config(Transport::IB7, DeviceType::CPU, 13);
-    config.ib.mode = noAtomic ? EndpointConfig::Ib::Mode::HostNoAtomic : EndpointConfig::Ib::Mode::Host;
+    config.ib.mode = mode;
+    if (mode == EndpointConfig::Ib::Mode::Device) config.device = Device(DeviceType::GPU, 0);
     config.ib.gidIndex = 3;
     uint64_t hostHash = 43;
     uint64_t pidHash = 47;
@@ -349,8 +354,10 @@ TEST(RdmaProviderTest, RegisteredMemoryKeepsProviderMetadataOpaque) {
 
 TEST(RdmaProviderTest, EndpointRoutingPreservesIbDeviceCompatibility) {
   using namespace mscclpp;
-  auto importEndpoint = [](Transport transport) {
+  auto importEndpoint = [](Transport transport, EndpointConfig::Ib::Mode mode) {
     EndpointConfig config(transport, DeviceType::CPU);
+    config.ib.mode = mode;
+    if (mode == EndpointConfig::Ib::Mode::Device) config.device = Device(DeviceType::GPU, 0);
     uint64_t hostHash = 61;
     uint64_t pidHash = 67;
     std::vector<char> bytes;
@@ -364,23 +371,96 @@ TEST(RdmaProviderTest, EndpointRoutingPreservesIbDeviceCompatibility) {
     return Endpoint::deserialize(bytes);
   };
   auto context = Context::create();
-  for (auto pair : {std::pair{Transport::IB0, Transport::IB7}, std::pair{Transport::IB7, Transport::IB0},
-                    std::pair{Transport::IB0, Transport::CudaIpc}, std::pair{Transport::CudaIpc, Transport::IB0}}) {
-    auto local = importEndpoint(pair.first);
-    auto remote = importEndpoint(pair.second);
-    try {
-      context->connect(local, remote);
-      FAIL() << "Expected endpoint routing to reject connection construction";
-    } catch (const Error& error) {
-      EXPECT_TRUE(error.getErrorCode() == ErrorCode::InvalidUsage);
-      // Imported local IB endpoints stop at the provider factory, before NIC/GPU access.
-      const char* expected = AllIBTransports.has(pair.first) && AllIBTransports.has(pair.second)
-                                 ? "Cannot create a connection from a remote IB endpoint"
-                                 : "Transport mismatch";
-      EXPECT_TRUE(std::string(error.what()).find(expected) != std::string::npos);
+  for (auto mode : {EndpointConfig::Ib::Mode::Host, EndpointConfig::Ib::Mode::Device}) {
+    for (auto pair : {std::pair{Transport::IB0, Transport::IB7}, std::pair{Transport::IB7, Transport::IB0},
+                      std::pair{Transport::IB0, Transport::CudaIpc}, std::pair{Transport::CudaIpc, Transport::IB0}}) {
+      auto local = importEndpoint(pair.first, mode);
+      auto remote = importEndpoint(pair.second, mode);
+      try {
+        context->connect(local, remote);
+        FAIL() << "Expected endpoint routing to reject connection construction";
+      } catch (const Error& error) {
+        EXPECT_TRUE(error.getErrorCode() == ErrorCode::InvalidUsage);
+        // Imported local IB endpoints stop at the provider factory, before NIC/GPU access.
+        const char* expected = AllIBTransports.has(pair.first) && AllIBTransports.has(pair.second)
+                                   ? "Cannot create a connection from a remote IB endpoint"
+                                   : "Transport mismatch";
+        EXPECT_TRUE(std::string(error.what()).find(expected) != std::string::npos);
+      }
     }
   }
 }
+
+TEST(RdmaProviderTest, DeviceModeRequiresGpuEndpoint) {
+  using namespace mscclpp;
+  if (getIBDeviceCount() == 0) {
+    SKIP_TEST() << "Requires an IB device";
+  }
+  auto context = Context::create();
+  EndpointConfig config(Transport::IB0, DeviceType::CPU);
+  config.ib.mode = EndpointConfig::Ib::Mode::Device;
+  try {
+    context->createEndpoint(config);
+    FAIL() << "Expected IB Device mode to reject a CPU endpoint";
+  } catch (const Error& error) {
+    EXPECT_TRUE(error.getErrorCode() == ErrorCode::InvalidUsage);
+    EXPECT_TRUE(std::string(error.what()).find("IB Device mode requires a GPU endpoint") != std::string::npos);
+  }
+}
+
+#if !defined(__HIP_PLATFORM_AMD__)
+TEST(RdmaProviderTest, DeviceConnectionUsesProviderResources) {
+  using namespace mscclpp;
+  if (getIBDeviceCount() == 0) {
+    SKIP_TEST() << "Requires an IB device";
+  }
+  {
+    IbCtx ibContext(getIBDeviceName(Transport::IB0));
+    if (!ibContext.supportsRdmaAtomics()) {
+      SKIP_TEST() << "Requires an IB device with RDMA atomics";
+    }
+  }
+  MSCCLPP_CUDATHROW(cudaSetDevice(0));
+  int major = 0;
+  MSCCLPP_CUDATHROW(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, 0));
+  if (major < 9) {
+    SKIP_TEST() << "Requires Hopper or newer";
+  }
+  auto context = Context::create();
+  EndpointConfig config(Transport::IB0, Device(DeviceType::GPU, 0));
+  config.ib.mode = EndpointConfig::Ib::Mode::Device;
+  auto endpoint = context->createEndpoint(config);
+  ASSERT_TRUE(RdmaTestAccess::getImpl(endpoint).rdmaEndpoint_->isLocal());
+  auto remote = Endpoint::deserialize(endpoint.serialize());
+  EXPECT_FALSE(RdmaTestAccess::getImpl(remote).rdmaEndpoint_->isLocal());
+  auto connection = context->connect(endpoint, remote);
+  auto& connImpl = RdmaTestAccess::getImpl(connection);
+  ASSERT_TRUE(connImpl->isDeviceBackend());
+  ASSERT_NE(connImpl->getDeviceBackendInfo().qp, nullptr);
+
+  auto buffer = detail::gpuCallocShared<uint64_t>();
+  auto memory = context->registerMemory(buffer.get(), sizeof(uint64_t), Transport::IB0);
+  auto remoteMemory = RegisteredMemory::deserialize(memory.serialize());
+  const auto& ibMemory = getIbMemory(RdmaTestAccess::getImpl(memory).getTransportInfo(Transport::IB0));
+  auto localHandle = connImpl->getDeviceMemoryInfo(memory);
+  auto remoteHandle = connImpl->getDeviceMemoryInfo(remoteMemory);
+  EXPECT_EQ(localHandle.addr, ibMemory.info().addr);
+  EXPECT_EQ(localHandle.key, htobe32(ibMemory.mr()->getLkey()));
+  EXPECT_EQ(remoteHandle.addr, ibMemory.info().addr);
+  EXPECT_EQ(remoteHandle.key, htobe32(ibMemory.info().rkey));
+
+  std::weak_ptr<Context> outerContext = context;
+  std::weak_ptr<RdmaProvider> provider = RdmaTestAccess::getImpl(*context).rdmaProviders_.at(Transport::IB0);
+  context.reset();
+  EXPECT_FALSE(outerContext.expired());
+  connection = Connection();
+  EXPECT_TRUE(outerContext.expired());
+  endpoint = Endpoint();
+  EXPECT_FALSE(provider.expired());
+  memory = RegisteredMemory();
+  EXPECT_TRUE(provider.expired());
+}
+#endif
 
 TEST(RdmaProviderTest, LocalResourcesRetainProvider) {
   using namespace mscclpp;
