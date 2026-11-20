@@ -238,19 +238,6 @@ def test_ep_lognormal_inputs_preserve_payloads_and_weights(ep_cpu_input_allocati
     assert not torch.equal(skewed[1], other_rank[1])
 
 
-def test_ep_routing_summary_counts_unique_destination_rows():
-    from mscclpp_benchmark.ep.bench_common import routing_load_summary
-
-    sources = [torch.tensor([[0, 1], [0, 2]]), torch.tensor([[2, 3], [-1, 3]])]
-    comm = SimpleNamespace(rank=0, gather=lambda value, **kwargs: sources)
-    result = routing_load_summary(sources[0], 4, 2, comm)
-    assert result["expert_assignments"]["counts"] == [2, 1, 2, 2]
-    assert result["rank_assignments"]["counts"] == [3, 4]
-    assert result["rank_unique_rows"]["counts"] == [2, 3]
-    assert result["source_to_destination_rows"] == [[2, 1], [0, 2]]
-    assert result["rank_unique_rows"]["max_over_mean"] == 1.2
-
-
 def test_ep_nccl_rank_major_fp8_cli(monkeypatch):
     from mscclpp_benchmark.ep.bench import parse_args
 
@@ -264,15 +251,14 @@ def test_ep_nccl_rank_major_fp8_cli(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "explicit_recipe,layout,dtype",
+    "layout,dtype",
     [
-        (False, "rank_major", "fp8_e4m3"),
-        (True, "rank_major", "fp8_e4m3"),
-        (True, "expert_major", "fp8_e4m3"),
-        (True, "rank_major", "bf16"),
+        ("rank_major", "fp8_e4m3"),
+        ("expert_major", "fp8_e4m3"),
+        ("rank_major", "bf16"),
     ],
 )
-def test_ep_nccl_quantization_api_compatibility(monkeypatch, explicit_recipe, layout, dtype):
+def test_ep_nccl_quantization_config(monkeypatch, layout, dtype):
     from mscclpp_benchmark.ep.bench_nccl import setup_nccl
 
     calls = []
@@ -293,18 +279,15 @@ def test_ep_nccl_quantization_api_compatibility(monkeypatch, explicit_recipe, la
         HandleConfig=SimpleNamespace,
         DispatchInputs=SimpleNamespace,
         DispatchOutputs=SimpleNamespace,
+        DispatchQuantizationRecipe=SimpleNamespace(DS_FP8E3M4=2),
+        DispatchConfig=SimpleNamespace,
         LayoutInfo=SimpleNamespace,
         CombineInputs=SimpleNamespace,
         CombineOutputs=SimpleNamespace,
         CombineConfig=SimpleNamespace,
-        get_lib_version=lambda: "0.3.0" if explicit_recipe else "0.1.0",
+        get_lib_version=lambda: "0.3.0",
         get_lib_path=lambda: "/isolated/libnccl_ep.so",
     )
-    if explicit_recipe:
-        ep.DispatchQuantizationRecipe = SimpleNamespace(DS_FP8E3M4=2)
-        ep.DispatchConfig = SimpleNamespace
-    else:
-        ep.DispatchConfig = lambda: SimpleNamespace()
     monkeypatch.setitem(sys.modules, "nccl", SimpleNamespace(core=core, ep=ep))
     monkeypatch.setitem(sys.modules, "nccl.core", core)
     monkeypatch.setitem(sys.modules, "nccl.ep", ep)
@@ -343,16 +326,10 @@ def test_ep_nccl_quantization_api_compatibility(monkeypatch, explicit_recipe, la
     (_, outputs), kwargs = calls[0]
     if dtype == "bf16":
         assert outputs.scales is None
-        assert backend["summary_meta"]["dispatch_quantization_recipe"] == "NONE"
-    elif explicit_recipe:
+    else:
         assert outputs.scales.shape == (*outputs.tokens.shape[:-1], 9216 // 128)
         assert outputs.scales.is_contiguous()
         assert kwargs["config"].quantization_recipe == ep.DispatchQuantizationRecipe.DS_FP8E3M4
-    else:
-        assert outputs.scales.shape == (2, 8, 9216 // 128)
-        assert outputs.scales.stride() == (8 * (9216 // 128), 1, 8)
-    assert backend["summary_meta"]["library_version"] == ep.get_lib_version()
-    assert backend["summary_meta"]["library_path"] == ep.get_lib_path()
 
 
 @pytest.mark.parametrize("chunk", ["0", "129"])
@@ -362,94 +339,6 @@ def test_ep_hierarchical_cli_rejects_bad_chunk(monkeypatch, chunk):
     monkeypatch.setattr(sys, "argv", ["ep-bench", "--n-tokens-per-chunk", chunk])
     with pytest.raises(SystemExit, match=r"\[1, 128\]"):
         parse_args()
-
-
-def test_ep_rank_major_unit_output_counts_destinations():
-    from mscclpp_benchmark.ep.bench_common import rank_major_unit_output
-
-    routes = torch.tensor([[0, 1, 16, -1], [31, 32, 33, 48], [-1, -1, -1, -1]])
-    actual = rank_major_unit_output(routes, 16, 8)
-    expected = torch.tensor([2, 3, 0], dtype=torch.bfloat16)[:, None].expand(-1, 8)
-    assert torch.equal(actual, expected)
-
-
-@pytest.mark.parametrize("rank,ranks_per_domain,expected", [(0, 2, 1.0078125), (2, 2, 1.0078125), (0, 4, 1.0)])
-def test_ep_direct_send_unit_output_uses_domain_reduction_order(rank, ranks_per_domain, expected):
-    import mscclpp.ep as ep
-    from mscclpp_benchmark.ep.bench_mscclpp import _expected_rank_major_unit_output
-
-    routes = torch.tensor([[0, 4, 5, -1]])
-    weights = torch.tensor([[1.00390625, 2**-24, 2**-24, 1000]], dtype=torch.float32)
-    config = SimpleNamespace(
-        num_experts=8, num_local_experts=2, hidden_size=8, combine_mode=ep.CombineMode.DIRECT_SEND, quant=None
-    )
-    actual = _expected_rank_major_unit_output(routes, weights, config, rank, ranks_per_domain)
-    assert torch.equal(actual, torch.full((1, 8), expected, dtype=torch.bfloat16))
-
-
-@pytest.mark.parametrize("scale,combine_scale", [(1.0, 1.0), (2.0, 2.0), ((4.0, 2.0), 2.0), ((4.0, None), 4.0)])
-@pytest.mark.parametrize(
-    "combine_inter_domain_dtype,rank,expected",
-    [(torch.float32, 0, 1.0078125), (torch.bfloat16, 0, 1.0), (torch.bfloat16, 2, 1.0078125)],
-)
-def test_ep_fp8_combine_unit_output_respects_inter_domain_dtype(
-    scale, combine_scale, combine_inter_domain_dtype, rank, expected
-):
-    import mscclpp.ep as ep
-    from mscclpp_benchmark.ep.bench_mscclpp import _expected_rank_major_unit_output
-
-    config = SimpleNamespace(
-        num_experts=8,
-        num_local_experts=2,
-        hidden_size=8,
-        combine_mode=ep.CombineMode.DIRECT_SEND,
-        quant=SimpleNamespace(scale=scale, combine_format=ep.DispatchDataType.FP8_E4M3_STATIC),
-        combine_inter_domain_dtype=combine_inter_domain_dtype,
-    )
-    routes = torch.tensor([[0, 4, -1, 8]])
-    weights = torch.tensor([[2**-8, 1.00390625, 1000, 1000]], dtype=torch.float32)
-    actual = _expected_rank_major_unit_output(routes, weights, config, rank, 2)
-    assert torch.equal(actual, torch.full((1, 8), expected / combine_scale, dtype=torch.bfloat16))
-
-
-@pytest.mark.parametrize("combine_inter_domain_dtype,expected", [(torch.float32, 1.0078125), (torch.bfloat16, 1.0)])
-def test_ep_combine_inter_domain_dtype_unit_output_rounds_remote_domain(combine_inter_domain_dtype, expected):
-    import mscclpp.ep as ep
-    from mscclpp_benchmark.ep.bench_mscclpp import _expected_rank_major_unit_output
-
-    config = SimpleNamespace(
-        num_experts=8,
-        num_local_experts=2,
-        hidden_size=8,
-        combine_mode=ep.CombineMode.DIRECT_SEND,
-        quant=None,
-        combine_inter_domain_dtype=combine_inter_domain_dtype,
-    )
-    routes = torch.tensor([[0, 4, -1, 8]])
-    weights = torch.tensor([[2**-8, 1.00390625, 1000, 1000]], dtype=torch.float32)
-    actual = _expected_rank_major_unit_output(routes, weights, config, 0, 2)
-    assert torch.equal(actual, torch.full((1, 8), expected, dtype=torch.bfloat16))
-
-
-@pytest.mark.parametrize(
-    "scale,combine_scale", [(None, 1.0), (1.0, 1.0), (2.0, 2.0), ((4.0, 2.0), 2.0), ((4.0, None), 4.0)]
-)
-def test_ep_rank_local_unit_output_counts_unique_peers_with_scale(scale, combine_scale):
-    import mscclpp.ep as ep
-    from mscclpp_benchmark.ep.bench_mscclpp import _expected_rank_major_unit_output
-
-    config = SimpleNamespace(
-        num_experts=8,
-        num_local_experts=2,
-        hidden_size=8,
-        combine_mode=ep.CombineMode.RANK_LOCAL_REDUCE,
-        quant=(
-            None if scale is None else SimpleNamespace(scale=scale, combine_format=ep.DispatchDataType.FP8_E4M3_STATIC)
-        ),
-    )
-    routes = torch.tensor([[0, 1, 4, 5, 6, -1]])
-    actual = _expected_rank_major_unit_output(routes, torch.full(routes.shape, 1000.0), config, 0, 2)
-    assert torch.equal(actual, torch.full((1, 8), 3 / combine_scale, dtype=torch.bfloat16))
 
 
 @pytest.mark.parametrize("scale", [2.0, (2.0, 4.0), (2.0, None)])

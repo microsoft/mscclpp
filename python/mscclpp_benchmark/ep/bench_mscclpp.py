@@ -9,7 +9,6 @@ from .bench_common import (
     simulated_gemm_output,
     sum_matching_kernel_us,
     validate_combine_output_mpi,
-    validate_rank_major_counts,
 )
 
 
@@ -124,35 +123,6 @@ def _expected_output(x, topk_idx, topk_weights, config, num_ranks):
             else:
                 expected += torch.where(first_for_dest[:, None], stage(partial), 0.0)
     return expected.to(torch.bfloat16)
-
-
-def _expected_rank_major_unit_output(topk_idx, topk_weights, config, rank, ranks_per_domain):
-    import mscclpp.ep as ep
-    from mscclpp.ep.utils import _unpack_scale
-
-    direct_send = config.combine_mode == ep.CombineMode.DIRECT_SEND
-    fp8_combine = config.quant is not None and config.quant.combine_format == ep.DispatchDataType.FP8_E4M3_STATIC
-    dispatch_scale, combine_scale = _unpack_scale(None if config.quant is None else config.quant.scale)
-    if combine_scale is None:
-        combine_scale = dispatch_scale
-    dequant_scale = float(torch.tensor(1.0 / combine_scale, dtype=torch.float32).item()) if fp8_combine else 1.0
-    local = torch.zeros((topk_idx.size(0), 1), dtype=torch.float32, device=topk_weights.device)
-    remote = torch.zeros_like(local)
-    valid = (topk_idx >= 0) & (topk_idx < config.num_experts)
-    peers = topk_idx // config.num_local_experts
-    for lane in range(topk_idx.size(1)):
-        active = valid[:, lane : lane + 1]
-        if not direct_send:
-            for previous in range(lane):
-                active = active & (peers[:, lane : lane + 1] != peers[:, previous : previous + 1])
-        weight = topk_weights[:, lane : lane + 1] * dequant_scale if direct_send else dequant_scale
-        same_domain = peers[:, lane : lane + 1] // ranks_per_domain == rank // ranks_per_domain
-        local += torch.where(active & same_domain, weight, 0)
-        remote += torch.where(active & ~same_domain, weight, 0)
-    # BF16 combine_inter_domain_dtype transports the remote FP32 domain sum as BF16.
-    if getattr(config, "combine_inter_domain_dtype", torch.float32) == torch.bfloat16:
-        remote = remote.to(torch.bfloat16).float()
-    return (local + remote).to(torch.bfloat16).expand(-1, config.hidden_size)
 
 
 def _build_quant_config(args, mode, layout):
@@ -272,15 +242,10 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         )
 
     dispatch_out, handle = dispatch_fn()
-    resolved_scale = None if dispatch_out.quant is None else dispatch_out.quant.scale
     expert_output = _stage_expert_output(dispatch_out, config)
     moe.combine(expert_output, handle, out=out)
     if args.validate:
         torch.cuda.synchronize()
-        if latency and layout == ep.DispatchLayout.RANK_MAJOR:
-            validate_rank_major_counts(
-                dispatch_out.layout.num_tokens_per_rank, topk_idx, config.num_local_experts, comm
-            )
         expected = _expected_output(x, topk_idx, topk_weights, config, num_ranks)
         diff = validate_combine_output_mpi(
             out,
@@ -295,10 +260,7 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         if rank == 0:
             print(f"[validate] mscclpp combine OK max|got-expected|={diff:.4e}", flush=True)
     # Fixed routing lets communication-only timing reuse synthetic expert output.
-    unit_aggregation = latency and layout == ep.DispatchLayout.RANK_MAJOR
-    if unit_aggregation:
-        expert_output.fill_(1)
-    elif expert_output.dtype == torch.float8_e4m3fn:
+    if expert_output.dtype == torch.float8_e4m3fn:
         expert_output.copy_(
             torch.empty(expert_output.shape, dtype=torch.bfloat16, device=expert_output.device)
             .normal_(0.0, 0.1)
@@ -310,21 +272,6 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
 
     def combine_fn(dout):
         moe.combine(expert_output, dout[1], out=out)
-
-    def validate_timed(replay):
-        torch.cuda.synchronize()
-        expected = _expected_rank_major_unit_output(topk_idx, topk_weights, config, rank, group.nranks_per_ipc_domain)
-        validate_combine_output_mpi(out, expected, comm, exact=True)
-        expert_output.fill_(2)
-        replay()
-        torch.cuda.synchronize()
-        validate_combine_output_mpi(out, expected * 2, comm, exact=True)
-        expert_output.fill_(1)
-        replay()
-        torch.cuda.synchronize()
-        validate_combine_output_mpi(out, expected, comm, exact=True)
-        if rank == 0:
-            print("[validate] mscclpp timed output and alternating expert-output replay OK", flush=True)
 
     graph_spec = None
     captured = {}
@@ -374,20 +321,12 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         "teardown": teardown,
         "barrier": None,
         "graph": graph_spec,
-        "validate": validate_timed if unit_aggregation else None,
         "summary_meta": {
             "algorithm": args.mode.upper(),
             "layout": effective_layout,
             "dispatch_format": effective_disp,
             "combine_format": effective_comb,
-            "combine_input_dtype": str(expert_output.dtype),
-            "output_dtype": str(out.dtype),
-            "quant_scale": resolved_scale,
             "combine_mode": str(combine_mode).rsplit(".", 1)[-1].lower(),
             "execution": "cuda_graph" if graph_spec is not None else "eager",
-            "ipc_domain": group.nranks_per_ipc_domain,
-            "qps_per_peer": config.qps_per_peer,
-            "n_tokens_per_chunk": config.n_tokens_per_chunk,
-            "expert_input": "unit-valued, prepared outside timing" if unit_aggregation else "fixed synthetic",
         },
     }

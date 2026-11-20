@@ -181,7 +181,7 @@ MSCCLPP_HOST_DEVICE_INLINE int dispatchSharedSendSlots(int nRanks) {
   return nRanks > NSendSlots ? nRanks : NSendSlots;
 }
 
-MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSharedControlBytes(int nRanks, bool hierarchical = false) {
+MSCCLPP_HOST_DEVICE_INLINE constexpr size_t dispatchSharedControlBytes(int nRanks, bool hierarchical = false) {
   constexpr int NSendSlots = DispatchMaxNWarpGroups * WARP_SIZE;
   const int counts = nRanks + (hierarchical ? 1 : 0);
   const int nSlots = counts > NSendSlots ? counts : NSendSlots;
@@ -211,13 +211,35 @@ MSCCLPP_HOST_DEVICE_INLINE size_t dispatchRecvTmaBytes() {
 }
 
 template <int Hidden, DispatchDataType DataType>
+MSCCLPP_HOST_DEVICE_INLINE constexpr int hierarchicalForwardWarps() {
+  static_assert(Hidden % 128 == 0);
+  constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(DispatchElementType<DataType>);
+  constexpr size_t ScaleBytes = DataType == DispatchDataType::MXFP8_E4M3 ? Hidden / 32 : 0;
+  constexpr size_t StaticSharedHeadroomBytes = 1024;
+  constexpr size_t AvailableBytes = OptimizedDynamicSharedMemoryBytes - StaticSharedHeadroomBytes -
+                                    dispatchSharedControlBytes(MaxNumRanks, /*hierarchical=*/true);
+  constexpr int MaxSlots = static_cast<int>(AvailableBytes / sizeof(WarpForwardWorkspace<HiddenBytes, ScaleBytes>));
+  static_assert(MaxSlots >= 1);
+  return MaxSlots < DispatchNWarps ? MaxSlots : DispatchNWarps;
+}
+
+template <int Hidden, DispatchDataType DataType>
+MSCCLPP_HOST_DEVICE_INLINE constexpr int hierarchicalMaxProduceGroups() {
+  constexpr int NSlots = hierarchicalForwardWarps<Hidden, DataType>();
+  int nGroups = HierarchicalMaxProduceGroups;
+  while (nGroups > 1 && (nGroups > NSlots || DispatchNWarps % nGroups != 0)) {
+    nGroups /= 2;
+  }
+  return nGroups;
+}
+
+template <int Hidden, DispatchDataType DataType>
 MSCCLPP_HOST_DEVICE_INLINE constexpr size_t hierarchicalDispatchTmaBytes() {
   static_assert(Hidden % 128 == 0);
   constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(DispatchElementType<DataType>);
   constexpr size_t ScaleBytes = DataType == DispatchDataType::MXFP8_E4M3 ? Hidden / 32 : 0;
-  constexpr int NSlots =
-      HierarchicalForwardWarps > HierarchicalMaxProduceGroups ? HierarchicalForwardWarps : HierarchicalMaxProduceGroups;
-  return static_cast<size_t>(NSlots) * sizeof(WarpForwardWorkspace<HiddenBytes, ScaleBytes>);
+  return static_cast<size_t>(hierarchicalForwardWarps<Hidden, DataType>()) *
+         sizeof(WarpForwardWorkspace<HiddenBytes, ScaleBytes>);
 }
 
 template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, bool Hierarchical = false>

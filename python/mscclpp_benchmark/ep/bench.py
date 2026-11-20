@@ -17,9 +17,7 @@ launch examples, layouts, and timing limitations.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import importlib
-import json
 import math
 
 import torch
@@ -28,8 +26,6 @@ from .bench_common import (
     MPI,
     init_mpi,
     make_inputs,
-    lognormal_expert_probabilities,
-    routing_load_summary,
     _init_torch_nccl,
     _mpi_stats,
     sum_matching_kernel_us,
@@ -171,7 +167,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--validate",
         action="store_true",
-        help="validate backend outputs where supported; BF16 rank-local aggregation is also checked after timing.",
+        help="mscclpp: run a one-time combine correctness check before timing.",
     )
     args = p.parse_args()
     if args.num_tokens <= 0 or args.num_experts <= 0:
@@ -296,15 +292,7 @@ def torch_profiler_kernel_us(
             prof.step()
 
     ka = prof.key_averages()
-    phase_us = parse_kernels(ka)
-    counts = {
-        event.key: int(event.count)
-        for event in ka
-        if any(phase in event.key.split("<", 1)[0].lower() for phase in ("dispatch", "combine"))
-        and int(event.count) > 0
-    }
-    print(f"[kernel-counts] rank={MPI.COMM_WORLD.rank} " + json.dumps(counts), flush=True)
-    return phase_us
+    return parse_kernels(ka)
 
 
 # ============================================================================
@@ -348,7 +336,6 @@ def run_backend(
     parse_kernels=None,
     graph_group_size=1,
     graph=None,
-    summary_meta=None,
 ):
     _, _, _, num_valid_selections = inputs
     hidden = args.hidden
@@ -471,27 +458,6 @@ def run_backend(
     gk_c_avg, gk_c_min, gk_c_max = _mpi_stats(comm, ck_comb, ck_comb, ck_comb, num_ranks)
 
     if rank == 0:
-        print(
-            "[result] "
-            + json.dumps(
-                {
-                    "backend": name,
-                    "tokens_per_rank": args.num_tokens,
-                    "hidden": hidden,
-                    "experts": args.num_experts,
-                    "topk": args.num_topk,
-                    "ranks": num_ranks,
-                    "dispatch_us": gk_d_avg,
-                    "combine_us": gk_c_avg,
-                    "total_us": gk_d_avg + gk_c_avg,
-                    "combine_mode": (summary_meta or {}).get("combine_mode", args.combine_mode),
-                    "iterations": iters,
-                    "pairs_per_graph": group,
-                    "metric": "all-rank arithmetic mean of per-kernel launch means",
-                }
-            ),
-            flush=True,
-        )
         _kt_hdr = "torch kineto (per-iter barrier + L2 flush)"
         print(f"\n--- Kernel-only performance ({_kt_hdr}) ---")
         if kernel_ok:
@@ -546,27 +512,6 @@ def main() -> None:
         routing=args.routing,
         routing_sigma=args.routing_sigma,
     )
-    print(
-        f"[inputs] rank={rank} "
-        + json.dumps(
-            {
-                name: hashlib.sha256(value.view(torch.uint8).cpu().numpy().tobytes()).hexdigest()
-                for name, value in zip(("tokens", "routes", "weights"), inputs[:3])
-            }
-        ),
-        flush=True,
-    )
-    load = routing_load_summary(inputs[1], args.num_experts, num_ranks, comm)
-    if rank == 0:
-        routing_meta = {"distribution": args.routing, "seed": args.seed, "load": load}
-        if args.routing == "lognormal":
-            probabilities = lognormal_expert_probabilities(args.num_experts, args.routing_sigma, args.seed)
-            routing_meta.update(
-                sigma=args.routing_sigma,
-                expert_probabilities=probabilities.tolist(),
-                shared_popularity_sha256=hashlib.sha256(probabilities.numpy().tobytes()).hexdigest(),
-            )
-        print("[routing] " + json.dumps(routing_meta), flush=True)
 
     backends = ["nccl", "mscclpp", "deepep"] if args.backend == "all" else [args.backend]
     benchmark_stream = torch.cuda.Stream()
@@ -619,7 +564,6 @@ def _run_backends(args, comm, rank, num_ranks, inputs, backends):
         teardown = ops["teardown"]
         backend_barrier = ops.get("barrier")
         summary_meta = ops.get("summary_meta")
-        print(f"[backend-config] rank={rank} " + json.dumps({"backend": name, **(summary_meta or {})}), flush=True)
         if summary_meta is not None:
             comparison_meta[name] = summary_meta
         graph = None
@@ -653,13 +597,7 @@ def _run_backends(args, comm, rank, num_ranks, inputs, backends):
                 parse_kernels=_PARSE_KINETO[name],
                 graph_group_size=effective_group_size,
                 graph=graph,
-                summary_meta=summary_meta,
             )
-            if args.validate and ops.get("validate") is not None:
-                # The hook also checks changed expert outputs against replayed graph addresses.
-                replay = graph.replay if graph is not None else lambda: combine_fn(dispatch_fn())
-                ops["validate"](replay)
-                replay = None
         finally:
             torch.cuda.synchronize()
             comm.barrier()

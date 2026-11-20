@@ -14,9 +14,12 @@ MSCCLPP_DEVICE_INLINE int hierarchicalNumForwardBlocks(int nGridBlocks) {
   return nForwardBlocks < HierarchicalMaxForwardBlocks ? nForwardBlocks : HierarchicalMaxForwardBlocks;
 }
 
+template <int MaxGroups>
 MSCCLPP_DEVICE_INLINE int hierarchicalNumProduceGroups(int nTokens, int nProducers) {
-  static_assert(HierarchicalMaxProduceGroups == 4);
-  return nTokens <= nProducers ? 1 : (nTokens <= 2 * nProducers ? 2 : HierarchicalMaxProduceGroups);
+  static_assert(MaxGroups == 1 || MaxGroups == 2 || MaxGroups == 4);
+  if constexpr (MaxGroups == 1) return 1;
+  if constexpr (MaxGroups == 2) return nTokens <= nProducers ? 1 : 2;
+  return nTokens <= nProducers ? 1 : (nTokens <= 2 * nProducers ? 2 : 4);
 }
 
 MSCCLPP_DEVICE_INLINE void dispatchCountRoutes(const int64_t* routes, const Workload& workload,
@@ -92,8 +95,9 @@ MSCCLPP_DEVICE_INLINE void dispatchProduce(void* output, void* outputScales, int
                                            const Workload& workload, const DeviceContext* context,
                                            const TransportView& transport, const Gateway& gateway,
                                            uint8_t* sharedMemory, int producerIdx, int nProducers) {
-  static_assert(DispatchNWarps % HierarchicalMaxProduceGroups == 0);
-  const int nGroups = hierarchicalNumProduceGroups(workload.numTokens_, nProducers);
+  constexpr int MaxProduceGroups = hierarchicalMaxProduceGroups<Hidden, DataType>();
+  static_assert(DispatchNWarps % MaxProduceGroups == 0);
+  const int nGroups = hierarchicalNumProduceGroups<MaxProduceGroups>(workload.numTokens_, nProducers);
   const int nWarpsPerGroup = DispatchNWarps / nGroups;
   const int nGroupThreads = nWarpsPerGroup * WARP_SIZE;
   const int warpIdx = static_cast<int>(threadIdx.x) / WARP_SIZE;
@@ -114,7 +118,7 @@ MSCCLPP_DEVICE_INLINE void dispatchProduce(void* output, void* outputScales, int
       sharedMemory + dispatchSharedControlBytes(context->numRanks_, true));
   auto* staged = workspaces[groupIdx].staged;
   auto& barrier = workspaces[groupIdx].barrier;
-  __shared__ int groupRemoteTokenIndices[HierarchicalMaxProduceGroups];
+  __shared__ int groupRemoteTokenIndices[MaxProduceGroups];
   const bool quantizeInput =
       DataType == DispatchDataType::MXFP8_E4M3 ||
       (DataType == DispatchDataType::FP8_E4M3_STATIC && workload.inputMode_ == QuantConfig::InputMode::QUANTIZE);
@@ -304,7 +308,8 @@ MSCCLPP_DEVICE_INLINE void dispatchForward(void* output, void* outputScales, int
   }
   __syncthreads();
 
-  constexpr int NWarpGroupThreads = HierarchicalForwardWarps * WARP_SIZE;
+  constexpr int NForwardWarps = hierarchicalForwardWarps<Hidden, DataType>();
+  constexpr int NWarpGroupThreads = NForwardWarps * WARP_SIZE;
   static_assert(NWarpGroupThreads <= DispatchNThreads);
   const int warpGroupThreadIdx = static_cast<int>(threadIdx.x);
   if (warpGroupThreadIdx < NWarpGroupThreads) {
@@ -312,7 +317,7 @@ MSCCLPP_DEVICE_INLINE void dispatchForward(void* output, void* outputScales, int
     const int warpIdx = warpGroupThreadIdx / WARP_SIZE;
     // Stripe tokens across forwarder blocks first to spread small workloads across SMs.
     const int firstTokenIdx = warpIdx * nForwarders + forwarderIdx;
-    const int tokenStride = nForwarders * HierarchicalForwardWarps;
+    const int tokenStride = nForwarders * NForwardWarps;
     int expertIdx = -1;
     int slotIdx = -1;
     float weight = 0.0f;

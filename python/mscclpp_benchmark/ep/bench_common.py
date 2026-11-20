@@ -145,37 +145,6 @@ def make_inputs(num_tokens, hidden, num_topk, num_experts, rank, seed, *, routin
     return x, topk_idx, topk_weights, num_valid_selections
 
 
-def routing_load_summary(topk_idx, num_experts, num_ranks, comm):
-    """Collect actual expert assignments and unique destination-rank rows outside timing."""
-    gathered = comm.gather(topk_idx.cpu(), root=0)
-    if comm.rank != 0:
-        return None
-    routes = torch.cat(gathered)
-    valid = (routes >= 0) & (routes < num_experts)
-    expert_counts = torch.bincount(routes[valid], minlength=num_experts)
-    local_experts = num_experts // num_ranks
-    source_to_destination_rows = []
-    for source in gathered:
-        peers = torch.where((source >= 0) & (source < num_experts), source // local_experts, -1)
-        source_to_destination_rows.append([int((peers == peer).any(dim=-1).sum()) for peer in range(num_ranks)])
-
-    def stats(counts):
-        mean = float(counts.double().mean())
-        return {
-            "counts": counts.tolist(),
-            "mean": mean,
-            "max_over_mean": float(counts.max()) / mean if mean else None,
-            "coefficient_of_variation": float(counts.double().std(unbiased=False)) / mean if mean else None,
-        }
-
-    return {
-        "expert_assignments": stats(expert_counts),
-        "rank_assignments": stats(expert_counts.reshape(num_ranks, local_experts).sum(dim=1)),
-        "rank_unique_rows": stats(torch.tensor(source_to_destination_rows).sum(dim=0)),
-        "source_to_destination_rows": source_to_destination_rows,
-    }
-
-
 # ----------------------------------------------------------------------------
 # Latency dtype / combine helpers (ported from test_latency_multirank.py).
 # ----------------------------------------------------------------------------
@@ -215,26 +184,3 @@ def validate_combine_output_mpi(actual, expected, comm, *, exact):
         local_close = int(torch.allclose(actual.float(), expected.float(), rtol=1e-2, atol=1e-2))
         assert comm.allreduce(local_close, op=MPI.MIN) == 1, f"LL combine mismatch; max diff={global_diff}"
     return global_diff
-
-
-def rank_major_unit_output(topk_idx, num_local_experts, hidden):
-    """Reference for fixed unit-valued, already-reduced rank-local expert outputs."""
-    peers = torch.where(topk_idx >= 0, topk_idx // num_local_experts, -1)
-    count = torch.zeros(topk_idx.shape[0], dtype=torch.float32, device=topk_idx.device)
-    for lane in range(topk_idx.shape[1]):
-        first = peers[:, lane] >= 0
-        for previous in range(lane):
-            first &= peers[:, previous] != peers[:, lane]
-        count += first
-    return count[:, None].expand(-1, hidden).to(torch.bfloat16)
-
-
-def validate_rank_major_counts(counts, topk_idx, num_local_experts, comm):
-    """Check all source-rank counts against independently gathered original routes."""
-    routes = comm.allgather(topk_idx.cpu())
-    expected = [int(((ids >= 0) & (ids // num_local_experts == comm.rank)).any(dim=-1).sum()) for ids in routes]
-    actual = counts.cpu().tolist()
-    valid = actual == expected
-    if comm.allreduce(int(valid), op=MPI.MIN) != 1:
-        mismatches = comm.allgather(None if valid else {"rank": comm.rank, "actual": actual, "expected": expected})
-        raise RuntimeError(f"Rank-major dispatch source counts do not match the original routes: {mismatches}")

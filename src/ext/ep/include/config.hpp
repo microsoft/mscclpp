@@ -24,7 +24,6 @@ inline constexpr int MaxNumRanks = 128;
 
 inline constexpr int MaxQpsPerPeer = 4;
 inline constexpr int HierarchicalMaxForwardBlocks = 16;
-inline constexpr int HierarchicalForwardWarps = 8;
 inline constexpr int HierarchicalMaxProduceGroups = 4;
 
 inline constexpr bool isSupportedRanks(int numRanks) { return numRanks > 0 && numRanks <= MaxNumRanks; }
