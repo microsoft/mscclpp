@@ -81,6 +81,61 @@ But for multi-thread-blocks synchronization and cross-ranks synchronization, we 
 
 ## Post Processing Steps
 
+### Opt-in Memory-Channel Token Diagnostics
+
+Call `program.diagnose_synchronization()` after defining a plan and before
+`program.to_json()` to inspect its semaphore dependencies. The diagnostic leaves
+the operations and serialization behavior unchanged.
+
+```python
+from mscclpp.language.channel import MemoryChannel
+from mscclpp.language.collectives import TestCollective
+from mscclpp.language.program import CollectiveProgram
+
+with CollectiveProgram("wait_cycle", TestCollective(2, 1, 1), 2) as program:
+    forward = MemoryChannel(dst_rank=1, src_rank=0)
+    reverse = MemoryChannel(dst_rank=0, src_rank=1)
+    forward.wait(tb=0)
+    forward.signal(tb=0)
+    reverse.wait(tb=0)
+    reverse.signal(tb=0)
+    diagnostic = program.diagnose_synchronization()
+    print(diagnostic.status)  # cycle
+    print(diagnostic.message)
+```
+
+The result has `status`, `message`, and `locations` fields. Locations are zero-based
+`(rank, thread_block, operation_index)` tuples in the authored plan. The statuses are:
+
+- `acyclic`: each directed channel has balanced signal/wait counts and its token
+  dependencies, together with thread-block operation order, form an acyclic graph.
+- `mismatch`: a directed channel has unequal signal/wait counts. The message identifies
+  the ranks, per-peer channel occurrence, counts, and first unmatched operation.
+- `cycle`: a concrete dependency cycle prevents the abstract token execution from
+  completing. Its locations follow dependency order and repeat the first location.
+- `unsupported`: the message identifies a feature outside the analysis scope.
+
+The analysis supports straight-line `Simple` plans with paired `MemoryChannel`
+endpoints, `SyncType.both` on signal/wait operations, and one producer and one
+consumer thread block per directed semaphore. Channels are paired by their occurrence
+for each peer, as in the executor. Each wait depends on the corresponding signal
+ordinal. Positive instance replication creates independent copies of the graph.
+The analysis takes linear time and space in the plan's ranks, thread blocks,
+channels, and authored operations.
+
+The token model assumes fresh semaphore state or a previously balanced invocation,
+without counter overflow. Normal and relaxed signal/wait operations have the same
+token dependencies. An acyclic result checks token reachability only. Device residency,
+transport progress, payload visibility, and data races require their own checks.
+
+Pipelines, packet operations, port/switch channels, cross-block barriers, intra-rank
+semaphores, thread-block groups, resource reuse, unpaired endpoints, shared
+producer/consumer blocks, and nondefault signal/wait block synchronization return
+`unsupported`. Post-processing changes operation positions and channel mappings, so
+diagnosis after `to_json()` or `post_process_operations()` also returns `unsupported`.
+Existing compilation behavior applies to every status, and callers choose how to use
+the report before submitting an execution plan.
+
 ### Operation Fusion (Instruction Fusion)
 MSCCL++ DSL performs operation fusion by analyzing all operations scheduled within the same thread‐block. For each thread‐block, the DSL builds a directed acyclic graph (DAG) of chunk‐level operations and tracks data dependencies and usage patterns. When two or more operations meet fusion criteria—such as contiguous chunk access, no intervening dependencies, and compatible resource requirements—the DSL merges them into a single operation function. This fusion strategy reduces memory traffic and avoids unnecessary synchronization, resulting in more efficient execution.
 
