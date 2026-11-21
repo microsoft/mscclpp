@@ -630,6 +630,15 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
     return mscclppNcclOps.AllReduce(sendbuff, recvbuff, count, datatype, reductionOperation,
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
+  if (!isNcclRedOpSupportedByMscclpp(reductionOperation)) {
+    if (mscclppNcclDlopenSharedLib == true) {
+      return mscclppNcclOps.AllReduce(sendbuff, recvbuff, count, datatype, reductionOperation,
+                                      *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
+    }
+    WARN(MSCCLPP_NCCL, "Unsupported reduction op ", reductionOperation,
+         " for AllReduce and no NCCL fallback is loaded");
+    return ncclInvalidArgument;
+  }
   mscclpp::DataType dtype = ncclDataTypeToMscclpp(datatype);
   const bool symmetricMemory = mscclpp::env()->ncclSymmetricMemory;
   mscclpp::CollectiveRequest request = {.worldSize = comm->worldSize,
@@ -644,6 +653,10 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
                                         .hints = {}};
 
   auto algo = comm->algorithmCollection.selectAlgorithm(request);
+  if (algo != nullptr && algo->type() == mscclpp::AlgorithmType::DSL && reductionOperation != ncclSum) {
+    // DSL execution plans always sum, so leave other reductions to the fallback.
+    algo = nullptr;
+  }
   if (algo != nullptr) {
     return static_cast<ncclResult_t>(algo->execute(comm->comm, sendbuff, recvbuff, bytes, bytes, dtype,
                                                    ncclRedOpToMscclpp(reductionOperation), stream, comm->executor, 0, 0,
@@ -687,6 +700,14 @@ NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, si
 
   int rank = comm->comm->bootstrap()->getRank();
   int nRank = comm->comm->bootstrap()->getNranks();
+  if (!isNcclRedOpSupportedByMscclpp(op)) {
+    if (mscclppNcclDlopenSharedLib == true) {
+      return mscclppNcclOps.ReduceScatter(sendbuff, recvbuff, recvcount, datatype, op,
+                                          *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
+    }
+    WARN(MSCCLPP_NCCL, "Unsupported reduction op ", op, " for ReduceScatter and no NCCL fallback is loaded");
+    return ncclInvalidArgument;
+  }
   mscclpp::DataType dtype = ncclDataTypeToMscclpp(datatype);
   const bool symmetricMemory = mscclpp::env()->ncclSymmetricMemory;
   mscclpp::CollectiveRequest request = {.worldSize = comm->worldSize,
@@ -700,6 +721,10 @@ NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, si
                                         .dtype = dtype,
                                         .hints = {}};
   auto algo = comm->algorithmCollection.selectAlgorithm(request);
+  if (algo != nullptr && algo->type() == mscclpp::AlgorithmType::DSL && op != ncclSum) {
+    // DSL execution plans always sum, so leave other reductions to the fallback.
+    algo = nullptr;
+  }
   if (algo != nullptr) {
     return static_cast<ncclResult_t>(algo->execute(comm->comm, sendbuff, recvbuff, bytes * nRank, bytes, dtype,
                                                    ncclRedOpToMscclpp(op), stream, comm->executor, 0, 0,
