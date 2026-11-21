@@ -120,6 +120,9 @@ static inline ncclDataType_t mscclppToNcclDataType(mscclpp::DataType dtype) {
   }
 }
 
+// Whether mscclpp's own allreduce/reducescatter kernels implement this NCCL reduction.
+inline bool isNcclRedOpSupportedByMscclpp(ncclRedOp_t op) { return op == ncclSum || op == ncclMin; }
+
 inline mscclpp::ReduceOp ncclRedOpToMscclpp(ncclRedOp_t op) {
   switch (op) {
     case ncclSum:
