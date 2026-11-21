@@ -3,10 +3,59 @@
 #ifndef MSCCLPP_EP_DEVICE_CONTEXT_HPP_
 #define MSCCLPP_EP_DEVICE_CONTEXT_HPP_
 
+#include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/memory_channel_device.hpp>
+#include <mscclpp/port_channel_device.hpp>
 
 namespace mscclpp {
 namespace ep {
+
+using PortChannelDeviceHandle = mscclpp::PortChannelDeviceHandle<mscclpp::PortChannelBackend::Device>;
+
+struct ChannelCtx {
+  PortChannelDeviceHandle* channels;
+  int numPeers;
+  int numQpsPerPeer;
+
+#if defined(MSCCLPP_DEVICE_COMPILE)
+  MSCCLPP_DEVICE_INLINE PortChannelDeviceHandle channel(int peer, int queue) const {
+    MSCCLPP_ASSERT_DEVICE(channels != nullptr && peer >= 0 && peer < numPeers && queue >= 0 && queue < numQpsPerPeer,
+                          "Invalid PortChannel index");
+    return channels[static_cast<size_t>(peer) * numQpsPerPeer + queue];
+  }
+#endif
+};
+
+struct HierarchicalDispatchControl;
+struct HierarchicalCombineControl;
+struct HierarchicalDispatchScratch;
+
+struct HierarchicalDeviceContext {
+  /// Cross-domain PortChannel context for peers outside this rank's NVLink/IPC domain,
+  /// or nullptr when every peer is intra-domain mapped.
+  ChannelCtx* portChannelCtx_ = nullptr;
+  /// Tokens per hierarchical dispatch/combine RDMA chunk.
+  int nTokensPerChunk_ = 0;
+  int gatewayRank_ = -1;
+  int maxTokensPerRank_ = 0;
+  void* dispatchSendBuffer_ = nullptr;
+  void* dispatchRecvBuffer_ = nullptr;
+  HierarchicalDispatchControl* dispatchControl_ = nullptr;
+  HierarchicalDispatchScratch* dispatchScratch_ = nullptr;
+  int* combineRemoteTokenIndices_ = nullptr;
+  int* nIncomingTokens_ = nullptr;
+  /// Private [compact token, IDs then destination slots then weights] cache, never exposed to remote writes.
+  int* combineRoutes_ = nullptr;
+  float* combineLocalBuffer_ = nullptr;
+  /// Independent registered RDMA send/landing tokens (FP32 or BF16), indexed by compact remote token.
+  void* combineSendBuffer_ = nullptr;
+  void* combineRecvBuffer_ = nullptr;
+  HierarchicalCombineControl* combineControl_ = nullptr;
+  /// Private completed-token and TMA-load counters, reset during dispatch.
+  int* combineChunkReady_ = nullptr;
+  int* combineChunkLoadReady_ = nullptr;
+  mscclpp::DataType combineInterDomainDtype_ = mscclpp::DataType::FLOAT32;
+};
 
 /// Persistent device resources shared by every dispatch and combine algorithm.
 struct DeviceContext {
@@ -30,6 +79,8 @@ struct DeviceContext {
   int numRanks_;
   /// Persistent device copy used by kernel launches. Host launch code only.
   DeviceContext* devicePtr_ = nullptr;
+  /// Cross-domain resources for hierarchical dispatch and combine.
+  HierarchicalDeviceContext hierarchicalCtx_{};
 };
 
 struct TransportView {
@@ -37,14 +88,31 @@ struct TransportView {
   void* const* peerMappedBufferBases_;
   mscclpp::BaseMemoryChannelDeviceHandle* baseMemoryChannels_;
   int rank_;
+  int numRanks_;
+  ChannelCtx* portChannelCtx_;
 
   MSCCLPP_HOST_DEVICE_INLINE explicit TransportView(const DeviceContext* context)
       : symmetricBufferBase_(context->localBufferBase_),
         peerMappedBufferBases_(context->peerBufferBases_),
         baseMemoryChannels_(context->channels_),
-        rank_(context->rank_) {}
+        rank_(context->rank_),
+        numRanks_(context->numRanks_),
+        portChannelCtx_(context->hierarchicalCtx_.portChannelCtx_) {}
 
   MSCCLPP_HOST_DEVICE_INLINE bool isSelf(int peerRank) const { return peerRank == rank_; }
+
+  // Byte offset of a symmetric-buffer pointer from this rank's base; the same
+  // offset addresses the identical region on any peer.
+  MSCCLPP_HOST_DEVICE_INLINE uint64_t symmetricOffset(const void* ptr) const {
+    return static_cast<uint64_t>(reinterpret_cast<const uint8_t*>(ptr) -
+                                 reinterpret_cast<const uint8_t*>(symmetricBufferBase_));
+  }
+
+  // A peer is intra-domain (IPC/NVLink) reachable if it is self or its symmetric
+  // buffer is directly mapped; otherwise it is an inter-domain peer served over PortChannel.
+  MSCCLPP_HOST_DEVICE_INLINE bool isIntraDomainPeer(int peerRank) const {
+    return isSelf(peerRank) || peerMappedBufferBases_[peerRank] != nullptr;
+  }
 
   MSCCLPP_HOST_DEVICE_INLINE void* mappedBuffer(void* localBuffer, int peerRank) const {
     if (isSelf(peerRank)) return localBuffer;

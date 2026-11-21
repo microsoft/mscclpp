@@ -49,6 +49,8 @@ set(MSCCLPP_EP_SOURCES
     dispatch/rank_major_dispatch.cu
     dispatch/throughput_dispatch.cu
     dispatch/throughput_prepare.cu
+    combine/hierarchical_combine.cu
+    dispatch/hierarchical_dispatch.cu
     latency.cc
     moe_runtime.cc
     throughput.cc

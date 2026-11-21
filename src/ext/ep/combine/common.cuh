@@ -19,6 +19,10 @@ constexpr int CombineNWarps = 32;
 constexpr int CombineNThreads = CombineNWarps * WARP_SIZE;
 constexpr int CombineNStages = 8;
 constexpr int DirectSendMaxNWorkers = WARP_SIZE;
+constexpr int HierarchicalCombineNWarpGroups = 2;
+constexpr int HierarchicalCombineGroupWarps = CombineNWarps / HierarchicalCombineNWarpGroups;
+constexpr int HierarchicalCombineGroupThreads = HierarchicalCombineGroupWarps * WARP_SIZE;
+static_assert(CombineNWarps % HierarchicalCombineNWarpGroups == 0);
 
 MSCCLPP_HOST_DEVICE_INLINE size_t directSendControlBytes(int nLocalExperts) {
   return configAlign<size_t>(static_cast<size_t>(nLocalExperts + 1) * sizeof(int), 128);
@@ -47,6 +51,39 @@ struct alignas(128) RankMajorCombineStage {
   float routeWeights[NSlots];
 };
 
+inline constexpr int HierarchicalCombineMaxPendingTokens = 64;
+
+// Hierarchical combine per-warp-group shared-memory control state, placed after each group's compacted stage slots.
+template <int NSlots>
+struct alignas(16) HierarchicalCombineGroupControl {
+  mscclpp::BulkBarrier barrier;
+  float routeWeights[NSlots];
+  int pendingTokens[HierarchicalCombineMaxPendingTokens];
+  int nPendingTokens;
+  int nRoutes;
+  bool interDomainTokenReady;
+};
+
+template <int Hidden, DispatchDataType DispatchType, int NSlots>
+MSCCLPP_HOST_DEVICE_INLINE constexpr size_t hierarchicalCombineGroupSharedBytesForSlots() {
+  constexpr size_t TokensBytes = static_cast<size_t>(NSlots) * Hidden * sizeof(DispatchElementType<DispatchType>);
+  return configAlign<size_t>(TokensBytes + sizeof(HierarchicalCombineGroupControl<NSlots>), BufferAlignmentBytes);
+}
+
+template <int Hidden, DispatchDataType DispatchType, int MaxNTopk>
+MSCCLPP_HOST_DEVICE_INLINE constexpr int hierarchicalCombineGroupStageSlots() {
+  static_assert(MaxNTopk == 8 || MaxNTopk == MaxNumTopk);
+  constexpr size_t MaxGroupBytes = OptimizedDynamicSharedMemoryBytes / HierarchicalCombineNWarpGroups;
+  int nSlots = MaxNTopk;
+  while (nSlots > 1 &&
+         configAlign<size_t>(static_cast<size_t>(nSlots) * Hidden * sizeof(DispatchElementType<DispatchType>) +
+                                 sizeof(HierarchicalCombineGroupControl<MaxNTopk>),
+                             BufferAlignmentBytes) > MaxGroupBytes) {
+    --nSlots;
+  }
+  return nSlots;
+}
+
 template <int Hidden, DispatchDataType DispatchType, int MaxNTopk>
 MSCCLPP_HOST_DEVICE_INLINE constexpr int rankMajorCombineStageSlots() {
   static_assert(MaxNTopk == 8 || MaxNTopk == MaxNumTopk);
@@ -57,9 +94,17 @@ MSCCLPP_HOST_DEVICE_INLINE constexpr int rankMajorCombineStageSlots() {
   return 8;
 }
 
-template <int Hidden, CombineMode Mode, DispatchDataType DispatchType, DispatchLayout Layout, int MaxNTopk>
+template <int Hidden, CombineMode Mode, DispatchDataType DispatchType, DispatchLayout Layout, int MaxNTopk,
+          bool Hierarchical = false>
 MSCCLPP_HOST_DEVICE_INLINE size_t combineSharedBytes(int nLocalExperts) {
   if constexpr (Layout == DispatchLayout::RANK_MAJOR) {
+    if constexpr (Hierarchical) {
+      constexpr int StageSlots = hierarchicalCombineGroupStageSlots<Hidden, DispatchType, MaxNTopk>();
+      constexpr size_t SharedBytes = HierarchicalCombineNWarpGroups *
+                                     hierarchicalCombineGroupSharedBytesForSlots<Hidden, DispatchType, StageSlots>();
+      static_assert(SharedBytes <= OptimizedDynamicSharedMemoryBytes);
+      return SharedBytes;
+    }
     constexpr int StageSlots = rankMajorCombineStageSlots<Hidden, DispatchType, MaxNTopk>();
     constexpr size_t SharedBytes = sizeof(RankMajorCombineStage<Hidden, DispatchType, StageSlots>);
     static_assert(SharedBytes <= OptimizedDynamicSharedMemoryBytes);
@@ -165,8 +210,8 @@ MSCCLPP_DEVICE_INLINE void combineRankMajorTokens(void* output, const void* expe
   const int nExperts = workload.numExperts_;
   const int nLocalExperts = nExperts / nRanks;
   const int maxTokensPerRank = workload.maxTokensPerRank_;
-  const bool useWeights = topkWeights != nullptr;
-  const float dequantScale = DispatchType == DispatchDataType::FP8_E4M3_STATIC ? 1.0f / workload.dispatchScale_ : 1.0f;
+  const bool useWeights = workload.applyRouterWeights_ && topkWeights != nullptr;
+  const float dequantScale = DispatchType == DispatchDataType::FP8_E4M3_STATIC ? 1.0f / workload.combineScale_ : 1.0f;
   auto& stage = *reinterpret_cast<RankMajorCombineStage<Hidden, DispatchType, StageSlots>*>(sharedMemory);
   auto* barriers = stage.barriers;
 
@@ -265,7 +310,7 @@ MSCCLPP_DEVICE_INLINE void combineRankMajorTokens(void* output, const void* expe
 #endif  // MSCCLPP_BULK_AVAILABLE
 
 template <CombineMode Mode, int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout,
-          int MaxNTopk, typename KernelSelector>
+          int MaxNTopk, typename KernelSelector, bool Hierarchical = false>
 inline void combineHiddenMode(void* output, const void* expertOutput, const int64_t* topkIndices,
                               const float* topkWeights, const int* srcInfo, const int64_t* layoutRange,
                               const Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
@@ -279,7 +324,8 @@ inline void combineHiddenMode(void* output, const void* expertOutput, const int6
   }
 
   auto combineFunc = KernelSelector::template get<Hidden, DispatchType, ScaleBlockSize, Layout, MaxNTopk>();
-  const size_t sharedBytes = combineSharedBytes<Hidden, Mode, DispatchType, Layout, MaxNTopk>(nLocalExperts);
+  const size_t sharedBytes =
+      combineSharedBytes<Hidden, Mode, DispatchType, Layout, MaxNTopk, Hierarchical>(nLocalExperts);
   EP_HOST_ASSERT(Layout != DispatchLayout::RANK_MAJOR || numBlocks > 1);
   static thread_local KernelConfigCache kernelConfig;
   const int residentBlocks = configureKernel(combineFunc, CombineNThreads, sharedBytes, context, kernelConfig);
@@ -292,78 +338,81 @@ inline void combineHiddenMode(void* output, const void* expertOutput, const int6
 }
 
 template <CombineMode Mode, int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout,
-          typename KernelSelector>
+          typename KernelSelector, bool Hierarchical = false>
 inline void combineHiddenMode(void* output, const void* expertOutput, const int64_t* topkIndices,
                               const float* topkWeights, const int* srcInfo, const int64_t* layoutRange,
                               const Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
                               const DeviceContext& context, int numBlocks, cudaStream_t stream) {
   if (workload.numTopk_ <= 8) {
-    return combineHiddenMode<Mode, Hidden, DispatchType, ScaleBlockSize, Layout, 8, KernelSelector>(
+    return combineHiddenMode<Mode, Hidden, DispatchType, ScaleBlockSize, Layout, 8, KernelSelector, Hierarchical>(
         output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer, dispatchRecvBuffer,
         context, numBlocks, stream);
   }
-  return combineHiddenMode<Mode, Hidden, DispatchType, ScaleBlockSize, Layout, MaxNumTopk, KernelSelector>(
-      output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer, dispatchRecvBuffer,
-      context, numBlocks, stream);
+  return combineHiddenMode<Mode, Hidden, DispatchType, ScaleBlockSize, Layout, MaxNumTopk, KernelSelector,
+                           Hierarchical>(output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload,
+                                         recvBuffer, dispatchRecvBuffer, context, numBlocks, stream);
 }
 
-template <CombineMode Mode, int Hidden, typename KernelSelector>
+template <CombineMode Mode, int Hidden, typename KernelSelector, bool Hierarchical = false>
 inline void combineHidden(void* output, const void* expertOutput, const int64_t* topkIndices, const float* topkWeights,
                           const int* srcInfo, const int64_t* layoutRange, const Workload& workload, void* recvBuffer,
                           void* dispatchRecvBuffer, const DeviceContext& context, int numBlocks, cudaStream_t stream) {
   if (workload.outputLayout_ == DispatchLayout::RANK_MAJOR) {
     switch (workload.combineDataType_) {
       case DispatchDataType::BF16:
-        return combineHiddenMode<Mode, Hidden, DispatchDataType::BF16, 0, DispatchLayout::RANK_MAJOR, KernelSelector>(
-            output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
-            dispatchRecvBuffer, context, numBlocks, stream);
+        return combineHiddenMode<Mode, Hidden, DispatchDataType::BF16, 0, DispatchLayout::RANK_MAJOR, KernelSelector,
+                                 Hierarchical>(output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange,
+                                               workload, recvBuffer, dispatchRecvBuffer, context, numBlocks, stream);
       case DispatchDataType::FP8_E4M3:
       case DispatchDataType::MXFP8_E4M3:
         break;
       case DispatchDataType::FP8_E4M3_STATIC:
         return combineHiddenMode<Mode, Hidden, DispatchDataType::FP8_E4M3_STATIC, 0, DispatchLayout::RANK_MAJOR,
-                                 KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange,
-                                                 workload, recvBuffer, dispatchRecvBuffer, context, numBlocks, stream);
+                                 KernelSelector, Hierarchical>(output, expertOutput, topkIndices, topkWeights, srcInfo,
+                                                               layoutRange, workload, recvBuffer, dispatchRecvBuffer,
+                                                               context, numBlocks, stream);
     }
     EP_HOST_ASSERT(false && "unsupported rank-major combine data type");
   }
-  if constexpr (Mode == CombineMode::RANK_LOCAL_REDUCE) {
-    switch (workload.dispatchDataType_) {
-      case DispatchDataType::BF16:
-        return combineHiddenMode<CombineMode::RANK_LOCAL_REDUCE, Hidden, DispatchDataType::BF16, 0,
-                                 DispatchLayout::EXPERT_MAJOR, KernelSelector>(
-            output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
-            dispatchRecvBuffer, context, numBlocks, stream);
-      case DispatchDataType::FP8_E4M3:
-        return combineHiddenMode<CombineMode::RANK_LOCAL_REDUCE, Hidden, DispatchDataType::FP8_E4M3, 128,
-                                 DispatchLayout::EXPERT_MAJOR, KernelSelector>(
-            output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
-            dispatchRecvBuffer, context, numBlocks, stream);
-      case DispatchDataType::MXFP8_E4M3:
-      case DispatchDataType::FP8_E4M3_STATIC:
-        break;
+  if constexpr (!Hierarchical) {
+    if constexpr (Mode == CombineMode::RANK_LOCAL_REDUCE) {
+      switch (workload.dispatchDataType_) {
+        case DispatchDataType::BF16:
+          return combineHiddenMode<CombineMode::RANK_LOCAL_REDUCE, Hidden, DispatchDataType::BF16, 0,
+                                   DispatchLayout::EXPERT_MAJOR, KernelSelector>(
+              output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
+              dispatchRecvBuffer, context, numBlocks, stream);
+        case DispatchDataType::FP8_E4M3:
+          return combineHiddenMode<CombineMode::RANK_LOCAL_REDUCE, Hidden, DispatchDataType::FP8_E4M3, 128,
+                                   DispatchLayout::EXPERT_MAJOR, KernelSelector>(
+              output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
+              dispatchRecvBuffer, context, numBlocks, stream);
+        case DispatchDataType::MXFP8_E4M3:
+        case DispatchDataType::FP8_E4M3_STATIC:
+          break;
+      }
+    } else {
+      switch (workload.dispatchDataType_) {
+        case DispatchDataType::BF16:
+          return combineHiddenMode<CombineMode::DIRECT_SEND, Hidden, DispatchDataType::BF16, 0,
+                                   DispatchLayout::EXPERT_MAJOR, KernelSelector>(
+              output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
+              dispatchRecvBuffer, context, numBlocks, stream);
+        case DispatchDataType::FP8_E4M3:
+          return combineHiddenMode<CombineMode::DIRECT_SEND, Hidden, DispatchDataType::FP8_E4M3, 128,
+                                   DispatchLayout::EXPERT_MAJOR, KernelSelector>(
+              output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
+              dispatchRecvBuffer, context, numBlocks, stream);
+        case DispatchDataType::MXFP8_E4M3:
+        case DispatchDataType::FP8_E4M3_STATIC:
+          break;
+      }
     }
-  } else {
-    switch (workload.dispatchDataType_) {
-      case DispatchDataType::BF16:
-        return combineHiddenMode<CombineMode::DIRECT_SEND, Hidden, DispatchDataType::BF16, 0,
-                                 DispatchLayout::EXPERT_MAJOR, KernelSelector>(
-            output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
-            dispatchRecvBuffer, context, numBlocks, stream);
-      case DispatchDataType::FP8_E4M3:
-        return combineHiddenMode<CombineMode::DIRECT_SEND, Hidden, DispatchDataType::FP8_E4M3, 128,
-                                 DispatchLayout::EXPERT_MAJOR, KernelSelector>(
-            output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
-            dispatchRecvBuffer, context, numBlocks, stream);
-      case DispatchDataType::MXFP8_E4M3:
-      case DispatchDataType::FP8_E4M3_STATIC:
-        break;
-    }
+    EP_HOST_ASSERT(false && "unsupported dispatch data type");
   }
-  EP_HOST_ASSERT(false && "unsupported dispatch data type");
 }
 
-template <CombineMode Mode, typename KernelSelector>
+template <CombineMode Mode, typename KernelSelector, bool Hierarchical = false>
 inline void combineAlgorithm(void* output, const void* expertOutput, const int64_t* topkIndices,
                              const float* topkWeights, const int* srcInfo, const int64_t* layoutRange,
                              const Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
@@ -382,7 +431,7 @@ inline void combineAlgorithm(void* output, const void* expertOutput, const int64
   EP_HOST_ASSERT(context.channels_ != nullptr);
   EP_HOST_ASSERT(context.workspace_ != nullptr);
   EP_HOST_ASSERT(context.devicePtr_ != nullptr);
-  EP_HOST_ASSERT(isSupportedRanks(nRanks));
+  EP_HOST_ASSERT(isSupportedRanks(nRanks, Hierarchical));
   EP_HOST_ASSERT(nExperts > 0 && nExperts % nRanks == 0);
   EP_HOST_ASSERT(rank >= 0 && rank < nRanks);
   EP_HOST_ASSERT(workload.numTokens_ >= 0 && workload.numTokens_ <= workload.maxTokensPerRank_);
@@ -404,77 +453,77 @@ inline void combineAlgorithm(void* output, const void* expertOutput, const int64
 
   switch (workload.hidden_) {
     case 256:
-      return combineHidden<Mode, 256, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
-                                                      layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
-                                                      numBlocks, stream);
+      return combineHidden<Mode, 256, KernelSelector, Hierarchical>(output, expertOutput, topkIndices, topkWeights,
+                                                                    srcInfo, layoutRange, workload, recvBuffer,
+                                                                    dispatchRecvBuffer, context, numBlocks, stream);
     case 512:
-      return combineHidden<Mode, 512, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
-                                                      layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
-                                                      numBlocks, stream);
+      return combineHidden<Mode, 512, KernelSelector, Hierarchical>(output, expertOutput, topkIndices, topkWeights,
+                                                                    srcInfo, layoutRange, workload, recvBuffer,
+                                                                    dispatchRecvBuffer, context, numBlocks, stream);
     case 768:
-      return combineHidden<Mode, 768, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
-                                                      layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
-                                                      numBlocks, stream);
+      return combineHidden<Mode, 768, KernelSelector, Hierarchical>(output, expertOutput, topkIndices, topkWeights,
+                                                                    srcInfo, layoutRange, workload, recvBuffer,
+                                                                    dispatchRecvBuffer, context, numBlocks, stream);
     case 1024:
-      return combineHidden<Mode, 1024, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
-                                                       layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
-                                                       numBlocks, stream);
+      return combineHidden<Mode, 1024, KernelSelector, Hierarchical>(output, expertOutput, topkIndices, topkWeights,
+                                                                     srcInfo, layoutRange, workload, recvBuffer,
+                                                                     dispatchRecvBuffer, context, numBlocks, stream);
     case 1280:
-      return combineHidden<Mode, 1280, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
-                                                       layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
-                                                       numBlocks, stream);
+      return combineHidden<Mode, 1280, KernelSelector, Hierarchical>(output, expertOutput, topkIndices, topkWeights,
+                                                                     srcInfo, layoutRange, workload, recvBuffer,
+                                                                     dispatchRecvBuffer, context, numBlocks, stream);
     case 1536:
-      return combineHidden<Mode, 1536, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
-                                                       layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
-                                                       numBlocks, stream);
+      return combineHidden<Mode, 1536, KernelSelector, Hierarchical>(output, expertOutput, topkIndices, topkWeights,
+                                                                     srcInfo, layoutRange, workload, recvBuffer,
+                                                                     dispatchRecvBuffer, context, numBlocks, stream);
     case 1792:
-      return combineHidden<Mode, 1792, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
-                                                       layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
-                                                       numBlocks, stream);
+      return combineHidden<Mode, 1792, KernelSelector, Hierarchical>(output, expertOutput, topkIndices, topkWeights,
+                                                                     srcInfo, layoutRange, workload, recvBuffer,
+                                                                     dispatchRecvBuffer, context, numBlocks, stream);
     case 2048:
-      return combineHidden<Mode, 2048, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
-                                                       layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
-                                                       numBlocks, stream);
+      return combineHidden<Mode, 2048, KernelSelector, Hierarchical>(output, expertOutput, topkIndices, topkWeights,
+                                                                     srcInfo, layoutRange, workload, recvBuffer,
+                                                                     dispatchRecvBuffer, context, numBlocks, stream);
     case 2560:
-      return combineHidden<Mode, 2560, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
-                                                       layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
-                                                       numBlocks, stream);
+      return combineHidden<Mode, 2560, KernelSelector, Hierarchical>(output, expertOutput, topkIndices, topkWeights,
+                                                                     srcInfo, layoutRange, workload, recvBuffer,
+                                                                     dispatchRecvBuffer, context, numBlocks, stream);
     case 4096:
-      return combineHidden<Mode, 4096, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
-                                                       layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
-                                                       numBlocks, stream);
+      return combineHidden<Mode, 4096, KernelSelector, Hierarchical>(output, expertOutput, topkIndices, topkWeights,
+                                                                     srcInfo, layoutRange, workload, recvBuffer,
+                                                                     dispatchRecvBuffer, context, numBlocks, stream);
     case 4352:
-      return combineHidden<Mode, 4352, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
-                                                       layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
-                                                       numBlocks, stream);
+      return combineHidden<Mode, 4352, KernelSelector, Hierarchical>(output, expertOutput, topkIndices, topkWeights,
+                                                                     srcInfo, layoutRange, workload, recvBuffer,
+                                                                     dispatchRecvBuffer, context, numBlocks, stream);
     case 5120:
-      return combineHidden<Mode, 5120, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
-                                                       layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
-                                                       numBlocks, stream);
+      return combineHidden<Mode, 5120, KernelSelector, Hierarchical>(output, expertOutput, topkIndices, topkWeights,
+                                                                     srcInfo, layoutRange, workload, recvBuffer,
+                                                                     dispatchRecvBuffer, context, numBlocks, stream);
     case 5376:
-      return combineHidden<Mode, 5376, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
-                                                       layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
-                                                       numBlocks, stream);
+      return combineHidden<Mode, 5376, KernelSelector, Hierarchical>(output, expertOutput, topkIndices, topkWeights,
+                                                                     srcInfo, layoutRange, workload, recvBuffer,
+                                                                     dispatchRecvBuffer, context, numBlocks, stream);
     case 6656:
-      return combineHidden<Mode, 6656, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
-                                                       layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
-                                                       numBlocks, stream);
+      return combineHidden<Mode, 6656, KernelSelector, Hierarchical>(output, expertOutput, topkIndices, topkWeights,
+                                                                     srcInfo, layoutRange, workload, recvBuffer,
+                                                                     dispatchRecvBuffer, context, numBlocks, stream);
     case 7168:
-      return combineHidden<Mode, 7168, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
-                                                       layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
-                                                       numBlocks, stream);
+      return combineHidden<Mode, 7168, KernelSelector, Hierarchical>(output, expertOutput, topkIndices, topkWeights,
+                                                                     srcInfo, layoutRange, workload, recvBuffer,
+                                                                     dispatchRecvBuffer, context, numBlocks, stream);
     case 8192:
-      return combineHidden<Mode, 8192, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
-                                                       layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
-                                                       numBlocks, stream);
+      return combineHidden<Mode, 8192, KernelSelector, Hierarchical>(output, expertOutput, topkIndices, topkWeights,
+                                                                     srcInfo, layoutRange, workload, recvBuffer,
+                                                                     dispatchRecvBuffer, context, numBlocks, stream);
     case 8704:
-      return combineHidden<Mode, 8704, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
-                                                       layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
-                                                       numBlocks, stream);
+      return combineHidden<Mode, 8704, KernelSelector, Hierarchical>(output, expertOutput, topkIndices, topkWeights,
+                                                                     srcInfo, layoutRange, workload, recvBuffer,
+                                                                     dispatchRecvBuffer, context, numBlocks, stream);
     case 9216:
-      return combineHidden<Mode, 9216, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
-                                                       layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
-                                                       numBlocks, stream);
+      return combineHidden<Mode, 9216, KernelSelector, Hierarchical>(output, expertOutput, topkIndices, topkWeights,
+                                                                     srcInfo, layoutRange, workload, recvBuffer,
+                                                                     dispatchRecvBuffer, context, numBlocks, stream);
     default:
       EP_HOST_ASSERT(false && "unsupported latency combine hidden size");
   }

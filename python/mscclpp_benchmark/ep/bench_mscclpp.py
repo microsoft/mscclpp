@@ -43,8 +43,9 @@ def _stage_expert_output(dispatch_out, config):
             expert_output = torch.addcmul(expert_output, tokens, weight[..., None])
     quant = dispatch_out.quant
     if quant is not None and quant.combine_format == ep.DispatchDataType.FP8_E4M3_STATIC:
+        combine_scale = quant.scale[1] if isinstance(quant.scale, tuple) else quant.scale
         dispatch_out.combine_input_buffer.copy_(
-            (expert_output * quant.scale).clamp(-448.0, 448.0).to(torch.float8_e4m3fn)
+            (expert_output * combine_scale).clamp(-448.0, 448.0).to(torch.float8_e4m3fn)
         )
     else:
         dispatch_out.combine_input_buffer.copy_(expert_output.to(torch.bfloat16))
@@ -53,11 +54,16 @@ def _stage_expert_output(dispatch_out, config):
 
 def _expected_output(x, topk_idx, topk_weights, config, num_ranks):
     import mscclpp.ep as ep
+    from mscclpp.ep.utils import _unpack_scale
 
     expected = torch.zeros_like(x, dtype=torch.float32)
     x_float = x.float()
     quant = config.quant
-    static_scale = quant.scale if quant is not None and quant.format == ep.DispatchDataType.FP8_E4M3_STATIC else None
+    static_scale, combine_scale = _unpack_scale(
+        quant.scale if quant is not None and quant.format == ep.DispatchDataType.FP8_E4M3_STATIC else None
+    )
+    if combine_scale is None:
+        combine_scale = static_scale
     combine_fp8 = quant is not None and quant.combine_format == ep.DispatchDataType.FP8_E4M3_STATIC
     if static_scale is not None:
         scaled = (x_float * static_scale).clamp(-448.0, 448.0)
@@ -82,13 +88,13 @@ def _expected_output(x, topk_idx, topk_weights, config, num_ranks):
 
     def stage(values):
         if combine_fp8:
-            return (values * static_scale).clamp(-448.0, 448.0).to(torch.float8_e4m3fn).float() / static_scale
+            return (values * combine_scale).clamp(-448.0, 448.0).to(torch.float8_e4m3fn).float() / combine_scale
         return values.to(torch.bfloat16).float()
 
     if config.combine_mode == ep.CombineMode.DIRECT_SEND:
         if combine_fp8:
-            q = (x_float * static_scale).clamp(-448.0, 448.0).to(torch.float8_e4m3fn).float()
-            dequant_scale = float(torch.tensor(1.0 / static_scale, dtype=torch.float32).item())
+            q = (x_float * combine_scale).clamp(-448.0, 448.0).to(torch.float8_e4m3fn).float()
+            dequant_scale = float(torch.tensor(1.0 / combine_scale, dtype=torch.float32).item())
             for lane in range(config.topk):
                 weight = topk_weights[:, lane].masked_fill(topk_idx[:, lane] < 0, 0) * dequant_scale
                 expected = torch.addcmul(expected, q, weight[:, None])
@@ -98,7 +104,7 @@ def _expected_output(x, topk_idx, topk_weights, config, num_ranks):
                 weight = topk_weights[:, lane].masked_fill(topk_idx[:, lane] < 0, 0)
                 expected = torch.addcmul(expected, staged, weight[:, None])
     else:
-        dequant_scale = float(torch.tensor(1.0 / static_scale, dtype=torch.float32).item()) if combine_fp8 else 1.0
+        dequant_scale = float(torch.tensor(1.0 / combine_scale, dtype=torch.float32).item()) if combine_fp8 else 1.0
         dest_ranks = torch.where(topk_idx >= 0, topk_idx // config.num_local_experts, -1)
         for stage_lane in range(config.topk):
             dest = dest_ranks[:, stage_lane]
@@ -111,7 +117,7 @@ def _expected_output(x, topk_idx, topk_weights, config, num_ranks):
                 weight = topk_weights[:, lane].masked_fill(~selected, 0)
                 partial = torch.addcmul(partial, x_float, weight[:, None])
             if combine_fp8:
-                q = (partial * static_scale).clamp(-448.0, 448.0).to(torch.float8_e4m3fn).float()
+                q = (partial * combine_scale).clamp(-448.0, 448.0).to(torch.float8_e4m3fn).float()
                 q = torch.where(first_for_dest[:, None], q, 0.0)
                 expected = torch.addcmul(expected, q, torch.full_like(q[:, :1], dequant_scale))
             else:
@@ -166,6 +172,13 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
     )
     quant = _build_quant_config(args, mode, layout)
     group = CommGroup(mpi_comm=comm)
+    hierarchical_options = {}
+    if args.qps_per_peer is not None:
+        hierarchical_options["qps_per_peer"] = args.qps_per_peer
+    if args.n_tokens_per_chunk is not None:
+        hierarchical_options["n_tokens_per_chunk"] = args.n_tokens_per_chunk
+    if getattr(args, "combine_inter_domain_dtype", "fp32") == "bf16":
+        hierarchical_options["combine_inter_domain_dtype"] = torch.bfloat16
     config = ep.MoECommunicatorConfig(
         comm=group,
         num_experts=args.num_experts,
@@ -177,6 +190,7 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         combine_mode=combine_mode,
         output_layout=layout,
         quant=quant,
+        **hierarchical_options,
     )
     moe = ep.MoECommunicator(config)
     if not moe.is_available():
@@ -212,7 +226,8 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
         and quant.format == ep.DispatchDataType.FP8_E4M3_STATIC
         and quant.input_mode == ep.QuantConfig.InputMode.PREQUANTIZED
     ):
-        dispatch_input = (x.float() * quant.scale).clamp(-448.0, 448.0).to(torch.float8_e4m3fn)
+        dispatch_scale = quant.scale[0] if isinstance(quant.scale, tuple) else quant.scale
+        dispatch_input = (x.float() * dispatch_scale).clamp(-448.0, 448.0).to(torch.float8_e4m3fn)
     output_buffer = moe.get_dispatch_output_buffer()
     out = torch.empty_like(x)
 
@@ -236,8 +251,11 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
             out,
             expected,
             comm,
-            exact=combine_mode == ep.CombineMode.DIRECT_SEND
-            or (layout == ep.DispatchLayout.RANK_MAJOR and mode == ep.MoEMode.LATENCY),
+            exact=group.nranks_per_ipc_domain == num_ranks
+            and (
+                combine_mode == ep.CombineMode.DIRECT_SEND
+                or (layout == ep.DispatchLayout.RANK_MAJOR and mode == ep.MoEMode.LATENCY)
+            ),
         )
         if rank == 0:
             print(f"[validate] mscclpp combine OK max|got-expected|={diff:.4e}", flush=True)
@@ -272,7 +290,10 @@ def setup_mscclpp(args, comm, rank, num_ranks, inputs):
             f"[cfg] backend=mscclpp algorithm={args.mode.upper()} layout={layout} "
             f"combine_mode={combine_mode} num_ranks={num_ranks} tokens/rank={args.num_tokens} "
             f"hidden={args.hidden} num_experts={args.num_experts} top_k={args.num_topk} "
-            f"num_blocks={moe.num_blocks} dispatch_dtype={args.dispatch_dtype} combine_dtype={args.combine_dtype}",
+            f"num_blocks={moe.num_blocks} dispatch_dtype={args.dispatch_dtype} combine_dtype={args.combine_dtype} "
+            f"ipc_domain={group.nranks_per_ipc_domain} qps_per_peer={config.qps_per_peer} "
+            f"n_tokens_per_chunk={config.n_tokens_per_chunk} "
+            f"combine_inter_domain_dtype={config.combine_inter_domain_dtype}",
             flush=True,
         )
 

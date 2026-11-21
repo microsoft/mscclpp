@@ -1,9 +1,10 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #ifndef MSCCLPP_GPU_DATA_TYPES_HPP_
 #define MSCCLPP_GPU_DATA_TYPES_HPP_
 
+#include <cstdint>
 #include <mscclpp/device.hpp>
 
 #if defined(MSCCLPP_DEVICE_HIP)

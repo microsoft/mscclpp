@@ -20,8 +20,28 @@ namespace ep {
 
 inline constexpr size_t BufferAlignmentBytes = 128;
 inline constexpr int MaxNumTopk = 16;
+inline constexpr int MaxSingleDomainRanks = 64;
+inline constexpr int MaxNumRanks = 128;
 
-inline constexpr bool isSupportedRanks(int numRanks) { return numRanks > 0 && numRanks <= 64; }
+inline constexpr int MaxQpsPerPeer = 4;
+inline constexpr int HierarchicalMaxForwardBlocks = 16;
+inline constexpr int HierarchicalMaxProduceGroups = 4;
+
+inline constexpr bool isSupportedRanks(int numRanks, bool hierarchical = false) {
+  return numRanks > 0 && numRanks <= (hierarchical ? MaxNumRanks : MaxSingleDomainRanks);
+}
+
+MSCCLPP_HOST_DEVICE_INLINE constexpr bool isHierarchical(int numRanks, int numRanksPerIpcDomain,
+                                                         DispatchLayout outputLayout) {
+#if (defined(MSCCLPP_USE_CUDA) || defined(MSCCLPP_DEVICE_CUDA)) && defined(USE_IBVERBS)
+  return numRanksPerIpcDomain < numRanks && outputLayout == DispatchLayout::RANK_MAJOR;
+#else
+  (void)numRanks;
+  (void)numRanksPerIpcDomain;
+  (void)outputLayout;
+  return false;
+#endif
+}
 
 template <typename dtype_t>
 MSCCLPP_HOST_DEVICE_INLINE constexpr dtype_t configCellDiv(dtype_t a, dtype_t b) {
@@ -32,6 +52,75 @@ template <typename dtype_t>
 MSCCLPP_HOST_DEVICE_INLINE constexpr dtype_t configAlign(dtype_t a, dtype_t b) {
   return configCellDiv<dtype_t>(a, b) * b;
 }
+
+// Inter-domain (hierarchical) dispatch RDMA payload layout per compact remote token:
+//
+//   [data: ElementType[hidden]]
+//   [optional scales: uint8_t[hidden / 32], padded to 16 bytes for TMA]
+//   [expertIds: int[topk]]
+//   [topkWeights: float[topk]]
+//   [dstSlots: int[topk] (compact token index on each destination rank)]
+//
+// Each token payload is 128-byte aligned (BufferAlignmentBytes) for TMA bulkLoad.
+struct InterDomainDispatchPayload {
+  int* expertIds_;
+  float* topkWeights_;
+  int* dstSlots_;
+
+  MSCCLPP_HOST_DEVICE_INLINE static constexpr size_t payloadBytes(int hidden, size_t elementBytes = sizeof(uint16_t),
+                                                                  size_t scaleBytes = 0) {
+    return configAlign<size_t>(static_cast<size_t>(hidden) * elementBytes + scaleBytes, 16);
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE static constexpr size_t stride(int hidden, int topk,
+                                                            size_t elementBytes = sizeof(uint16_t),
+                                                            size_t scaleBytes = 0) {
+    const size_t metadataBytes = static_cast<size_t>(topk) * (sizeof(int) + sizeof(float) + sizeof(int));
+    return configAlign<size_t>(payloadBytes(hidden, elementBytes, scaleBytes) + metadataBytes, BufferAlignmentBytes);
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE InterDomainDispatchPayload(void* token, int hidden, int topk,
+                                                        size_t elementBytes = sizeof(uint16_t), size_t scaleBytes = 0)
+      : expertIds_(
+            reinterpret_cast<int*>(reinterpret_cast<uint8_t*>(token) + payloadBytes(hidden, elementBytes, scaleBytes))),
+        topkWeights_(reinterpret_cast<float*>(expertIds_ + topk)),
+        dstSlots_(reinterpret_cast<int*>(topkWeights_ + topk)) {}
+};
+
+struct alignas(BufferAlignmentBytes) InterDomainDispatchHeader {
+  mscclpp::LL8Packet nRemoteTokens;
+  mscclpp::LL8Packet nTokensPerRank[MaxNumRanks];
+
+  MSCCLPP_HOST_DEVICE_INLINE static constexpr size_t wireBytes(int nRanks) {
+    return static_cast<size_t>(1 + nRanks) * sizeof(mscclpp::LL8Packet);
+  }
+};
+
+struct HierarchicalDispatchScratch {
+  int nRemoteTokens;
+  int nCompletedForwarders;
+  int forwardComplete;
+  int chunkReadySignals[1];
+
+  MSCCLPP_HOST_DEVICE_INLINE static constexpr size_t numInts(int maxTokensPerRank, int nTokensPerChunk) {
+    return offsetof(HierarchicalDispatchScratch, chunkReadySignals) / sizeof(int) +
+           static_cast<size_t>(configCellDiv(maxTokensPerRank, nTokensPerChunk));
+  }
+};
+
+constexpr int HierarchicalDispatchControlQueueIdx = 0;
+
+struct alignas(BufferAlignmentBytes) HierarchicalDispatchControl {
+  uint64_t qpSignals[MaxQpsPerPeer];
+  uint64_t completionSignal;
+  alignas(BufferAlignmentBytes) uint32_t payloadReady[MaxNumRanks];
+  InterDomainDispatchHeader sendHeader;
+  InterDomainDispatchHeader recvHeader;
+};
+
+struct alignas(BufferAlignmentBytes) HierarchicalCombineControl {
+  uint64_t qpSignals[MaxQpsPerPeer];
+};
 
 using Bf16 = typename mscclpp::bf16x2::ElementType;
 using Fp8E4M3 = typename mscclpp::f8_e4m3x2::ElementType;
@@ -167,8 +256,7 @@ struct LatencyPayloadView {
 };
 
 MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTopkIdsOffset(int numRanks, int numExperts) {
-  return configAlign<size_t>(static_cast<size_t>(numRanks + numExperts) * sizeof(mscclpp::LL8Packet),
-                             BufferAlignmentBytes);
+  return configAlign<size_t>(static_cast<size_t>(numRanks + numExperts) * sizeof(uint64_t), BufferAlignmentBytes);
 }
 
 MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTopkWeightsOffset(int numRanks, int numExperts, int maxTokensPerRank,
@@ -187,6 +275,12 @@ MSCCLPP_HOST_DEVICE_INLINE size_t rankMajorTokenOffset(int numRanks, int numExpe
 
 struct LatencyStorageLayout {
   size_t totalBytes_;
+  void* hierarchicalDispatchSendBuffer_ = nullptr;
+  void* hierarchicalDispatchRecvBuffer_ = nullptr;
+  HierarchicalDispatchControl* hierarchicalDispatchControl_ = nullptr;
+  void* hierarchicalCombineSendBuffer_ = nullptr;
+  void* hierarchicalCombineRecvBuffer_ = nullptr;
+  HierarchicalCombineControl* hierarchicalCombineControl_ = nullptr;
   void* dispatchRecvBuffer_ = nullptr;
   // Rank-major expert input or expert-major receive staging.
   void* combineBuffer_ = nullptr;
@@ -195,8 +289,10 @@ struct LatencyStorageLayout {
   void* rankMajorScalesBuffer_ = nullptr;
   void* dispatchOutputBuffer_ = nullptr;
 
-  LatencyStorageLayout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numExperts,
-                       int numTopk, DispatchLayout outputLayout, CombineMode combineMode) {
+  LatencyStorageLayout(void* symmetricBuffer, int maxTokensPerRank, int hidden, int numRanks, int numRanksPerIpcDomain,
+                       int numExperts, int numTopk, DispatchLayout outputLayout, CombineMode combineMode,
+                       mscclpp::DataType combineInterDomainDtype = mscclpp::DataType::FLOAT32) {
+    const bool hierarchical = isHierarchical(numRanks, numRanksPerIpcDomain, outputLayout);
     const bool rankMajor = outputLayout == DispatchLayout::RANK_MAJOR;
     const bool rankMajorDirectSend = rankMajor && combineMode == CombineMode::DIRECT_SEND;
     const bool rankMajorLocalReduce = rankMajor && combineMode == CombineMode::RANK_LOCAL_REDUCE;
@@ -233,6 +329,20 @@ struct LatencyStorageLayout {
     totalBytes_ = alignedDispatchRecvBufferBytes + alignedCombineBufferBytes +
                   (rankMajor ? 0 : configAlign<size_t>(dispatchOutputBytes, BufferAlignmentBytes));
 
+    const size_t hierarchicalDispatchOffset = totalBytes_;
+    const size_t hierarchicalDispatchBytes =
+        hierarchical ? static_cast<size_t>(maxTokensPerRank) * InterDomainDispatchPayload::stride(hidden, numTopk) : 0;
+    if (hierarchical) totalBytes_ += 2 * hierarchicalDispatchBytes + sizeof(HierarchicalDispatchControl);
+    const size_t hierarchicalCombineOffset = totalBytes_;
+    const size_t hierarchicalCombineElemBytes =
+        combineInterDomainDtype == mscclpp::DataType::BFLOAT16 ? sizeof(Bf16) : sizeof(float);
+    const size_t hierarchicalCombineBytes =
+        hierarchical
+            ? configAlign<size_t>(static_cast<size_t>(maxTokensPerRank) * hidden * hierarchicalCombineElemBytes,
+                                  BufferAlignmentBytes)
+            : 0;
+    if (hierarchical) totalBytes_ += 2 * hierarchicalCombineBytes + sizeof(HierarchicalCombineControl);
+
     if (symmetricBuffer != nullptr) {
       auto* base = reinterpret_cast<uint8_t*>(symmetricBuffer);
       dispatchRecvBuffer_ = base;
@@ -242,15 +352,26 @@ struct LatencyStorageLayout {
       dispatchOutputBuffer_ = rankMajor ? base + rankMajorTokenOffsetBytes
                                         : base + alignedDispatchRecvBufferBytes + alignedCombineBufferBytes;
       combineBuffer_ = base + alignedDispatchRecvBufferBytes;
+      if (hierarchical) {
+        hierarchicalDispatchSendBuffer_ = base + hierarchicalDispatchOffset;
+        hierarchicalDispatchRecvBuffer_ = base + hierarchicalDispatchOffset + hierarchicalDispatchBytes;
+        hierarchicalDispatchControl_ = reinterpret_cast<HierarchicalDispatchControl*>(
+            base + hierarchicalDispatchOffset + 2 * hierarchicalDispatchBytes);
+        hierarchicalCombineSendBuffer_ = base + hierarchicalCombineOffset;
+        hierarchicalCombineRecvBuffer_ = base + hierarchicalCombineOffset + hierarchicalCombineBytes;
+        hierarchicalCombineControl_ = reinterpret_cast<HierarchicalCombineControl*>(base + hierarchicalCombineOffset +
+                                                                                    2 * hierarchicalCombineBytes);
+      }
     }
   }
 };
 
-inline size_t latencyStorageSize(int maxTokensPerRank, int hidden, int numRanks, int numExperts, int numTopk,
-                                 DispatchLayout outputLayout, CombineMode combineMode) {
-  const auto numBytes =
-      LatencyStorageLayout(nullptr, maxTokensPerRank, hidden, numRanks, numExperts, numTopk, outputLayout, combineMode)
-          .totalBytes_;
+inline size_t latencyStorageSize(int maxTokensPerRank, int hidden, int numRanks, int numRanksPerIpcDomain,
+                                 int numExperts, int numTopk, DispatchLayout outputLayout, CombineMode combineMode,
+                                 mscclpp::DataType combineInterDomainDtype = mscclpp::DataType::FLOAT32) {
+  const auto numBytes = LatencyStorageLayout(nullptr, maxTokensPerRank, hidden, numRanks, numRanksPerIpcDomain,
+                                             numExperts, numTopk, outputLayout, combineMode, combineInterDomainDtype)
+                            .totalBytes_;
   return configAlign<size_t>(numBytes, BufferAlignmentBytes);
 }
 
