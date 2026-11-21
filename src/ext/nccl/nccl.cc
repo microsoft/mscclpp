@@ -572,6 +572,15 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
 
+  if (!isNcclDataTypeSupportedByMscclpp(datatype)) {
+    if (mscclppNcclDlopenSharedLib == true) {
+      return mscclppNcclOps.Broadcast(sendbuff, recvbuff, count, datatype, root,
+                                      *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
+    }
+    WARN(MSCCLPP_NCCL, "Unsupported datatype ", datatype, " for broadcast and no NCCL fallback is loaded");
+    return ncclInvalidArgument;
+  }
+
   mscclpp::DataType dtype = ncclDataTypeToMscclpp(datatype);
   static std::unordered_map<std::string, std::vector<uint64_t>> hints{{"root", {static_cast<uint64_t>(root)}}};
   hints["root"][0] = static_cast<uint64_t>(root);
@@ -630,6 +639,14 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
     return mscclppNcclOps.AllReduce(sendbuff, recvbuff, count, datatype, reductionOperation,
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
+  if (!isNcclDataTypeSupportedByMscclpp(datatype)) {
+    if (mscclppNcclDlopenSharedLib == true) {
+      return mscclppNcclOps.AllReduce(sendbuff, recvbuff, count, datatype, reductionOperation,
+                                      *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
+    }
+    WARN(MSCCLPP_NCCL, "Unsupported datatype ", datatype, " for AllReduce and no NCCL fallback is loaded");
+    return ncclInvalidArgument;
+  }
   mscclpp::DataType dtype = ncclDataTypeToMscclpp(datatype);
   const bool symmetricMemory = mscclpp::env()->ncclSymmetricMemory;
   mscclpp::CollectiveRequest request = {.worldSize = comm->worldSize,
@@ -687,6 +704,14 @@ NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, si
 
   int rank = comm->comm->bootstrap()->getRank();
   int nRank = comm->comm->bootstrap()->getNranks();
+  if (!isNcclDataTypeSupportedByMscclpp(datatype)) {
+    if (mscclppNcclDlopenSharedLib == true) {
+      return mscclppNcclOps.ReduceScatter(sendbuff, recvbuff, recvcount, datatype, op,
+                                          *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
+    }
+    WARN(MSCCLPP_NCCL, "Unsupported datatype ", datatype, " for ReduceScatter and no NCCL fallback is loaded");
+    return ncclInvalidArgument;
+  }
   mscclpp::DataType dtype = ncclDataTypeToMscclpp(datatype);
   const bool symmetricMemory = mscclpp::env()->ncclSymmetricMemory;
   mscclpp::CollectiveRequest request = {.worldSize = comm->worldSize,
@@ -740,6 +765,15 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
   if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList("allgather", fallbackList)) {
     return mscclppNcclOps.AllGather(sendbuff, recvbuff, sendcount, datatype,
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
+  }
+
+  if (!isNcclDataTypeSupportedByMscclpp(datatype)) {
+    if (mscclppNcclDlopenSharedLib == true) {
+      return mscclppNcclOps.AllGather(sendbuff, recvbuff, sendcount, datatype,
+                                      *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
+    }
+    WARN(MSCCLPP_NCCL, "Unsupported datatype ", datatype, " for AllGather and no NCCL fallback is loaded");
+    return ncclInvalidArgument;
   }
 
   mscclpp::DataType dtype = ncclDataTypeToMscclpp(datatype);

@@ -11,6 +11,25 @@
 
 #include "logger.hpp"
 
+// Whether ncclDataTypeToMscclpp can convert this NCCL datatype.
+inline bool isNcclDataTypeSupportedByMscclpp(ncclDataType_t dtype) {
+  switch (dtype) {
+    case ncclInt32:
+    case ncclUint32:
+    case ncclUint8:
+    case ncclFloat16:
+    case ncclFloat32:
+    case ncclBfloat16:
+#ifdef __FP8_TYPES_EXIST__
+    case ncclFloat8e4m3:
+    case ncclFloat8e5m2:
+#endif
+      return true;
+    default:
+      return false;
+  }
+}
+
 // Convert ncclDataType_t to mscclpp::DataType
 inline mscclpp::DataType ncclDataTypeToMscclpp(ncclDataType_t dtype) {
   switch (dtype) {
