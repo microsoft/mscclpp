@@ -299,8 +299,8 @@ Runtime views are reused by later operations, not independent results.
 
 ## Cross-domain hierarchical latency `RANK_MAJOR`
 
-Cross-domain EP maps each GPU to its RDMA transport using `MSCCLPP_HCA_DEVICES`
-when set, or the default `ibverbs` device order otherwise.
+Cross-domain EP maps each GPU (`0`–`7`) to `Transport::IB0`–`IB7` using
+`MSCCLPP_HCA_DEVICES` when set, or the default `ibverbs` device order otherwise.
 `qps_per_peer` (`qpsPerPeer`, 1–4, default 4) sets the QPs per peer, and
 `n_tokens_per_chunk` (`nTokensPerChunk`, 1–128, default 8) sets the tokens per
 RDMA chunk. Hierarchical dispatch and combine stripe chunks round-robin across all

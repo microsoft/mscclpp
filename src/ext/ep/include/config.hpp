@@ -20,13 +20,16 @@ namespace ep {
 
 inline constexpr size_t BufferAlignmentBytes = 128;
 inline constexpr int MaxNumTopk = 16;
+inline constexpr int MaxSingleDomainRanks = 64;
 inline constexpr int MaxNumRanks = 128;
 
 inline constexpr int MaxQpsPerPeer = 4;
 inline constexpr int HierarchicalMaxForwardBlocks = 16;
 inline constexpr int HierarchicalMaxProduceGroups = 4;
 
-inline constexpr bool isSupportedRanks(int numRanks) { return numRanks > 0 && numRanks <= MaxNumRanks; }
+inline constexpr bool isSupportedRanks(int numRanks, bool hierarchical = false) {
+  return numRanks > 0 && numRanks <= (hierarchical ? MaxNumRanks : MaxSingleDomainRanks);
+}
 
 MSCCLPP_HOST_DEVICE_INLINE constexpr bool isHierarchical(int numRanks, int numRanksPerIpcDomain,
                                                          DispatchLayout outputLayout) {

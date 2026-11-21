@@ -218,7 +218,7 @@ inline void dispatchAlgorithm(void* output, void* outputScales, int* outputSrcIn
   const int nRanks = context.numRanks_;
   const int numWorkerBlocks = numBlocks - DispatchControlBlocks;
 
-  EP_HOST_ASSERT(isSupportedRanks(nRanks));
+  EP_HOST_ASSERT(isSupportedRanks(nRanks, Hierarchical));
   EP_HOST_ASSERT(nExperts > 0);
   EP_HOST_ASSERT(nExperts % nRanks == 0);
   EP_HOST_ASSERT(rank >= 0 && rank < nRanks);

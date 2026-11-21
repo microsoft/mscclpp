@@ -56,7 +56,10 @@ LatencyRuntimeContext::LatencyRuntimeContext(mscclpp::Communicator& communicator
   symmetricBufferBytes_ = static_cast<int64_t>(storageLayout().totalBytes_);
   workspaceBytes_ = workspaceSize(numRanks_, numExperts, maxTokensPerRank, numTopk);
   EP_HOST_ASSERT(symmetricBufferBytes_ % BufferAlignmentBytes == 0);
-  available_ = isSupportedRanks(numRanks_) && (numRanksPerIpcDomain_ >= numRanks_ || isHierarchical_);
+  available_ = isSupportedRanks(numRanks_, isHierarchical_) &&
+               (!isHierarchical_ ? numRanksPerIpcDomain_ >= numRanks_
+                                 : (numRanks_ > 1 && numRanks_ == 2 * numRanksPerIpcDomain_ &&
+                                    numRanksPerIpcDomain_ <= MaxSingleDomainRanks));
 }
 
 LatencyRuntimeContext::~LatencyRuntimeContext() noexcept(false) {
@@ -80,9 +83,17 @@ void LatencyRuntimeContext::initialize() {
   EP_HOST_ASSERT(symmetricBuffer_ == nullptr);
   AvoidCudaGraphCaptureGuard captureGuard;
 
+  static constexpr std::array<mscclpp::Transport, 8> IbTransports = {
+      mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2, mscclpp::Transport::IB3,
+      mscclpp::Transport::IB4, mscclpp::Transport::IB5, mscclpp::Transport::IB6, mscclpp::Transport::IB7,
+  };
+
   if (isHierarchical_) {
     if (numRanks_ <= 1 || numRanks_ > MaxNumRanks || numRanks_ % 2 != 0 || numRanks_ != 2 * numRanksPerIpcDomain_) {
       EP_THROW("Hierarchical dispatch requires exactly two equal, fully IPC-mapped domains");
+    }
+    if (deviceId_ < 0 || deviceId_ >= static_cast<int>(IbTransports.size())) {
+      EP_THROW("CUDA device ID " + std::to_string(deviceId_) + " exceeds supported IB transports (IB0-IB7)");
     }
     if (qpsPerPeer_ < 1 || qpsPerPeer_ > MaxQpsPerPeer) {
       EP_THROW("Hierarchical dispatch requires qpsPerPeer in [1, 4]");
@@ -115,7 +126,7 @@ void LatencyRuntimeContext::initialize() {
       communicator_.registerMemory(symmetricBuffer_.get(), symmetricBufferBytes_, ipcTransport);
   mscclpp::Transport rdmaTransport = mscclpp::Transport::Unknown;
   if (isHierarchical_) {
-    rdmaTransport = static_cast<mscclpp::Transport>(static_cast<int>(mscclpp::Transport::IB0) + deviceId_);
+    rdmaTransport = IbTransports[static_cast<size_t>(deviceId_)];
     rdmaLocalMemory_ = communicator_.registerMemory(symmetricBuffer_.get(), symmetricBufferBytes_, rdmaTransport);
   }
   const int gatewayRank = isHierarchical_ ? (rank_ + ipcDomainSize) % numRanks_ : -1;

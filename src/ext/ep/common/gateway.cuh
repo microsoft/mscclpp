@@ -244,6 +244,8 @@ class Gateway {
       }
     }
     if (__shfl_sync(0xffffffffu, isLast, 0)) {
+      // Transfer lane 0's AcqRel ordering on nCompletedForwarders to all warp lanes before publishing readiness.
+      __syncwarp();
       for (int peerIdx = laneIdx; peerIdx < nRanks; peerIdx += WARP_SIZE) {
         if (transport_.isIntraDomainPeer(peerIdx)) {
           auto* target = static_cast<uint32_t*>(transport_.mappedBuffer(peerReadyFlags, peerIdx));
