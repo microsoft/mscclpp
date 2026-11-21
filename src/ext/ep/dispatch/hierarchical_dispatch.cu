@@ -115,6 +115,7 @@ MSCCLPP_DEVICE_INLINE void sendTokenIntraDomain(void* output, void* outputScales
   sendTokenMetaIntraDomain(transport, outputIds, outputWeights, sourceRank, dstRank, slotIdx, outputExpertIdx, weight,
                            leaderMask, workload.numTopk_, workload.maxTokensPerRank_, workload.invalidTokenExpertId_);
   if (isLocalLeader) mscclpp::bulkStoreWait();
+  __syncwarp();
 }
 
 // Producer blocks: quantize or TMA-load input tokens with SM-first token striding, prioritize inter-domain

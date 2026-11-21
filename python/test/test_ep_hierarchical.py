@@ -243,6 +243,18 @@ def test_latency_hierarchical_send_distribute(
         vals[:, 0], vals[:, 1] = t % 33 + 1, t // 33 + 1
         return (vals * scale).to(torch.bfloat16)
 
+    with pytest.raises(ValueError, match=f"{ep_group.nranks} <= combine <= 128"):
+        MoECommunicatorConfig(
+            comm=ep_group,
+            num_experts=invalid_expert,
+            hidden_size=hidden,
+            topk=NUM_TOPK,
+            max_tokens_per_rank=capacity,
+            mode=MoEMode.LATENCY,
+            output_layout=DispatchLayout.RANK_MAJOR,
+            num_blocks=(ep_group.nranks + 2, ep_group.nranks - 1),
+        )
+
     with initialized_runtime(
         ep_group,
         mode=MoEMode.LATENCY,

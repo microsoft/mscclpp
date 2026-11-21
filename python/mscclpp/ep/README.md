@@ -289,7 +289,7 @@ Runtime views are reused by later operations, not independent results.
   Default dispatch/combine blocks are `(130, 128)` for latency or `(24, 32)` for
   throughput, clipped to SM count. Custom values must satisfy `D <= 130` and
   `1 <= C <= 128`; latency also requires `D >= R+2`, and latency RANK_MAJOR
-  combine requires `C > 1`. Native shared-memory, residency, and occupancy
+  combine requires `C > 1` (`C >= R` across domains). Native shared-memory, residency, and occupancy
   checks still apply. `num_blocks=(D, C)` sets the two grid sizes explicitly. A
   scalar `N` sets the dispatch grid to `N`; latency dispatch reserves two control
   blocks, so combine uses the remaining `N-2` worker blocks, while throughput

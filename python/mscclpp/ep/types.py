@@ -195,7 +195,9 @@ class MoECommunicatorConfig:
             default=(min(130, num_sms), min(128, num_sms)) if latency else (min(24, num_sms), min(32, num_sms)),
             scalar_combine_offset=-2 if latency else 0,
         )
-        min_combine_blocks = 2 if latency and layout == DispatchLayout.RANK_MAJOR else 1
+        min_combine_blocks = (
+            world_size if cross_domain else (2 if latency and layout == DispatchLayout.RANK_MAJOR else 1)
+        )
         if not (world_size + 2 if latency else 1) <= blocks[0] <= 130 or not min_combine_blocks <= blocks[1] <= 128:
             raise ValueError(
                 f"num_blocks must satisfy dispatch <= 130 and {min_combine_blocks} <= combine <= 128; "
