@@ -38,13 +38,30 @@ MSCCLPP_HOST_DEVICE_INLINE int directSendWorkerCount(int nLocalExperts) {
   return availableWorkers < DirectSendMaxNWorkers ? availableWorkers : DirectSendMaxNWorkers;
 }
 
-template <int Hidden, CombineMode Mode, DispatchDataType DispatchType, DispatchLayout Layout>
+// Shared-memory staging buffer for rank-major combine: token tiles, TMA barriers, and route metadata.
+template <int Hidden, DispatchDataType DispatchType, int NSlots>
+struct alignas(128) RankMajorCombineStage {
+  DispatchElementType<DispatchType> tokens[NSlots][Hidden];
+  mscclpp::BulkBarrier barriers[NSlots];
+  int validRoutes[NSlots];
+  float routeWeights[NSlots];
+};
+
+template <int Hidden, DispatchDataType DispatchType, int MaxNTopk>
+MSCCLPP_HOST_DEVICE_INLINE constexpr int rankMajorCombineStageSlots() {
+  static_assert(MaxNTopk == 8 || MaxNTopk == MaxNumTopk);
+  if constexpr (sizeof(RankMajorCombineStage<Hidden, DispatchType, MaxNTopk>) <= OptimizedDynamicSharedMemoryBytes) {
+    return MaxNTopk;
+  }
+  static_assert(sizeof(RankMajorCombineStage<Hidden, DispatchType, 8>) <= OptimizedDynamicSharedMemoryBytes);
+  return 8;
+}
+
+template <int Hidden, CombineMode Mode, DispatchDataType DispatchType, DispatchLayout Layout, int MaxNTopk>
 MSCCLPP_HOST_DEVICE_INLINE size_t combineSharedBytes(int nLocalExperts) {
   if constexpr (Layout == DispatchLayout::RANK_MAJOR) {
-    constexpr size_t RowsBytes = static_cast<size_t>(MaxNumTopk) * Hidden * sizeof(DispatchElementType<DispatchType>);
-    constexpr size_t BarrierBytes = static_cast<size_t>(MaxNumTopk) * sizeof(mscclpp::BulkBarrier);
-    constexpr size_t ValidBytes = static_cast<size_t>(MaxNumTopk) * sizeof(int);
-    constexpr size_t SharedBytes = configAlign<size_t>(RowsBytes + BarrierBytes + ValidBytes, 128);
+    constexpr int StageSlots = rankMajorCombineStageSlots<Hidden, DispatchType, MaxNTopk>();
+    constexpr size_t SharedBytes = sizeof(RankMajorCombineStage<Hidden, DispatchType, StageSlots>);
     static_assert(SharedBytes <= OptimizedDynamicSharedMemoryBytes);
     return SharedBytes;
   }
@@ -82,144 +99,178 @@ MSCCLPP_DEVICE_INLINE void publishRankMajorCombineReady(const TransportView& tra
   }
 }
 
-template <int Hidden, CombineMode Mode, DispatchDataType DispatchType>
-MSCCLPP_DEVICE_INLINE void recvRankMajorRemotePartialsTma(void* output, const void* expertOutput,
-                                                          const int64_t* __restrict__ topkIndices,
-                                                          const float* __restrict__ topkWeights, int nTokens, int nTopk,
-                                                          int nExperts, int nRanks, int maxTokensPerRank, uint32_t flag,
-                                                          const TransportView& transport, WorkspaceView& workspaceView,
-                                                          uint8_t* sharedMemory, float dequantScale) {
+template <CombineMode Mode, int Hidden, DispatchDataType DispatchType, int StageSlots>
+MSCCLPP_DEVICE_INLINE void accumulateRankMajorFp32x8(
+    mscclpp::f32x8& sum, int fp32x8Idx, const RankMajorCombineStage<Hidden, DispatchType, StageSlots>& stage,
+    float dequantScale) {
+  constexpr bool IsDirectSend = Mode == CombineMode::DIRECT_SEND;
+  constexpr int NFp32x2PerFp32x8 = mscclpp::f32x8::Size / mscclpp::f32x2::Size;
+  auto* sumFp32x2 = reinterpret_cast<mscclpp::f32x2*>(&sum);
+#pragma unroll
+  for (int stageIdx = 0; stageIdx < StageSlots; ++stageIdx) {
+    if (!stage.validRoutes[stageIdx]) continue;
+    const float routeWeight = IsDirectSend ? stage.routeWeights[stageIdx] : 1.0f;
+    const auto* routeToken = stage.tokens[stageIdx];
+    if constexpr (DispatchType == DispatchDataType::BF16) {
+      const auto values = mscclpp::to<mscclpp::f32x8>(reinterpret_cast<const mscclpp::bf16x8*>(routeToken)[fp32x8Idx]);
+      const auto* valuesFp32x2 = reinterpret_cast<const mscclpp::f32x2*>(&values);
+#pragma unroll
+      for (int idx = 0; idx < NFp32x2PerFp32x8; ++idx) {
+        if constexpr (IsDirectSend) {
+          sumFp32x2[idx] =
+              mscclpp::fma(valuesFp32x2[idx], mscclpp::f32x2(make_float2(routeWeight, routeWeight)), sumFp32x2[idx]);
+        } else {
+          sumFp32x2[idx] = sumFp32x2[idx] + valuesFp32x2[idx];
+        }
+      }
+    } else {
+      const auto values = reinterpret_cast<const mscclpp::f8_e4m3x8*>(routeToken)[fp32x8Idx];
+      const float scale = IsDirectSend ? dequantScale * routeWeight : dequantScale;
+      if (scale != 0.0f) {
+        dequantizeAndAccumulateFp8E4M3(values, scale, sumFp32x2);
+      }
+    }
+  }
+}
+
+// Worker blocks (blockIdx.x > 0): TMA-load rank-major expert outputs from peers and reduce into output.
+template <int Hidden, CombineMode Mode, DispatchDataType DispatchType, int MaxNTopk>
+MSCCLPP_DEVICE_INLINE void combineRankMajorTokens(void* output, const void* expertOutput,
+                                                  const int64_t* __restrict__ topkIndices,
+                                                  const float* __restrict__ topkWeights, const Workload& workload,
+                                                  int nRanks, const TransportView& transport, WorkspaceView& workspace,
+                                                  uint32_t flag, uint8_t* sharedMemory) {
 #if defined(__CUDA_ARCH__)
   static_assert(__CUDA_ARCH__ >= 900, "TMA rank-major combine requires SM90 or newer");
 #endif
   static_assert(DispatchType == DispatchDataType::BF16 || DispatchType == DispatchDataType::FP8_E4M3_STATIC);
-  static_assert(Hidden % (sizeof(int4) / sizeof(Bf16)) == 0);
+  static_assert(Hidden % mscclpp::bf16x8::Size == 0);
   using ElementType = DispatchElementType<DispatchType>;
   constexpr bool IsDirectSend = Mode == CombineMode::DIRECT_SEND;
   constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(ElementType);
-  constexpr int OutputInt4 = static_cast<size_t>(Hidden) * sizeof(Bf16) / sizeof(int4);
-  constexpr int Bf16PairsPerInt4 = sizeof(int4) / sizeof(mscclpp::bf16x2);
-  constexpr size_t RowsBytes = static_cast<size_t>(MaxNumTopk) * HiddenBytes;
-  const int threadId = static_cast<int>(threadIdx.x);
-  const int warpId = threadId / WARP_SIZE;
-  const int laneId = getLaneId();
-  const int nLocalExperts = nExperts / nRanks;
-  auto* sharedRows = sharedMemory;
-  auto* bulkBarriers = reinterpret_cast<mscclpp::BulkBarrier*>(sharedMemory + RowsBytes);
-  auto* validRows = reinterpret_cast<int*>(bulkBarriers + MaxNumTopk);
+  constexpr int NFp32x8 = Hidden / mscclpp::f32x8::Size;
+  constexpr int MaxFp32x8PerThread = configCellDiv(NFp32x8, CombineNThreads);
+  constexpr int NFp32x2PerFp32x8 = mscclpp::f32x8::Size / mscclpp::f32x2::Size;
+  constexpr int StageSlots = rankMajorCombineStageSlots<Hidden, DispatchType, MaxNTopk>();
+  constexpr int NumRounds = configCellDiv(MaxNTopk, StageSlots);
 
-  const int nWorkerBlocks = static_cast<int>(gridDim.x) - 1;
-  // Reuse each mbarrier by advancing its parity instead of reinitializing it.
-  uint32_t bulkPhase = 0;
-  if (warpId == 0) {
-    if (laneId < MaxNumTopk) {
-      bulkBarriers[laneId].init();
-    }
+  const int nTokens = workload.numTokens_;
+  const int nWorkers = static_cast<int>(gridDim.x) - 1;
+  const int firstTokenIdx = static_cast<int>(blockIdx.x) - 1;
+  if (firstTokenIdx >= nTokens) return;
+
+  const int warpIdx = static_cast<int>(threadIdx.x) / WARP_SIZE;
+  const int laneIdx = getLaneId();
+  const int nTopk = workload.numTopk_;
+  const int nExperts = workload.numExperts_;
+  const int nLocalExperts = nExperts / nRanks;
+  const int maxTokensPerRank = workload.maxTokensPerRank_;
+  const bool useWeights = topkWeights != nullptr;
+  const float dequantScale = DispatchType == DispatchDataType::FP8_E4M3_STATIC ? 1.0f / workload.dispatchScale_ : 1.0f;
+  auto& stage = *reinterpret_cast<RankMajorCombineStage<Hidden, DispatchType, StageSlots>*>(sharedMemory);
+  auto* barriers = stage.barriers;
+
+  // Reuse each mbarrier across tokens and staging rounds by advancing its phase parity.
+  uint32_t phase = 0;
+  if (warpIdx == 0) {
+    if (laneIdx < StageSlots) barriers[laneIdx].init();
     __syncwarp();
   }
 
-  for (int tokenIdx = static_cast<int>(blockIdx.x) - 1; tokenIdx < nTokens; tokenIdx += nWorkerBlocks) {
-    if (warpId == 0) {
-      const int globalExpertIdx = laneId < nTopk ? static_cast<int>(topkIndices[tokenIdx * nTopk + laneId]) : -1;
-      const int destinationRank = globalExpertIdx >= 0 ? globalExpertIdx / nLocalExperts : -1;
-      const bool firstLaneForRank = isFirstLaneForRank(destinationRank, laneId);
-      const bool validRow = laneId < MaxNumTopk && destinationRank >= 0 && (IsDirectSend || firstLaneForRank);
-      int destinationSlot = -1;
-      if (validRow) {
-        destinationSlot = workspaceView.rankMajorSendIndices_[tokenIdx * nTopk + laneId];
-        EP_DEVICE_ASSERT(destinationSlot >= 0 && destinationSlot < maxTokensPerRank);
-      }
-      if (laneId < MaxNumTopk) {
-        validRows[laneId] = validRow;
-      }
-      __syncwarp();
-
-      bool pending = validRow;
-      while (__any_sync(0xffffffff, pending)) {
-        const bool ready =
-            pending && mscclpp::atomicLoad<uint32_t, mscclpp::scopeDevice>(
-                           workspaceView.combineRankReadyFlags_ + destinationRank, mscclpp::memoryOrderRelaxed) == flag;
-        if (pending && ready) {
-          const auto* remoteExpertOutput = reinterpret_cast<const uint8_t*>(
-              transport.mappedBuffer(const_cast<void*>(expertOutput), destinationRank));
-          const size_t sourceRow = static_cast<size_t>(transport.rank_) * maxTokensPerRank + destinationSlot;
-          const size_t inputRow = IsDirectSend ? sourceRow * nTopk + laneId : sourceRow;
-          const auto* source = remoteExpertOutput + inputRow * HiddenBytes;
-          auto* sharedRow = sharedRows + static_cast<size_t>(laneId) * HiddenBytes;
-          bulkBarriers[laneId].arriveAndExpect(static_cast<uint32_t>(HiddenBytes));
-          mscclpp::bulkLoad(sharedRow, source, static_cast<uint32_t>(HiddenBytes), bulkBarriers[laneId]);
-          pending = false;
-        }
-      }
-      if (validRow) bulkBarriers[laneId].wait(bulkPhase);
-      __syncwarp();
-      if (laneId == 0) mscclpp::bulkFence();
+  for (int tokenIdx = firstTokenIdx; tokenIdx < nTokens; tokenIdx += nWorkers) {
+    int lanePeerIdx = -1;
+    uint32_t validRouteMask = 0;
+    if (warpIdx == 0) {
+      const int64_t rawExpertIdx = laneIdx < nTopk ? topkIndices[tokenIdx * nTopk + laneIdx] : -1;
+      const int expertIdx = rawExpertIdx >= 0 && rawExpertIdx < nExperts ? static_cast<int>(rawExpertIdx) : -1;
+      lanePeerIdx = expertIdx >= 0 ? expertIdx / nLocalExperts : -1;
+      const bool isLeader = isFirstLaneForRank(lanePeerIdx, laneIdx);
+      validRouteMask = __ballot_sync(0xffffffff, laneIdx < MaxNTopk && lanePeerIdx >= 0 && (IsDirectSend || isLeader));
     }
-    __syncthreads();
 
-    for (int hiddenIdx = threadId; hiddenIdx < OutputInt4; hiddenIdx += CombineNThreads) {
-      int4 packedOutput;
-      auto* outputValues = reinterpret_cast<mscclpp::bf16x2*>(&packedOutput);
-      if constexpr (DispatchType == DispatchDataType::BF16) {
-        float2 reduced[Bf16PairsPerInt4] = {};
+    mscclpp::f32x8 tileSum[MaxFp32x8PerThread];
 #pragma unroll
-        for (int stage = 0; stage < MaxNumTopk; ++stage) {
-          if (validRows[stage] == 0) continue;
-          const auto* row = sharedRows + static_cast<size_t>(stage) * HiddenBytes;
-          const int4 packed = reinterpret_cast<const int4*>(row)[hiddenIdx];
-          const auto* values = reinterpret_cast<const mscclpp::bf16x2*>(&packed);
-          const float sourceWeight =
-              IsDirectSend && topkWeights != nullptr ? topkWeights[tokenIdx * nTopk + stage] : 1.0f;
+    for (int stepIdx = 0; stepIdx < MaxFp32x8PerThread; ++stepIdx) {
+      auto* sumFp32x2 = reinterpret_cast<mscclpp::f32x2*>(&tileSum[stepIdx]);
 #pragma unroll
-          for (int pairIdx = 0; pairIdx < Bf16PairsPerInt4; ++pairIdx) {
-            const mscclpp::f32x2 value = mscclpp::to<mscclpp::f32x2>(values[pairIdx]);
-            reduced[pairIdx].x = fmaf(value.data[0], sourceWeight, reduced[pairIdx].x);
-            reduced[pairIdx].y = fmaf(value.data[1], sourceWeight, reduced[pairIdx].y);
+      for (int idx = 0; idx < NFp32x2PerFp32x8; ++idx) {
+        sumFp32x2[idx].storage = make_float2(0.0f, 0.0f);
+      }
+    }
+
+#pragma unroll
+    for (int roundIdx = 0; roundIdx < NumRounds; ++roundIdx) {
+      if (warpIdx == 0) {
+        const int routeIdx = roundIdx * StageSlots + laneIdx;
+        const bool active = laneIdx < StageSlots && ((validRouteMask >> routeIdx) & 1u) != 0;
+        const int peerIdx =
+            NumRounds == 1 ? lanePeerIdx : __shfl_sync(0xffffffff, lanePeerIdx, routeIdx < WARP_SIZE ? routeIdx : 0);
+        int slotIdx = -1;
+        if (active) {
+          slotIdx = workspace.rankMajorSendIndices_[tokenIdx * nTopk + routeIdx];
+          EP_DEVICE_ASSERT(slotIdx >= 0 && slotIdx < maxTokensPerRank);
+        }
+        if (laneIdx < StageSlots) {
+          stage.validRoutes[laneIdx] = active;
+          if constexpr (IsDirectSend) {
+            stage.routeWeights[laneIdx] =
+                useWeights && routeIdx < nTopk ? topkWeights[tokenIdx * nTopk + routeIdx] : 1.0f;
           }
         }
-#pragma unroll
-        for (int pairIdx = 0; pairIdx < Bf16PairsPerInt4; ++pairIdx) {
-          outputValues[pairIdx] = mscclpp::to<mscclpp::bf16x2>(mscclpp::f32x2(reduced[pairIdx]));
+        __syncwarp();
+
+        bool pending = active;
+        while (__any_sync(0xffffffff, pending)) {
+          if (pending && mscclpp::atomicLoad<uint32_t, mscclpp::scopeDevice>(workspace.combineRankReadyFlags_ + peerIdx,
+                                                                             mscclpp::memoryOrderRelaxed) == flag) {
+            const auto* peerOutput =
+                static_cast<const uint8_t*>(transport.mappedBuffer(const_cast<void*>(expertOutput), peerIdx));
+            const size_t srcTokenIdx = static_cast<size_t>(transport.rank_) * maxTokensPerRank + slotIdx;
+            const size_t inputTokenIdx = IsDirectSend ? srcTokenIdx * nTopk + routeIdx : srcTokenIdx;
+            barriers[laneIdx].arriveAndExpect(HiddenBytes);
+            mscclpp::bulkLoad(stage.tokens[laneIdx], peerOutput + inputTokenIdx * HiddenBytes, HiddenBytes,
+                              barriers[laneIdx]);
+            pending = false;
+          }
         }
-      } else {
-        mscclpp::f32x2 reduced[Bf16PairsPerInt4];
+        if (active) barriers[laneIdx].wait(phase);
+        __syncwarp();
+        if (laneIdx == 0) mscclpp::bulkFence();
+      }
+      __syncthreads();
+
 #pragma unroll
-        for (int pairIdx = 0; pairIdx < Bf16PairsPerInt4; ++pairIdx) {
-          reduced[pairIdx].storage = make_float2(0.0f, 0.0f);
-        }
-#pragma unroll
-        for (int stage = 0; stage < MaxNumTopk; ++stage) {
-          if (validRows[stage] == 0) continue;
-          const auto* row = sharedRows + static_cast<size_t>(stage) * HiddenBytes;
-          const auto values = reinterpret_cast<const mscclpp::f8_e4m3x8*>(row)[hiddenIdx];
-          const float sourceWeight =
-              IsDirectSend && topkWeights != nullptr ? topkWeights[tokenIdx * nTopk + stage] : 1.0f;
-          if (sourceWeight == 0.0f) continue;
-          const float accumulationScale = IsDirectSend ? dequantScale * sourceWeight : dequantScale;
-          dequantizeAndAccumulateFp8E4M3(values, accumulationScale, reduced);
-        }
-#pragma unroll
-        for (int pairIdx = 0; pairIdx < Bf16PairsPerInt4; ++pairIdx) {
-          outputValues[pairIdx] = mscclpp::to<mscclpp::bf16x2>(reduced[pairIdx]);
+      for (int stepIdx = 0; stepIdx < MaxFp32x8PerThread; ++stepIdx) {
+        const int fp32x8Idx = static_cast<int>(threadIdx.x) + stepIdx * CombineNThreads;
+        if (fp32x8Idx < NFp32x8) {
+          accumulateRankMajorFp32x8<Mode, Hidden, DispatchType, StageSlots>(tileSum[stepIdx], fp32x8Idx, stage,
+                                                                            dequantScale);
         }
       }
-      auto* outputRow = reinterpret_cast<int4*>(output) + static_cast<size_t>(tokenIdx) * OutputInt4;
-      outputRow[hiddenIdx] = packedOutput;
+      __syncthreads();
     }
-    __syncthreads();
+
+    auto* tokenOutput = static_cast<mscclpp::bf16x8*>(output) + static_cast<size_t>(tokenIdx) * NFp32x8;
+#pragma unroll
+    for (int stepIdx = 0; stepIdx < MaxFp32x8PerThread; ++stepIdx) {
+      const int fp32x8Idx = static_cast<int>(threadIdx.x) + stepIdx * CombineNThreads;
+      if (fp32x8Idx < NFp32x8) {
+        tokenOutput[fp32x8Idx] = mscclpp::to<mscclpp::bf16x8>(tileSum[stepIdx]);
+      }
+    }
   }
+  if (warpIdx == 0 && laneIdx < StageSlots) barriers[laneIdx].invalidate();
 }
 
 #endif  // MSCCLPP_BULK_AVAILABLE
 
 template <CombineMode Mode, int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout,
-          typename KernelSelector>
+          int MaxNTopk, typename KernelSelector>
 inline void combineHiddenMode(void* output, const void* expertOutput, const int64_t* topkIndices,
                               const float* topkWeights, const int* srcInfo, const int64_t* layoutRange,
                               const Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
                               const DeviceContext& context, int numBlocks, cudaStream_t stream) {
-  static_assert(Hidden == 1024 || Hidden == 2048 || Hidden == 4096 || Hidden == 4352 || Hidden == 6656 ||
-                Hidden == 7168 || Hidden == 8192 || Hidden == 8704 || Hidden == 9216);
+  static_assert(isSupportedHidden(Hidden));
   const int nExperts = workload.numExperts_;
   const int nRanks = context.numRanks_;
   const int nLocalExperts = nExperts / nRanks;
@@ -227,8 +278,8 @@ inline void combineHiddenMode(void* output, const void* expertOutput, const int6
     EP_HOST_ASSERT(directSendWorkerCount<Hidden>(nLocalExperts) > 0);
   }
 
-  auto combineFunc = KernelSelector::template get<Hidden, DispatchType, ScaleBlockSize, Layout>();
-  const size_t sharedBytes = combineSharedBytes<Hidden, Mode, DispatchType, Layout>(nLocalExperts);
+  auto combineFunc = KernelSelector::template get<Hidden, DispatchType, ScaleBlockSize, Layout, MaxNTopk>();
+  const size_t sharedBytes = combineSharedBytes<Hidden, Mode, DispatchType, Layout, MaxNTopk>(nLocalExperts);
   EP_HOST_ASSERT(Layout != DispatchLayout::RANK_MAJOR || numBlocks > 1);
   static thread_local KernelConfigCache kernelConfig;
   const int residentBlocks = configureKernel(combineFunc, CombineNThreads, sharedBytes, context, kernelConfig);
@@ -238,6 +289,22 @@ inline void combineHiddenMode(void* output, const void* expertOutput, const int6
       output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer, dispatchRecvBuffer,
       context.devicePtr_);
   MSCCLPP_CUDATHROW(cudaGetLastError());
+}
+
+template <CombineMode Mode, int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout,
+          typename KernelSelector>
+inline void combineHiddenMode(void* output, const void* expertOutput, const int64_t* topkIndices,
+                              const float* topkWeights, const int* srcInfo, const int64_t* layoutRange,
+                              const Workload& workload, void* recvBuffer, void* dispatchRecvBuffer,
+                              const DeviceContext& context, int numBlocks, cudaStream_t stream) {
+  if (workload.numTopk_ <= 8) {
+    return combineHiddenMode<Mode, Hidden, DispatchType, ScaleBlockSize, Layout, 8, KernelSelector>(
+        output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer, dispatchRecvBuffer,
+        context, numBlocks, stream);
+  }
+  return combineHiddenMode<Mode, Hidden, DispatchType, ScaleBlockSize, Layout, MaxNumTopk, KernelSelector>(
+      output, expertOutput, topkIndices, topkWeights, srcInfo, layoutRange, workload, recvBuffer, dispatchRecvBuffer,
+      context, numBlocks, stream);
 }
 
 template <CombineMode Mode, int Hidden, typename KernelSelector>
@@ -320,7 +387,8 @@ inline void combineAlgorithm(void* output, const void* expertOutput, const int64
   EP_HOST_ASSERT(rank >= 0 && rank < nRanks);
   EP_HOST_ASSERT(workload.numTokens_ >= 0 && workload.numTokens_ <= workload.maxTokensPerRank_);
   EP_HOST_ASSERT(workload.numTopk_ > 0 && workload.numTopk_ <= MaxNumTopk);
-  EP_HOST_ASSERT(numBlocks > 0 && numBlocks <= MaxWorkerBlocks);
+  const int minCombineBlocks = workload.outputLayout_ == DispatchLayout::RANK_MAJOR ? 2 : 1;
+  EP_HOST_ASSERT(numBlocks >= minCombineBlocks && numBlocks <= MaxWorkerBlocks);
   static_assert(Mode == CombineMode::RANK_LOCAL_REDUCE || Mode == CombineMode::DIRECT_SEND);
   EP_HOST_ASSERT(workload.outputLayout_ == DispatchLayout::EXPERT_MAJOR ||
                  workload.outputLayout_ == DispatchLayout::RANK_MAJOR);
@@ -335,12 +403,40 @@ inline void combineAlgorithm(void* output, const void* expertOutput, const int64
   }
 
   switch (workload.hidden_) {
+    case 256:
+      return combineHidden<Mode, 256, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
+                                                      layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
+                                                      numBlocks, stream);
+    case 512:
+      return combineHidden<Mode, 512, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
+                                                      layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
+                                                      numBlocks, stream);
+    case 768:
+      return combineHidden<Mode, 768, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
+                                                      layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
+                                                      numBlocks, stream);
     case 1024:
       return combineHidden<Mode, 1024, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
                                                        layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
                                                        numBlocks, stream);
+    case 1280:
+      return combineHidden<Mode, 1280, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
+                                                       layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
+                                                       numBlocks, stream);
+    case 1536:
+      return combineHidden<Mode, 1536, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
+                                                       layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
+                                                       numBlocks, stream);
+    case 1792:
+      return combineHidden<Mode, 1792, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
+                                                       layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
+                                                       numBlocks, stream);
     case 2048:
       return combineHidden<Mode, 2048, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
+                                                       layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
+                                                       numBlocks, stream);
+    case 2560:
+      return combineHidden<Mode, 2560, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
                                                        layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
                                                        numBlocks, stream);
     case 4096:
@@ -349,6 +445,14 @@ inline void combineAlgorithm(void* output, const void* expertOutput, const int64
                                                        numBlocks, stream);
     case 4352:
       return combineHidden<Mode, 4352, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
+                                                       layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
+                                                       numBlocks, stream);
+    case 5120:
+      return combineHidden<Mode, 5120, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
+                                                       layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
+                                                       numBlocks, stream);
+    case 5376:
+      return combineHidden<Mode, 5376, KernelSelector>(output, expertOutput, topkIndices, topkWeights, srcInfo,
                                                        layoutRange, workload, recvBuffer, dispatchRecvBuffer, context,
                                                        numBlocks, stream);
     case 6656:

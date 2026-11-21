@@ -32,6 +32,9 @@ if(MSCCLPP_USE_IB)
         target_include_directories(mscclpp_obj SYSTEM PRIVATE ${MLX5_INCLUDE_DIRS})
         target_compile_definitions(mscclpp_obj PRIVATE MSCCLPP_USE_MLX5DV)
     endif()
+    if(MSCCLPP_USE_CUDA)
+        target_link_libraries(mscclpp_obj PUBLIC mscclpp_gpunetio_headers)
+    endif()
 endif()
 
 if(MSCCLPP_USE_GDRCOPY)
@@ -66,10 +69,16 @@ endif()
 # libmscclpp
 add_library(mscclpp SHARED)
 target_link_libraries(mscclpp PUBLIC mscclpp_obj)
+if(MSCCLPP_USE_IB AND MSCCLPP_USE_CUDA)
+    target_sources(mscclpp PRIVATE $<TARGET_OBJECTS:mscclpp_gpunetio_obj>)
+endif()
 set_target_properties(mscclpp PROPERTIES VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
 
 add_library(mscclpp_static STATIC)
 target_link_libraries(mscclpp_static PUBLIC mscclpp_obj)
+if(MSCCLPP_USE_IB AND MSCCLPP_USE_CUDA)
+    target_sources(mscclpp_static PRIVATE $<TARGET_OBJECTS:mscclpp_gpunetio_obj>)
+endif()
 set_target_properties(mscclpp_static PROPERTIES VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
 
 install(TARGETS mscclpp
