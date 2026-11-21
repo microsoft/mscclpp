@@ -204,7 +204,7 @@ MSCCLPP_DEVICE_INLINE void dispatchRecv(void* output, const int64_t* __restrict_
 
 #endif  // MSCCLPP_BULK_AVAILABLE
 
-template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout>
+template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout, int MaxNTopk>
 __global__ __launch_bounds__(CombineNThreads,
                              1) void combineKernel(void* output, const void* expertOutput, const int64_t* topkIndices,
                                                    const float* topkWeights, const int* srcInfo,
@@ -212,11 +212,8 @@ __global__ __launch_bounds__(CombineNThreads,
                                                    const void* dispatchRecvBuffer, const DeviceContext* context) {
 #if MSCCLPP_BULK_AVAILABLE
   extern __shared__ __align__(128) uint8_t sharedMemory[];
-  const int nTokens = workload.numTokens_;
   const int nExperts = workload.numExperts_;
   const int nRanks = context->numRanks_;
-  const int nTopk = workload.numTopk_;
-  const int maxTokensPerRank = workload.maxTokensPerRank_;
   const TransportView transport(context);
   WorkspaceView workspaceView(context->workspace_, nRanks, nExperts);
 
@@ -225,13 +222,14 @@ __global__ __launch_bounds__(CombineNThreads,
     if (blockIdx.x == 0) {
       publishRankMajorCombineReady(transport, nRanks, flag, workspaceView);
     } else {
-      recvRankMajorRemotePartialsTma<Hidden, CombineMode::RANK_LOCAL_REDUCE, DispatchType>(
-          output, expertOutput, topkIndices, nullptr, nTokens, nTopk, nExperts, nRanks, maxTokensPerRank, flag,
-          transport, workspaceView, sharedMemory,
-          DispatchType == DispatchDataType::FP8_E4M3_STATIC ? 1.0f / workload.dispatchScale_ : 1.0f);
+      combineRankMajorTokens<Hidden, CombineMode::RANK_LOCAL_REDUCE, DispatchType, MaxNTopk>(
+          output, expertOutput, topkIndices, nullptr, workload, nRanks, transport, workspaceView, flag, sharedMemory);
     }
   } else {
     static_assert(Layout == DispatchLayout::EXPERT_MAJOR);
+    const int nTokens = workload.numTokens_;
+    const int nTopk = workload.numTopk_;
+    const int maxTokensPerRank = workload.maxTokensPerRank_;
     dispatchSend<Hidden, DispatchType, ScaleBlockSize>(expertOutput, nExperts, nRanks, nTopk, maxTokensPerRank,
                                                        combineBuffer, dispatchRecvBuffer, transport, workspaceView,
                                                        sharedMemory);
@@ -247,9 +245,9 @@ __global__ __launch_bounds__(CombineNThreads,
 }
 
 struct KernelSelector {
-  template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout>
+  template <int Hidden, DispatchDataType DispatchType, int ScaleBlockSize, DispatchLayout Layout, int MaxNTopk>
   static auto get() {
-    return combineKernel<Hidden, DispatchType, ScaleBlockSize, Layout>;
+    return combineKernel<Hidden, DispatchType, ScaleBlockSize, Layout, MaxNTopk>;
   }
 };
 

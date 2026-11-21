@@ -19,7 +19,7 @@ namespace mscclpp {
 namespace ep {
 
 inline constexpr size_t BufferAlignmentBytes = 128;
-inline constexpr int MaxNumTopk = 8;
+inline constexpr int MaxNumTopk = 16;
 
 inline constexpr bool isSupportedRanks(int numRanks) { return numRanks > 0 && numRanks <= 64; }
 

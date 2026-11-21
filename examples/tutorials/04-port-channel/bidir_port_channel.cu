@@ -45,7 +45,7 @@ int wait_process(int pid) {
   return -1;
 }
 
-__global__ void bidirPutKernel(mscclpp::PortChannelDeviceHandle* devHandle, size_t copyBytes, int myRank) {
+__global__ void bidirPutKernel(mscclpp::PortChannelDeviceHandle<>* devHandle, size_t copyBytes, int myRank) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid == 0) {
     devHandle->signal();
@@ -100,7 +100,7 @@ void worker(int rank, int gpuId, const std::string& ipPort, mscclpp::Transport t
   std::function<void(size_t)> kernels[1];
 
   kernels[0] = [&](size_t copyBytes) {
-    bidirPutKernel<<<1, 1, 0, stream>>>(reinterpret_cast<mscclpp::PortChannelDeviceHandle*>(devHandle), copyBytes,
+    bidirPutKernel<<<1, 1, 0, stream>>>(reinterpret_cast<mscclpp::PortChannelDeviceHandle<>*>(devHandle), copyBytes,
                                         myRank);
   };
 
