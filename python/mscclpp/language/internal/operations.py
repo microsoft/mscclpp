@@ -361,6 +361,10 @@ class WaitOperation(BaseOperation):
 class BarrierOperation(BaseOperation):
     __current_barriers = []
 
+    @classmethod
+    def reset(cls):
+        cls.__current_barriers.clear()
+
     def __init__(self, rank: int, tb_list: List[int]):
         for _ in range(len(BarrierOperation.__current_barriers), rank + 1):
             BarrierOperation.__current_barriers.append({})

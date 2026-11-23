@@ -5,6 +5,7 @@ from mscclpp.language.collectives import Collective
 from mscclpp.language.internal.globals import set_program
 from mscclpp.language.internal.types import BufferType, RemoteBuffer, ChannelType
 from mscclpp.language.internal.gpu import Gpu
+from mscclpp.language.internal.operations import BarrierOperation
 from mscclpp.language.channel import *
 from mscclpp.language.rank import Semaphore
 from mscclpp.language.collectives import *
@@ -171,6 +172,7 @@ class CollectiveProgram:
         This method is called when entering the 'with' statement and registers
         this program as the active program in the global context.
         """
+        BarrierOperation.reset()
         set_program(self)
         return self
 
