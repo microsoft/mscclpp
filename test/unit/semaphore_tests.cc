@@ -32,7 +32,7 @@ static_assert(std::is_constructible_v<Channel, std::shared_ptr<PortSemaphore>, m
                                       mscclpp::RegisteredMemory>);
 static_assert(
     !std::is_constructible_v<Channel, const mscclpp::Semaphore&, mscclpp::RegisteredMemory, mscclpp::RegisteredMemory>);
-static_assert(std::is_copy_assignable_v<Channel>);  // One owner type can hold either backend.
+static_assert(std::is_copy_assignable_v<Channel>);
 static_assert(!std::is_assignable_v<mscclpp::PortChannelDeviceHandle<Backend::Host>&,
                                     mscclpp::PortChannelDeviceHandle<Backend::Device>>);
 template <class T>
@@ -211,7 +211,7 @@ TEST(SemaphoreValidationTest, ExplicitBackendAndIndependentBindingState) {
   EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::deviceHandle<Backend::Device>(hostWithDeviceBase); }));
   EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::deviceHandle<Backend::Host>(deviceWithHostBase); }));
   Channel selected = host;
-  selected = device;  // Whole-owner cross-backend assignment is now supported, not a compile failure.
+  selected = device;
   EXPECT_EQ(selected.deviceHandle<Backend::Device>().semaphore_.expectedInboundToken,
             deviceSemaphore->deviceHandle().expectedInboundToken);
   EXPECT_TRUE(rejectsInvalidUsage([&] { selected.deviceHandle<Backend::Host>(); }));

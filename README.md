@@ -95,12 +95,6 @@ MSCCL++ delivers two types of channels, **PortChannel** and **MemoryChannel**. `
 
 On the other hand, `MemoryChannel` provides memory-mapping-based copy and synchronization methods. When called, these methods will directly use GPU threads to read/write from/to the remote GPU's memory space. Comparing against `PortChannel`, `MemoryChannel` is especially performant for low-latency scenarios, while it may need many GPU threads to call copying methods at the same time to achieve high copying bandwidth. See all `MemoryChannel` methods from [here](./include/mscclpp/memory_channel_device.hpp).
 
-For `BasePortChannel` and `PortChannel`, choose the GPU backend explicitly when
-extracting a handle: `channel.deviceHandle<mscclpp::PortChannelBackend::Host>()` for proxy-backed channels, or
-`channel.deviceHandle<mscclpp::PortChannelBackend::Device>()` for [GPUNetIO](./docs/guide/gpunetio.md).
-Keep the owner and application buffers alive during GPU use. See the [API reference](./docs/cpp_api.rst)
-for extraction checks and source migration.
-
 ### Host-Side Communication Proxy
 
 MSCCL++ provides a default implementation of a host-side proxy for PortChannels, which is a background host thread that busy polls triggers from GPUs and conducts functionalities accordingly. For example, the following is a typical host-side code for MSCCL++.

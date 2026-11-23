@@ -1008,27 +1008,20 @@ struct DeviceHandleResult<T, Backend> {
 };
 }  // namespace detail
 
-/// The result type of device-handle extraction from a named lvalue of T.
-/// @tparam T The owner type, preserving const and reference qualifiers.
-/// @tparam Backend Omit for a fixed member extractor, or supply one selector supported by its templated extractor.
-/// Unsupported extraction expressions, including multiple selectors, do not define a type.
+/// Result type of the owner's fixed or backend-selected member extractor.
+/// @tparam T Owner type, preserving const and reference qualifiers.
+/// @tparam Backend Optional member selector; Port requires Host or Device.
 template <class T, auto... Backend>
 using DeviceHandle = typename detail::DeviceHandleResult<T, Backend...>::type;
 
-/// Retrieve a device handle using the owner's fixed member extractor.
-/// @param t The owner, accessed as a named lvalue even when supplied as an rvalue.
-/// @return The member extraction result, preserving its const and reference qualifiers.
-/// The handle has the same lifetime requirements as the member extraction result.
+/// Retrieve the deviceHandle instance from a host object.
 template <typename T>
 DeviceHandle<T> deviceHandle(T&& t) {
   return t.deviceHandle();
 }
 
-/// Retrieve a device handle using the owner's backend-selected member extractor.
-/// @tparam Backend A selector supported by the owner's templated member extractor. No default is provided.
-/// @param t The owner, accessed as a named lvalue even when supplied as an rvalue.
-/// @return The selected member extraction result, preserving its const and reference qualifiers.
-/// The member's runtime validation and handle lifetime requirements apply unchanged.
+/// Retrieve the deviceHandle instance using the owner's templated member extractor.
+/// @tparam Backend The member's backend selector (no default).
 template <auto Backend, typename T>
 DeviceHandle<T, Backend> deviceHandle(T&& t) {
   return t.template deviceHandle<Backend>();

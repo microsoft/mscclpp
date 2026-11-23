@@ -48,15 +48,9 @@ mscclpp::PortChannel channel(semaphore, remoteMem, localMem);
 auto deviceHandle = channel.deviceHandle<mscclpp::PortChannelBackend::Device>();
 ```
 
-Select the matching backend explicitly when extracting a handle: `channel.deviceHandle<Backend>()` or
-`mscclpp::deviceHandle<Backend>(channel)`. Name the result with `PortChannel::DeviceHandle<Backend>` or
-`mscclpp::DeviceHandle<mscclpp::PortChannel, Backend>`.
-The canonical GPU types remain `BasePortChannelDeviceHandle<Backend>` and `PortChannelDeviceHandle<Backend>`;
-`<>` selects Host only for these GPU types, not for owner extraction. GPU handles remain distinct backend-specific
-types with static dispatch. Port extraction without a selector, or with an invalid selector, is rejected at compile
-time. Fixed Memory/Switch extractors keep `mscclpp::deviceHandle(owner)` and `mscclpp::DeviceHandle<Owner>` without
-a selector. Both helper forms preserve the member's lifetime and runtime validation requirements; see the
-[source migration reference](../cpp_api.rst).
+Select the backend explicitly with `channel.deviceHandle<Backend>()` or `mscclpp::deviceHandle<Backend>(channel)`.
+The result type is `PortChannelDeviceHandle<Backend>` (also `mscclpp::DeviceHandle<mscclpp::PortChannel, Backend>`).
+See the [API reference](../cpp_api.rst) for selector requirements and source migration.
 
 Keep the channel and application buffers alive during GPU use. Channel copies share the semaphore owner and counter;
 creating a separate semaphore creates an independent counter.
@@ -64,11 +58,8 @@ creating a separate semaphore creates an independent counter.
 Default owners are unassigned, and handle extraction throws `InvalidUsage` until a valid channel is assigned.
 Host construction rejects null semaphore owners or proxies. Device construction rejects null or moved-from Port
 semaphore owners and uninitialized or incompatible memory registrations. Port handle extraction also rejects a
-moved-from Port semaphore. Requesting the wrong backend throws `InvalidUsage`, as does extracting from a bound
-owner whose base and memory bindings no longer match. Whole-owner assignment copies both states, including across
-backends. Base-only assignment does not update memory bindings; same-backend replacement still requires compatible
-proxy/connection/regions. Replace the whole owner to rebind. Raw GPU handles start at zero but require valid state
-before use; Host registry ID0 is valid.
+moved-from Port semaphore. Raw GPU handles start at zero but require valid state before use; Host registry ID0 is valid.
+The selected backend and initialized memory bindings must match the channel; otherwise extraction throws `InvalidUsage`.
 
 Exclusive-mode operations automatically use internal shared-memory WQE slots for BlueFlame submission when the
 transfer fits `device_.blueFlameLimit` (default: 512 KiB) and the calling thread has a slot:

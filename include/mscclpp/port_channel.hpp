@@ -99,9 +99,7 @@ class ProxyService : public BaseProxyService {
   void drainPendingOperations();
 };
 
-/// Port channel owner without source/destination memory regions.
-/// Construct with a Host semaphore and proxy, or with a Device semaphore.
-/// GPU handle extraction requires an explicit backend.
+/// Port channel without specifying source/destination memory regions.
 struct BasePortChannel {
  protected:
   struct HostState {
@@ -118,59 +116,55 @@ struct BasePortChannel {
   std::variant<std::monostate, HostState, DeviceState> state_;
 
  public:
-  /// Construct an unassigned owner. Every extraction fails until assigned.
+  /// Construct an unassigned channel. Handle extraction throws InvalidUsage until assigned.
   BasePortChannel() noexcept : state_(std::monostate{}) {}
 
-  /// Construct a Host-backed channel.
-  /// @param semaphoreId The ID of the semaphore in the proxy service; ID0 is valid.
+  /// Constructor.
+  /// @param semaphoreId The ID of the semaphore.
   /// @param semaphore The semaphore used to synchronize the communication.
   /// @param proxy The proxy used for communication.
-  /// @throws Error with ErrorCode::InvalidUsage if semaphore or proxy is null, or the
-  /// semaphore uses a device-mode connection.
+  /// @throws Error with InvalidUsage for a null semaphore/proxy or device-mode connection.
   BasePortChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore,
                   std::shared_ptr<Proxy> proxy);
 
-  /// Construct a Device-backed channel without a proxy.
+  /// Constructor for a channel in device mode (PortChannelBackend::Device).
   /// @param semaphore The semaphore of a PortChannel device-mode connection.
-  /// @throws Error with ErrorCode::InvalidUsage if semaphore is null or moved from.
+  /// @throws Error with InvalidUsage if semaphore is null or moved from.
   explicit BasePortChannel(std::shared_ptr<PortDevice2DeviceSemaphore> semaphore);
 
-  /// Construct a Host-backed channel from an initialized raw Semaphore.
-  /// Creates a synchronization owner whose counters are shared by channel copies.
-  /// @pre semaphore must be initialized; default or moved-from raw semaphores are not supported.
-  /// @param semaphoreId The ID of the semaphore in the proxy service; ID0 is valid.
+  /// Construct a Host channel from a raw Semaphore.
+  /// @pre semaphore must be initialized.
+  /// Each construction creates new counters, shared by channel copies.
+  /// @param semaphoreId The ID of the semaphore.
   /// @param semaphore The semaphore used to synchronize the communication.
   /// @param proxy The proxy used for communication.
-  /// @throws Error with ErrorCode::InvalidUsage if proxy is null, the local endpoint is not a GPU,
-  /// or the semaphore uses a device-mode connection.
+  /// @throws Error with InvalidUsage for an invalid Host proxy/connection.
   BasePortChannel(SemaphoreId semaphoreId, const Semaphore& semaphore, std::shared_ptr<Proxy> proxy);
 
-  /// Copy constructor. Copies share the semaphore and proxy ownership.
+  /// Copy constructor.
   /// @param other The other BasePortChannel to copy from.
   BasePortChannel(const BasePortChannel& other) = default;
 
-  /// Assignment operator. The source may use either backend.
+  /// Assignment operator.
   /// @param other The other BasePortChannel to assign from.
   BasePortChannel& operator=(const BasePortChannel& other) = default;
 
-  /// Backend-specific device-side handle type.
+  /// Device-side handle for BasePortChannel.
   /// @tparam Backend PortChannelBackend::Host or PortChannelBackend::Device.
   template <PortChannelBackend Backend>
   using DeviceHandle = BasePortChannelDeviceHandle<Backend>;
 
-  /// Return a non-owning device-side handle for the selected backend.
-  /// Keep this owner and application buffers alive while using the returned handle.
-  /// @tparam Backend The backend matching the constructor used for this owner. No default is provided.
-  /// @return The backend-specific device-side handle.
-  /// @throws Error with ErrorCode::InvalidUsage if the owner is unassigned, the requested
-  /// backend does not match, or its Port semaphore has been moved from.
+  /// Returns the device-side handle for the explicitly selected Backend.
+  /// Keep the channel and application buffers alive while using the returned handle.
+  /// @return The device-side handle.
+  /// @throws Error with InvalidUsage for unassigned, mismatched or moved semaphore state.
   template <PortChannelBackend Backend>
   DeviceHandle<Backend> deviceHandle() const
     requires(Backend == PortChannelBackend::Host || Backend == PortChannelBackend::Device);
 };
 
-/// Port channel owner with source/destination memory regions.
-/// Copies retain both synchronization and memory bindings. Replace the whole owner to rebind.
+/// Port channel.
+/// Copies share synchronization ownership and retain memory bindings.
 struct PortChannel : public BasePortChannel {
  private:
   struct HostBinding {
@@ -189,60 +183,53 @@ struct PortChannel : public BasePortChannel {
   /// Construct an unassigned channel. Handle extraction throws InvalidUsage until assigned.
   PortChannel() noexcept : BasePortChannel(), binding_(std::monostate{}) {}
 
-  /// Construct a Host-backed channel.
-  /// @param semaphoreId The ID of the semaphore in the proxy service; ID0 is valid.
-  /// @param semaphore The semaphore used to synchronize the communication.
-  /// @param proxy The proxy used for communication.
-  /// @param dst The destination memory ID in the proxy service; ID0 is valid.
-  /// @param src The source memory ID in the proxy service; ID0 is valid.
-  /// @throws Error with ErrorCode::InvalidUsage if semaphore or proxy is null, or the
-  /// semaphore uses a device-mode connection.
+  /// Constructor. See BasePortChannel for semaphore/proxy requirements.
+  /// @param semaphoreId The ID of the semaphore.
+  /// @param semaphore The semaphore.
+  /// @param proxy The proxy.
+  /// @param dst The destination memory ID in the proxy service.
+  /// @param src The source memory ID in the proxy service.
   PortChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore, std::shared_ptr<Proxy> proxy,
               MemoryId dst, MemoryId src);
 
-  /// Construct a Device-backed channel without a proxy.
+  /// Constructor for a channel in device mode (PortChannelBackend::Device).
+  /// See BasePortChannel for semaphore requirements.
   /// @param semaphore The semaphore of a PortChannel device-mode connection.
-  /// @param dst The destination registered memory, retained by this owner.
-  /// @param src The source registered memory, retained by this owner.
-  /// @throws Error with ErrorCode::InvalidUsage if semaphore is null or moved from, or
-  /// memory registrations are uninitialized or incompatible with the connection.
+  /// @param dst The destination registered memory.
+  /// @param src The source registered memory.
+  /// @throws Error with InvalidUsage for uninitialized or incompatible registrations.
   PortChannel(std::shared_ptr<PortDevice2DeviceSemaphore> semaphore, RegisteredMemory dst, RegisteredMemory src);
 
-  /// Construct a Host-backed channel from an initialized raw Semaphore.
-  /// Creates a synchronization owner whose counters are shared by channel copies.
-  /// @pre semaphore must be initialized; default or moved-from raw semaphores are not supported.
-  /// @param semaphoreId The ID of the semaphore in the proxy service; ID0 is valid.
-  /// @param semaphore The semaphore used to synchronize the communication.
-  /// @param proxy The proxy used for communication.
-  /// @param dst The destination memory ID in the proxy service; ID0 is valid.
-  /// @param src The source memory ID in the proxy service; ID0 is valid.
-  /// @throws Error with ErrorCode::InvalidUsage if proxy is null, the local endpoint is not a GPU,
-  /// or the semaphore uses a device-mode connection.
+  /// Construct a Host channel from a raw Semaphore. See BasePortChannel for proxy/connection requirements.
+  /// @pre semaphore must be initialized.
+  /// Each construction creates new counters, shared by channel copies.
+  /// @param semaphoreId The ID of the semaphore.
+  /// @param semaphore The semaphore.
+  /// @param proxy The proxy.
+  /// @param dst The destination memory ID in the proxy service.
+  /// @param src The source memory ID in the proxy service.
   PortChannel(SemaphoreId semaphoreId, const Semaphore& semaphore, std::shared_ptr<Proxy> proxy, MemoryId dst,
               MemoryId src);
 
-  /// Copy constructor. Copies share synchronization ownership and retain memory bindings.
+  /// Copy constructor.
   /// @param other The other PortChannel to copy from.
   PortChannel(const PortChannel& other) = default;
 
-  /// Assignment operator. Copies both synchronization and binding state, including across backends.
+  /// Assignment operator.
   /// @param other The other PortChannel to assign from.
   PortChannel& operator=(const PortChannel& other) = default;
 
-  /// Backend-specific device-side handle type.
+  /// Device-side handle for PortChannel.
   /// @tparam Backend PortChannelBackend::Host or PortChannelBackend::Device.
   template <PortChannelBackend Backend>
   using DeviceHandle = PortChannelDeviceHandle<Backend>;
 
-  /// Return a non-owning device-side handle for the selected backend.
-  /// Keep this owner and application buffers alive while using the returned handle.
-  /// Assigning only the base does not update memory bindings. Same-backend base replacement
-  /// requires compatible proxy/connection/regions; replace the whole owner to rebind.
-  /// @tparam Backend The backend matching both synchronization and memory bindings. No default is provided.
-  /// @return The backend-specific device-side handle.
-  /// @throws Error with ErrorCode::InvalidUsage if synchronization or binding state is unassigned,
-  /// either state does not match Backend, the Port semaphore has been moved from, or
-  /// Device memory registrations are uninitialized or incompatible with the connection.
+  /// Returns the device-side handle for the explicitly selected Backend.
+  /// Keep the channel and application buffers alive while using the returned handle.
+  /// Base-only replacement requires compatible proxy/connection/regions; replace the whole owner to rebind.
+  /// @return The device-side handle.
+  /// @throws Error with InvalidUsage for unassigned/mismatched bindings, invalid registrations,
+  /// or unassigned, mismatched or moved semaphore state.
   template <PortChannelBackend Backend>
   DeviceHandle<Backend> deviceHandle() const
     requires(Backend == PortChannelBackend::Host || Backend == PortChannelBackend::Device);

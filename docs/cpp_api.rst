@@ -230,75 +230,41 @@ These device-side handle structures provide GPU kernel interfaces for MSCCL++ co
 Channel Device Interfaces
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-GPU channel types use ``DeviceHandle`` names for non-owning state.
+GPU channel types consistently use ``DeviceHandle`` names for non-owning state.
 ``BasePortChannelDeviceHandle<Backend>`` and ``PortChannelDeviceHandle<Backend>`` default to Host;
-the Memory and Switch handle types remain concrete. GPU handle fields and operations, header filenames,
-and Python export names and properties are unchanged. Python Port bindings select Host extraction.
+the Memory and Switch handle types remain concrete. Header filenames and Python API names are unchanged.
 
-Construct ``BasePortChannel`` with a Host semaphore ID, semaphore and proxy, or with a Device
-semaphore. ``PortChannel`` additionally binds source/destination memory IDs for Host, or registered
-memories for Device. Extract the matching GPU handle explicitly:
+Construct ``BasePortChannel`` with a Host semaphore ID, semaphore and proxy, or a Device semaphore.
+``PortChannel`` additionally binds Host source/destination memory IDs or Device registered memories.
+For initialized ``MemoryChannel memory`` and Host-backed ``PortChannel host``:
 
 .. code-block:: cpp
 
    using Backend = mscclpp::PortChannelBackend;
-   mscclpp::PortChannel host = proxy.portChannel(semaphoreId, dstId, srcId);
-   mscclpp::PortChannel::DeviceHandle<Backend::Host> handle = host.deviceHandle<Backend::Host>();
-
-Keep the owner and application buffers alive during GPU use. Copies share semaphore/counter ownership
-and retain their memory bindings. Default owners are unassigned. Extraction throws ``Error`` with
-``ErrorCode::InvalidUsage`` for an unassigned owner, the wrong backend, a moved-from Port semaphore,
-or unassigned or mismatched memory bindings. Device registration admission also checks that memory
-is initialized and compatible with the connection. Host registry ID0 is valid.
-
-Whole-owner assignment copies synchronization and memory bindings together, including across backends.
-Base-only assignment does not update memory bindings. A same-backend base replacement still requires
-compatible proxy/connection/regions; these checks do not establish general resource identity. Prefer
-whole-owner assignment when rebinding. Host and Device GPU handles remain different types and cannot
-be assigned to each other; GPU operations do not dispatch on the CPU owner's runtime state.
-
-Generic handle extraction
-^^^^^^^^^^^^^^^^^^^^^^^^^
-
-Use ``mscclpp::DeviceHandle<Owner>`` and ``mscclpp::deviceHandle(owner)`` for a fixed member extractor,
-such as Memory or Switch. For Port channels, supply the backend to both forms:
-
-.. code-block:: cpp
-
    mscclpp::DeviceHandle<mscclpp::MemoryChannel> memoryHandle = mscclpp::deviceHandle(memory);
    mscclpp::DeviceHandle<mscclpp::PortChannel, Backend::Host> hostHandle =
        mscclpp::deviceHandle<Backend::Host>(host);
 
-These examples use initialized channel owners; ``host`` uses the Host backend. The alias derives the
-exact result type of the selected member call on an lvalue of ``Owner``, including const and reference
-qualifiers. It does not depend on a nested associated type. The helpers also access their argument as
-a named lvalue, even when given an rvalue. They do not move from the owner or extend its lifetime.
-Keep the owner and application buffers alive while GPU handles are in use.
+Port extraction requires one Host or Device selector; fixed Memory/Switch extraction uses no selector.
+Unsupported selectors or counts, including omitted Port selectors, are compile-time errors.
+The alias follows the member call's exact result type on ``Owner&``; helpers use a named lvalue and
+preserve const/reference results without extending owner lifetime. Keep owners and buffers alive during GPU use.
+Port extraction throws ``Error`` with ``ErrorCode::InvalidUsage`` for unassigned/mismatched owner or
+binding state, moved semaphores, or invalid Device registrations. Host registry ID0 is valid.
+Copies share semaphore/counter ownership and retain memory bindings. Same-backend base-only replacement
+requires compatible proxy/connection/regions; prefer whole-owner assignment to rebind.
 
-Port extraction accepts exactly one ``PortChannelBackend::Host`` or ``PortChannelBackend::Device``
-selector. Omitted Port selectors, selectors on fixed Memory/Switch extractors, wrong selector kinds,
-unsupported enum values and multiple selectors are rejected at compile time. Unavailable alias/call
-forms can be queried with ``requires``. Selecting the wrong backend for an initialized Port owner
-still throws ``Error`` with ``ErrorCode::InvalidUsage`` at runtime; namespace extraction preserves
-the member's default-state, binding, registration and moved-semaphore validation.
+Port source migration:
 
-Port owner source migration
-^^^^^^^^^^^^^^^^^^^^^^^^^^
+* Replace ``BasePortChannel<B>`` / ``PortChannel<B>`` with the bare owner names.
+* Replace ``Channel::DeviceHandle`` with ``Channel::DeviceHandle<B>``; generic Port types use
+  ``mscclpp::DeviceHandle<Channel, B>``.
+* Use ``channel.deviceHandle<B>()`` or ``mscclpp::deviceHandle<B>(channel)``; neither has a default backend.
 
-* Replace ``BasePortChannel<B>`` and ``PortChannel<B>`` with ``BasePortChannel`` and ``PortChannel``.
-* Replace the fixed ``Channel::DeviceHandle`` type with ``Channel::DeviceHandle<B>`` for Port owners.
-* Replace no-argument Port extraction with ``channel.deviceHandle<B>()`` or
-  ``mscclpp::deviceHandle<B>(channel)``. There is no default backend.
-* Name generic Port result types with ``mscclpp::DeviceHandle<Channel, B>``. The forms
-  ``mscclpp::DeviceHandle<Channel>`` and ``mscclpp::deviceHandle(channel)`` remain unsupported for Port.
-  Fixed extractors retain their no-selector alias/helper syntax; their result type follows the
-  actual member extraction expression.
-
-The canonical GPU Port types remain templates. In type positions, use ``PortChannelDeviceHandle<>*``
-rather than ``PortChannelDeviceHandle*``, and likewise for the base handle, or name
-``Channel::DeviceHandle<B>``. ``SmChannelDeviceHandle`` remains a deprecated direct alias to
-``MemoryChannelDeviceHandle``. Existing compatibility aliases are best-effort source conveniences,
-not an ABI or layout guarantee. Rebuild consumers.
+``SmChannelDeviceHandle`` remains a deprecated direct alias to ``MemoryChannelDeviceHandle``.
+In type positions, use ``PortChannelDeviceHandle<>*`` rather than ``PortChannelDeviceHandle*``, and
+likewise for the base GPU handle. This is a limited source-compatibility break, not a binary-compatibility
+guarantee. Rebuild consumers.
 
 .. doxygenstruct:: mscclpp::BaseMemoryChannelDeviceHandle
    :members:

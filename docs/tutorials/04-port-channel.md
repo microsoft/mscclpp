@@ -51,10 +51,8 @@ mscclpp::PortChannel portChan = proxyService.portChannel(semaId, remoteMemId, lo
 auto portChanHandle = portChan.deviceHandle<mscclpp::PortChannelBackend::Host>();
 ```
 
-The proxy factory constructs a Host-backed `PortChannel`, so extraction explicitly
-selects `Host`. Pass `portChanHandle` to the GPU kernel and keep `portChan` and the application buffers alive
-until GPU work completes. The handle type is `mscclpp::PortChannelDeviceHandle<mscclpp::PortChannelBackend::Host>`.
-For Device-backed construction and extraction, see the [GPUNetIO guide](../guide/gpunetio.md).
+The proxy factory creates a Host-backed channel. Keep `portChan` and the application buffers alive
+until GPU work completes. For Device-backed channels, see the [GPUNetIO guide](../guide/gpunetio.md).
 
 The procedures for building `Semaphore` and `RegisteredMemory` are explained in the [Basic Concepts](./01-basic-concepts.md) and the [Memory Channel](./03-memory-channel.md) tutorials, respectively.
 
