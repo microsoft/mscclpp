@@ -135,12 +135,14 @@ struct BasePortChannel {
   /// @throws Error with ErrorCode::InvalidUsage if semaphore is null or moved from.
   explicit BasePortChannel(std::shared_ptr<PortDevice2DeviceSemaphore> semaphore);
 
-  /// Construct a Host-backed channel with a shared synchronization counter.
+  /// Construct a Host-backed channel from an initialized raw Semaphore.
+  /// Creates a synchronization owner whose counters are shared by channel copies.
+  /// @pre semaphore must be initialized; default or moved-from raw semaphores are not supported.
   /// @param semaphoreId The ID of the semaphore in the proxy service; ID0 is valid.
   /// @param semaphore The semaphore used to synchronize the communication.
   /// @param proxy The proxy used for communication.
-  /// @throws Error with ErrorCode::InvalidUsage if proxy is null or semaphore cannot
-  /// be used for Host synchronization.
+  /// @throws Error with ErrorCode::InvalidUsage if proxy is null, the local endpoint is not a GPU,
+  /// or the semaphore uses a device-mode connection.
   BasePortChannel(SemaphoreId semaphoreId, const Semaphore& semaphore, std::shared_ptr<Proxy> proxy);
 
   /// Copy constructor. Copies share the semaphore and proxy ownership.
@@ -205,14 +207,16 @@ struct PortChannel : public BasePortChannel {
   /// memory registrations are uninitialized or incompatible with the connection.
   PortChannel(std::shared_ptr<PortDevice2DeviceSemaphore> semaphore, RegisteredMemory dst, RegisteredMemory src);
 
-  /// Construct a Host-backed channel with a shared synchronization counter.
+  /// Construct a Host-backed channel from an initialized raw Semaphore.
+  /// Creates a synchronization owner whose counters are shared by channel copies.
+  /// @pre semaphore must be initialized; default or moved-from raw semaphores are not supported.
   /// @param semaphoreId The ID of the semaphore in the proxy service; ID0 is valid.
   /// @param semaphore The semaphore used to synchronize the communication.
   /// @param proxy The proxy used for communication.
   /// @param dst The destination memory ID in the proxy service; ID0 is valid.
   /// @param src The source memory ID in the proxy service; ID0 is valid.
-  /// @throws Error with ErrorCode::InvalidUsage if proxy is null or semaphore cannot
-  /// be used for Host synchronization.
+  /// @throws Error with ErrorCode::InvalidUsage if proxy is null, the local endpoint is not a GPU,
+  /// or the semaphore uses a device-mode connection.
   PortChannel(SemaphoreId semaphoreId, const Semaphore& semaphore, std::shared_ptr<Proxy> proxy, MemoryId dst,
               MemoryId src);
 
