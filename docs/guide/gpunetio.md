@@ -31,8 +31,7 @@ The GPUNetIO license is installed to `share/licenses/mscclpp/gpunetio`.
 ## Usage
 
 Create the connection with `EndpointConfig::Ib::Mode::Device` and construct the `PortChannel` directly from the
-semaphore and registered memories. `PortChannel` is a non-template CPU owner; this constructor selects Device
-state, and no `ProxyService` is needed:
+semaphore and registered memories. This selects the Device backend; no `ProxyService` is needed:
 
 ```cpp
 mscclpp::EndpointConfig cfg;
@@ -49,7 +48,7 @@ mscclpp::PortChannel channel(semaphore, remoteMem, localMem);
 auto deviceHandle = channel.deviceHandle<mscclpp::PortChannelBackend::Device>();
 ```
 
-Host and Device channels use the same CPU owner type. Extraction requires an explicit backend:
+Select the matching backend explicitly when extracting a handle:
 `channel.deviceHandle<Backend>()`, with result type `PortChannel::DeviceHandle<Backend>`.
 The canonical GPU types remain `BasePortChannelDeviceHandle<Backend>` and `PortChannelDeviceHandle<Backend>`;
 `<>` selects Host only for these GPU types, not for owner extraction. GPU handles remain distinct backend-specific

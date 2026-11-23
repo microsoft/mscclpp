@@ -51,7 +51,7 @@ mscclpp::PortChannel portChan = proxyService.portChannel(semaId, remoteMemId, lo
 auto portChanHandle = portChan.deviceHandle<mscclpp::PortChannelBackend::Host>();
 ```
 
-`PortChannel` is a non-template CPU owner. The proxy factory constructs Host state, so extraction explicitly
+The proxy factory constructs a Host-backed `PortChannel`, so extraction explicitly
 selects `Host`. Pass `portChanHandle` to the GPU kernel and keep `portChan` and the application buffers alive
 until GPU work completes. The handle type is `mscclpp::PortChannelDeviceHandle<mscclpp::PortChannelBackend::Host>`.
 For Device-backed construction and extraction, see the [GPUNetIO guide](../guide/gpunetio.md).

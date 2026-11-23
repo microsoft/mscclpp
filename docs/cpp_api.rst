@@ -235,9 +235,8 @@ GPU channel types use ``DeviceHandle`` names for non-owning state.
 the Memory and Switch handle types remain concrete. GPU handle fields and operations, header filenames,
 and Python export names and properties are unchanged. Python Port bindings select Host extraction.
 
-``BasePortChannel`` and ``PortChannel`` are non-template CPU owners. Construct them with a Host
-semaphore and proxy, or with a Device semaphore and registered memories. Extract the matching GPU
-handle explicitly:
+Construct ``BasePortChannel`` or ``PortChannel`` with a Host semaphore and proxy, or with a Device
+semaphore and registered memories. Extract the matching GPU handle explicitly:
 
 .. code-block:: cpp
 
