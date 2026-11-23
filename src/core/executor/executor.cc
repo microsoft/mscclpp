@@ -121,7 +121,7 @@ struct ExecutionContext {
   std::vector<mscclpp::RegisteredMemory> localRegisteredMemories;
 
   std::vector<mscclpp::BaseMemoryChannel> memoryChannels;
-  std::vector<mscclpp::BasePortChannel<>> portChannels;
+  std::vector<mscclpp::BasePortChannel> portChannels;
   std::vector<mscclpp::SwitchChannel> nvlsChannels;
   std::unordered_map<DeviceExecutionPlanKey, std::vector<DeviceExecutionPlan>> deviceExecutionPlans;
   std::unordered_map<DeviceExecutionPlanKey, std::shared_ptr<char>> deviceExecutionPlansBuffers;
@@ -457,7 +457,8 @@ struct Executor::Impl {
       }
       chanIndex = 0;
       for (const int index : plan.impl_->threadblockPortChannels.at(threadblock)) {
-        deviceExecutionPlan.channels.portChannels[chanIndex++] = mscclpp::deviceHandle(context.portChannels[index]);
+        deviceExecutionPlan.channels.portChannels[chanIndex++] =
+            context.portChannels[index].deviceHandle<mscclpp::PortChannelBackend::Host>();
       }
       chanIndex = 0;
       for (const int index : plan.impl_->threadblockNvlsChannels.at(threadblock)) {

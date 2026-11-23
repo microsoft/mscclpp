@@ -142,8 +142,7 @@ using DeviceHandle = mscclpp::DeviceHandle<T>;
 
 using IbMode = mscclpp::EndpointConfig::Ib::Mode;
 using Concurrency = mscclpp::PortChannelDeviceHandle<>::Concurrency;
-using TestPortChannel = std::variant<mscclpp::PortChannel<mscclpp::PortChannelBackend::Host>,
-                                     mscclpp::PortChannel<mscclpp::PortChannelBackend::Device>>;
+using TestPortChannel = mscclpp::PortChannel;
 
 // Fan-in: every rank other than 0 accumulates into rank 0's counter, so the destination has many
 // concurrent writers. An unserialized read-modify-write loses updates here, which a one-to-one

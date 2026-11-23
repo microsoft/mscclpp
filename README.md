@@ -58,7 +58,7 @@ MSCCL++ provides peer-to-peer communication methods between GPUs. A peer-to-peer
 
 ```cpp
 // `PortChannel` will be explained in the following section.
-__device__ mscclpp::DeviceHandle<mscclpp::PortChannel<>> channel;
+__device__ mscclpp::PortChannelDeviceHandle<mscclpp::PortChannelBackend::Host> channel;
 __global__ void gpuKernel() {
   ...
   // Only one thread is needed for this method.
@@ -94,6 +94,12 @@ MSCCL++ provides consistent interfaces, i.e., the above interfaces are used rega
 MSCCL++ delivers two types of channels, **PortChannel** and **MemoryChannel**. `PortChannel` provides port-mapping-based data copy and synchronization methods. When called, these methods send/receive a signal to/from a host-side proxy, which will trigger (R)DMA (such as `cudaMemcpy*` or `ibv_post_send`) or issue synchronization methods (such as `cudaStreamSynchronize` or `ibv_poll_cq`). Since the key functionalities are run by the proxy, `PortChannel` requires only a single GPU thread to call its methods. See all `PortChannel` methods from [here](./include/mscclpp/port_channel_device.hpp).
 
 On the other hand, `MemoryChannel` provides memory-mapping-based copy and synchronization methods. When called, these methods will directly use GPU threads to read/write from/to the remote GPU's memory space. Comparing against `PortChannel`, `MemoryChannel` is especially performant for low-latency scenarios, while it may need many GPU threads to call copying methods at the same time to achieve high copying bandwidth. See all `MemoryChannel` methods from [here](./include/mscclpp/memory_channel_device.hpp).
+
+`BasePortChannel` and `PortChannel` are non-template CPU owners. Choose the GPU backend explicitly when
+extracting a handle: `channel.deviceHandle<mscclpp::PortChannelBackend::Host>()` for proxy-backed channels, or
+`channel.deviceHandle<mscclpp::PortChannelBackend::Device>()` for [GPUNetIO](./docs/guide/gpunetio.md).
+Keep the owner and application buffers alive during GPU use. See the [API reference](./docs/cpp_api.rst)
+for extraction checks and source migration.
 
 ### Host-Side Communication Proxy
 

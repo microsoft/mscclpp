@@ -26,21 +26,20 @@ bool rejectsInvalidUsage(Func&& func) {
 
 TEST(ProxyServiceTest, UnassignedChannels) {
   using Backend = mscclpp::PortChannelBackend;
-  mscclpp::BasePortChannel<> hostBase;
-  mscclpp::BasePortChannel<Backend::Device> deviceBase;
-  mscclpp::PortChannel<> host;
-  mscclpp::PortChannel<Backend::Device> device;
+  mscclpp::BasePortChannel hostBase;
+  mscclpp::BasePortChannel deviceBase;
+  mscclpp::PortChannel host;
+  mscclpp::PortChannel device;
   auto hostCopy = host;
   auto deviceCopy = device;
-  EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::deviceHandle(hostBase); }));
-  EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::deviceHandle(deviceBase); }));
-  EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::deviceHandle(hostCopy); }));
-  EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::deviceHandle(deviceCopy); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { hostBase.deviceHandle<Backend::Host>(); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { deviceBase.deviceHandle<Backend::Device>(); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { hostCopy.deviceHandle<Backend::Host>(); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { deviceCopy.deviceHandle<Backend::Device>(); }));
   EXPECT_TRUE(rejectsInvalidUsage(
-      [&] { mscclpp::BasePortChannel<> invalid(0, std::shared_ptr<mscclpp::Host2DeviceSemaphore>{}, nullptr); }));
-  EXPECT_TRUE(rejectsInvalidUsage([&] {
-    mscclpp::BasePortChannel<Backend::Device> invalid(std::shared_ptr<mscclpp::PortDevice2DeviceSemaphore>{});
-  }));
+      [&] { mscclpp::BasePortChannel invalid(0, std::shared_ptr<mscclpp::Host2DeviceSemaphore>{}, nullptr); }));
+  EXPECT_TRUE(rejectsInvalidUsage(
+      [&] { mscclpp::BasePortChannel invalid(std::shared_ptr<mscclpp::PortDevice2DeviceSemaphore>{}); }));
 }
 
 TEST(ProxyServiceTest, PlainHandleDefaults) {
@@ -95,16 +94,16 @@ TEST(ProxyServiceTest, Lifecycle) {
     auto srcId = service->addMemory(srcMemory);
     auto dstId = service->addMemory(dstMemory);
     auto semaphoreId = service->buildAndAddSemaphore(communicator, connection);
-    auto channel = std::make_unique<mscclpp::PortChannel<>>(service->portChannel(semaphoreId, dstId, srcId));
-    const auto zero = service->portChannel(semaphoreId, 0, 0).deviceHandle();
+    auto channel = std::make_unique<mscclpp::PortChannel>(service->portChannel(semaphoreId, dstId, srcId));
+    const auto zero = service->portChannel(semaphoreId, 0, 0).deviceHandle<mscclpp::PortChannelBackend::Host>();
     EXPECT_EQ(zero.src_, 0u);
     EXPECT_EQ(zero.dst_, 0u);
     EXPECT_TRUE(rejectsInvalidUsage(
-        [&] { mscclpp::BasePortChannel<> invalid(semaphoreId, service->semaphore(semaphoreId), nullptr); }));
+        [&] { mscclpp::BasePortChannel invalid(semaphoreId, service->semaphore(semaphoreId), nullptr); }));
     for (int run = 0; run < 2; ++run) {
       MSCCLPP_CUDATHROW(cudaMemset(dst.get(), 0, bytes));
       service->startProxy(true);
-      kernelProxyServiceTransfer<<<1, 1>>>(channel->deviceHandle(), bytes);
+      kernelProxyServiceTransfer<<<1, 1>>>(channel->deviceHandle<mscclpp::PortChannelBackend::Host>(), bytes);
       MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
       MSCCLPP_CUDATHROW(cudaMemcpy(actual.data(), dst.get(), bytes, cudaMemcpyDeviceToHost));
       EXPECT_TRUE(actual == expected);

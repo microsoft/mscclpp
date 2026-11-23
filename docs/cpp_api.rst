@@ -230,18 +230,48 @@ These device-side handle structures provide GPU kernel interfaces for MSCCL++ co
 Channel Device Interfaces
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-GPU channel types consistently use ``DeviceHandle`` names for non-owning state.
+GPU channel types use ``DeviceHandle`` names for non-owning state.
 ``BasePortChannelDeviceHandle<Backend>`` and ``PortChannelDeviceHandle<Backend>`` default to Host;
-the Memory and Switch handle types remain concrete. Owner names, nested ``DeviceHandle`` aliases,
-``deviceHandle()`` methods, generic extraction, header filenames and Python API names are unchanged.
+the Memory and Switch handle types remain concrete. GPU handle fields and operations, header filenames,
+and Python export names and properties are unchanged. Python Port bindings select Host extraction.
 
-``SmChannelDeviceHandle`` remains a deprecated direct alias to ``MemoryChannelDeviceHandle``.
+``BasePortChannel`` and ``PortChannel`` are non-template CPU owners. Construct them with a Host
+semaphore and proxy, or with a Device semaphore and registered memories. Extract the matching GPU
+handle explicitly:
 
-The former plain Host Port aliases cannot coexist with the canonical templates. In type positions,
-use ``PortChannelDeviceHandle<>*`` rather than ``PortChannelDeviceHandle*``, and likewise for the
-base handle, or use ``Owner::DeviceHandle``. Do not rely on every old form being accepted by class
-template argument deduction. This is a limited source-compatibility break and not a binary-compatibility
-guarantee. Rebuild consumers.
+.. code-block:: cpp
+
+   using Backend = mscclpp::PortChannelBackend;
+   mscclpp::PortChannel host = proxy.portChannel(semaphoreId, dstId, srcId);
+   mscclpp::PortChannel::DeviceHandle<Backend::Host> handle = host.deviceHandle<Backend::Host>();
+
+Keep the owner and application buffers alive during GPU use. Copies share semaphore/counter ownership
+and retain their memory bindings. Default owners are unassigned. Extraction throws ``Error`` with
+``ErrorCode::InvalidUsage`` for an unassigned owner, the wrong backend, a moved-from Port semaphore,
+or unassigned or mismatched memory bindings. Device registration admission also checks that memory
+is initialized and compatible with the connection. Host registry ID0 is valid.
+
+Whole-owner assignment copies synchronization and memory bindings together, including across backends.
+Base-only assignment does not update memory bindings. A same-backend base replacement still requires
+compatible proxy/connection/regions; these checks do not establish general resource identity. Prefer
+whole-owner assignment when rebinding. Host and Device GPU handles remain different types and cannot
+be assigned to each other; GPU operations do not dispatch on the CPU owner's runtime state.
+
+Port owner source migration
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+* Replace ``BasePortChannel<B>`` and ``PortChannel<B>`` with ``BasePortChannel`` and ``PortChannel``.
+* Replace the fixed ``Channel::DeviceHandle`` type with ``Channel::DeviceHandle<B>`` for Port owners.
+* Replace no-argument Port extraction with ``channel.deviceHandle<B>()``. There is no default backend.
+* Port owners do not support ``mscclpp::DeviceHandle<Channel>`` or ``mscclpp::deviceHandle(channel)``.
+  Generic callers must carry the backend explicitly at the Port boundary. The generic helper and
+  associated-type protocol for other owners are unchanged.
+
+The canonical GPU Port types remain templates. In type positions, use ``PortChannelDeviceHandle<>*``
+rather than ``PortChannelDeviceHandle*``, and likewise for the base handle, or name
+``Channel::DeviceHandle<B>``. ``SmChannelDeviceHandle`` remains a deprecated direct alias to
+``MemoryChannelDeviceHandle``. Existing compatibility aliases are best-effort source conveniences,
+not an ABI or layout guarantee. Rebuild consumers.
 
 .. doxygenstruct:: mscclpp::BaseMemoryChannelDeviceHandle
    :members:

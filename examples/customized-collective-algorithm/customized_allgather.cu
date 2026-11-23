@@ -51,11 +51,12 @@ int wait_process(int pid) {
 }
 
 __global__ void __launch_bounds__(1024)
-    allgather(mscclpp::DeviceHandle<mscclpp::PortChannel<>>* portChannels, int rank, size_t nbytesPerGPU) {
+    allgather(mscclpp::PortChannelDeviceHandle<mscclpp::PortChannelBackend::Host>* portChannels, int rank,
+              size_t nbytesPerGPU) {
   int warpId = threadIdx.x / WARP_SIZE;
 
   // Each warp is responsible for one of the remote ranks
-  mscclpp::DeviceHandle<mscclpp::PortChannel<>> portChan = portChannels[warpId];
+  mscclpp::PortChannelDeviceHandle<mscclpp::PortChannelBackend::Host> portChan = portChannels[warpId];
 
   // this allgather is really simple and implemented as an alltoall
 
@@ -83,7 +84,7 @@ struct Context {
   int nRanksPerNode;
 
   std::vector<mscclpp::RegisteredMemory> registeredMemories;
-  std::shared_ptr<mscclpp::DeviceHandle<mscclpp::PortChannel<>>> portChannelDeviceHandles;
+  std::shared_ptr<mscclpp::PortChannelDeviceHandle<mscclpp::PortChannelBackend::Host>> portChannelDeviceHandles;
 };
 
 class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
@@ -170,16 +171,19 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
     }
 
     // setup channels
-    std::vector<mscclpp::DeviceHandle<mscclpp::PortChannel<>>> portChannels;
+    std::vector<mscclpp::PortChannelDeviceHandle<mscclpp::PortChannelBackend::Host>> portChannels;
     mscclpp::MemoryId inputMemoryId = this->proxyService_->addMemory(inputBufRegMem);
     for (int i = 0; i < this->conns_.size(); i++) {
       auto remoteMemory = remoteRegMemories[i].get();
       mscclpp::MemoryId remoteMemoryId = this->proxyService_->addMemory(remoteMemory);
-      portChannels.push_back(mscclpp::deviceHandle(this->proxyService_->portChannel(
-          this->proxyService_->buildAndAddSemaphore(*comm, this->conns_[i]), remoteMemoryId, inputMemoryId)));
+      portChannels.push_back(this->proxyService_
+                                 ->portChannel(this->proxyService_->buildAndAddSemaphore(*comm, this->conns_[i]),
+                                               remoteMemoryId, inputMemoryId)
+                                 .deviceHandle<mscclpp::PortChannelBackend::Host>());
     }
     ctx->portChannelDeviceHandles =
-        mscclpp::detail::gpuCallocShared<mscclpp::DeviceHandle<mscclpp::PortChannel<>>>(portChannels.size());
+        mscclpp::detail::gpuCallocShared<mscclpp::PortChannelDeviceHandle<mscclpp::PortChannelBackend::Host>>(
+            portChannels.size());
     mscclpp::gpuMemcpy(ctx->portChannelDeviceHandles.get(), portChannels.data(), portChannels.size(),
                        cudaMemcpyHostToDevice);
 

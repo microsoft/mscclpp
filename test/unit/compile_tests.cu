@@ -50,9 +50,9 @@ __global__ void portAlgorithm(Handle channel) {
   channel.putWithSignal(0, 8);
   channel.flush();
 }
-void genericExtraction(const mscclpp::PortChannel<>& host, const mscclpp::PortChannel<Backend::Device>& device) {
-  portAlgorithm<<<1, 1>>>(mscclpp::deviceHandle(host));
-  portAlgorithm<<<1, 1>>>(mscclpp::deviceHandle(device));
+void explicitExtraction(const mscclpp::PortChannel& host, const mscclpp::PortChannel& device) {
+  portAlgorithm<<<1, 1>>>(host.deviceHandle<Backend::Host>());
+  portAlgorithm<<<1, 1>>>(device.deviceHandle<Backend::Device>());
 }
 
 template <C Mode, uint32_t Capacity>

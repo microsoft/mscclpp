@@ -61,7 +61,7 @@ static void localPortChannelTest(mscclpp::Transport transport) {
 
   auto sid = proxyService->buildAndAddSemaphore(*communicator, connection);
   auto portChannel = proxyService->portChannel(sid, dstMemId, srcMemId);
-  auto portChannelHandle = portChannel.deviceHandle();
+  auto portChannelHandle = portChannel.deviceHandle<mscclpp::PortChannelBackend::Host>();
 
   MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gPortChannel, &portChannelHandle, sizeof(portChannelHandle)));
 

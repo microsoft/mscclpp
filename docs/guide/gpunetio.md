@@ -3,8 +3,9 @@
 By default, `PortChannel` operations over InfiniBand are pushed by GPU threads into a FIFO and posted to the NIC by the
 host proxy thread of a `ProxyService`. With the optional GPUNetIO backend, GPU threads build the RDMA work requests and
 ring the NIC doorbell themselves through [DOCA GPUNetIO](https://github.com/NVIDIA-DOCA/gpunetio) (GDAKI), removing
-the proxy from the data path. Select the backend per endpoint with `EndpointConfig::Ib::Mode::Device`, then use a
-Device-typed channel owner and GPU handle. Posting methods allocate their shared-memory WQE scratch internally.
+the proxy from the data path. Select the backend per endpoint with `EndpointConfig::Ib::Mode::Device`, then
+construct the channel owner with a Device semaphore and extract a Device-typed GPU handle. Posting methods
+allocate their shared-memory WQE scratch internally.
 
 ## Build
 
@@ -30,8 +31,8 @@ The GPUNetIO license is installed to `share/licenses/mscclpp/gpunetio`.
 ## Usage
 
 Create the connection with `EndpointConfig::Ib::Mode::Device` and construct the `PortChannel` directly from the
-semaphore and registered memories (`PortChannel<PortChannelBackend::Device>` is deduced automatically from the
-constructor; no `ProxyService` is needed):
+semaphore and registered memories. `PortChannel` is a non-template CPU owner; this constructor selects Device
+state, and no `ProxyService` is needed:
 
 ```cpp
 mscclpp::EndpointConfig cfg;
@@ -45,11 +46,15 @@ auto remoteMem = communicator->recvMemory(remoteRank).get();
 
 auto semaphore = std::make_shared<mscclpp::PortDevice2DeviceSemaphore>(*communicator, connection);
 mscclpp::PortChannel channel(semaphore, remoteMem, localMem);
-auto deviceHandle = channel.deviceHandle();
+auto deviceHandle = channel.deviceHandle<mscclpp::PortChannelBackend::Device>();
 ```
 
-Host and Device owners have distinct `DeviceHandle` types; `mscclpp::deviceHandle(channel)` selects the matching
-GPU view. The canonical types are `BasePortChannelDeviceHandle<Backend>` and `PortChannelDeviceHandle<Backend>`; `<>` selects Host.
+Host and Device channels use the same CPU owner type. Extraction requires an explicit backend:
+`channel.deviceHandle<Backend>()`, with result type `PortChannel::DeviceHandle<Backend>`.
+The canonical GPU types remain `BasePortChannelDeviceHandle<Backend>` and `PortChannelDeviceHandle<Backend>`;
+`<>` selects Host only for these GPU types, not for owner extraction. GPU handles remain distinct backend-specific
+types with static dispatch. Port owners do not support `mscclpp::deviceHandle(channel)` or
+`mscclpp::DeviceHandle<mscclpp::PortChannel>`; see the [source migration reference](../cpp_api.rst).
 
 Keep the channel and application buffers alive during GPU use. Channel copies share the semaphore owner and counter;
 creating a separate semaphore creates an independent counter.
@@ -57,7 +62,11 @@ creating a separate semaphore creates an independent counter.
 Default owners are unassigned, and handle extraction throws `InvalidUsage` until a valid channel is assigned.
 Host construction rejects null semaphore owners or proxies. Device construction rejects null or moved-from Port
 semaphore owners and uninitialized or incompatible memory registrations. Port handle extraction also rejects a
-moved-from Port semaphore. Raw GPU handles start at zero but require valid state before use; Host registry ID0 is valid.
+moved-from Port semaphore. Requesting the wrong backend throws `InvalidUsage`, as does extracting from a bound
+owner whose base and memory bindings no longer match. Whole-owner assignment copies both states, including across
+backends. Base-only assignment does not update memory bindings; same-backend replacement still requires compatible
+proxy/connection/regions. Replace the whole owner to rebind. Raw GPU handles start at zero but require valid state
+before use; Host registry ID0 is valid.
 
 Exclusive-mode operations automatically use internal shared-memory WQE slots for BlueFlame submission when the
 transfer fits `device_.blueFlameLimit` (default: 512 KiB) and the calling thread has a slot:
