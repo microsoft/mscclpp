@@ -991,10 +991,21 @@ extern const TransportFlags AllIBTransports;
 extern const TransportFlags AllTransports;
 
 namespace detail {
-template <typename T>
-auto extractDeviceHandle(T& t) -> decltype(t.deviceHandle());
-template <auto Backend, typename T>
-auto extractDeviceHandle(T& t) -> decltype(t.template deviceHandle<Backend>());
+// Keep member-expression deduction in class scope: HIP rejects host-only calls in a kernel's type aliases.
+template <class T, auto... Backend>
+struct DeviceHandleResult {};
+
+template <class T>
+  requires requires(T& t) { t.deviceHandle(); }
+struct DeviceHandleResult<T> {
+  using type = decltype(std::declval<T&>().deviceHandle());
+};
+
+template <class T, auto Backend>
+  requires requires(T& t) { t.template deviceHandle<Backend>(); }
+struct DeviceHandleResult<T, Backend> {
+  using type = decltype(std::declval<T&>().template deviceHandle<Backend>());
+};
 }  // namespace detail
 
 /// The result type of device-handle extraction from a named lvalue of T.
@@ -1002,7 +1013,7 @@ auto extractDeviceHandle(T& t) -> decltype(t.template deviceHandle<Backend>());
 /// @tparam Backend Omit for a fixed member extractor, or supply one selector supported by its templated extractor.
 /// Unsupported extraction expressions, including multiple selectors, do not define a type.
 template <class T, auto... Backend>
-using DeviceHandle = decltype(detail::extractDeviceHandle<Backend...>(std::declval<T&>()));
+using DeviceHandle = typename detail::DeviceHandleResult<T, Backend...>::type;
 
 /// Retrieve a device handle using the owner's fixed member extractor.
 /// @param t The owner, accessed as a named lvalue even when supplied as an rvalue.

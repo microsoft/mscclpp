@@ -22,6 +22,23 @@ namespace generic_handle_compile_test {
 using Backend = mscclpp::PortChannelBackend;
 enum class OtherBackend { Host };
 
+// Compile-only regression: instantiate aliases inside a kernel, not just at namespace scope.
+__global__ void kernelScopeHandleTypes() {
+  __shared__ mscclpp::DeviceHandle<mscclpp::MemoryChannel> channels[1];
+  static_assert(
+      std::is_same_v<mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>, mscclpp::BaseMemoryChannelDeviceHandle>);
+  static_assert(std::is_same_v<mscclpp::DeviceHandle<mscclpp::SwitchChannel>, mscclpp::SwitchChannelDeviceHandle>);
+  static_assert(std::is_same_v<mscclpp::DeviceHandle<mscclpp::BasePortChannel, Backend::Host>,
+                               mscclpp::BasePortChannelDeviceHandle<Backend::Host>>);
+  static_assert(std::is_same_v<mscclpp::DeviceHandle<mscclpp::BasePortChannel, Backend::Device>,
+                               mscclpp::BasePortChannelDeviceHandle<Backend::Device>>);
+  static_assert(std::is_same_v<mscclpp::DeviceHandle<mscclpp::PortChannel, Backend::Host>,
+                               mscclpp::PortChannelDeviceHandle<Backend::Host>>);
+  static_assert(std::is_same_v<mscclpp::DeviceHandle<mscclpp::PortChannel, Backend::Device>,
+                               mscclpp::PortChannelDeviceHandle<Backend::Device>>);
+  (void)channels;
+}
+
 template <class T, auto... Selectors>
 concept HasAlias = requires { typename mscclpp::DeviceHandle<T, Selectors...>; };
 template <class T, auto... Selectors>
