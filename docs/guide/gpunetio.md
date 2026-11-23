@@ -48,12 +48,15 @@ mscclpp::PortChannel channel(semaphore, remoteMem, localMem);
 auto deviceHandle = channel.deviceHandle<mscclpp::PortChannelBackend::Device>();
 ```
 
-Select the matching backend explicitly when extracting a handle:
-`channel.deviceHandle<Backend>()`, with result type `PortChannel::DeviceHandle<Backend>`.
+Select the matching backend explicitly when extracting a handle: `channel.deviceHandle<Backend>()` or
+`mscclpp::deviceHandle<Backend>(channel)`. Name the result with `PortChannel::DeviceHandle<Backend>` or
+`mscclpp::DeviceHandle<mscclpp::PortChannel, Backend>`.
 The canonical GPU types remain `BasePortChannelDeviceHandle<Backend>` and `PortChannelDeviceHandle<Backend>`;
 `<>` selects Host only for these GPU types, not for owner extraction. GPU handles remain distinct backend-specific
-types with static dispatch. Port owners do not support `mscclpp::deviceHandle(channel)` or
-`mscclpp::DeviceHandle<mscclpp::PortChannel>`; see the [source migration reference](../cpp_api.rst).
+types with static dispatch. Port extraction without a selector, or with an invalid selector, is rejected at compile
+time. Fixed Memory/Switch extractors keep `mscclpp::deviceHandle(owner)` and `mscclpp::DeviceHandle<Owner>` without
+a selector. Both helper forms preserve the member's lifetime and runtime validation requirements; see the
+[source migration reference](../cpp_api.rst).
 
 Keep the channel and application buffers alive during GPU use. Channel copies share the semaphore owner and counter;
 creating a separate semaphore creates an independent counter.

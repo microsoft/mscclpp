@@ -165,7 +165,8 @@ struct BasePortChannel {
   /// @throws Error with ErrorCode::InvalidUsage if the owner is unassigned, the requested
   /// backend does not match, or its Port semaphore has been moved from.
   template <PortChannelBackend Backend>
-  DeviceHandle<Backend> deviceHandle() const;
+  DeviceHandle<Backend> deviceHandle() const
+    requires(Backend == PortChannelBackend::Host || Backend == PortChannelBackend::Device);
 };
 
 /// Port channel owner with source/destination memory regions.
@@ -243,7 +244,8 @@ struct PortChannel : public BasePortChannel {
   /// either state does not match Backend, the Port semaphore has been moved from, or
   /// Device memory registrations are uninitialized or incompatible with the connection.
   template <PortChannelBackend Backend>
-  DeviceHandle<Backend> deviceHandle() const;
+  DeviceHandle<Backend> deviceHandle() const
+    requires(Backend == PortChannelBackend::Host || Backend == PortChannelBackend::Device);
 };
 
 /// @deprecated Use BasePortChannel instead.

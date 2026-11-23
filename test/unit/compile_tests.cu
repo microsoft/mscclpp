@@ -9,11 +9,134 @@
 #endif  // DEBUG_BUILD
 #include <assert.h>
 
+#include <mscclpp/memory_channel.hpp>
 #include <mscclpp/poll_device.hpp>
 #include <mscclpp/port_channel.hpp>
+#include <mscclpp/switch_channel.hpp>
 #include <type_traits>
+#include <utility>
 
 TEST(CompileTest, Assert) { assert(true); }
+
+namespace generic_handle_compile_test {
+using Backend = mscclpp::PortChannelBackend;
+enum class OtherBackend { Host };
+
+template <class T, auto... Selectors>
+concept HasAlias = requires { typename mscclpp::DeviceHandle<T, Selectors...>; };
+template <class T, auto... Selectors>
+concept HasExtraction = requires(T& owner) { mscclpp::deviceHandle<Selectors...>(owner); };
+template <class T, auto... Selectors>
+constexpr bool rejectsExtraction = !HasAlias<T, Selectors...> && !HasExtraction<T, Selectors...>;
+template <class T, class Expected, auto... Selectors>
+constexpr bool matchesExtraction =
+    std::is_same_v<mscclpp::DeviceHandle<T, Selectors...>, Expected> &&
+    std::is_same_v<decltype(mscclpp::deviceHandle<Selectors...>(std::declval<T&>())), Expected>;
+
+static_assert(matchesExtraction<mscclpp::BaseMemoryChannel, mscclpp::BaseMemoryChannelDeviceHandle>);
+static_assert(matchesExtraction<mscclpp::MemoryChannel, mscclpp::MemoryChannelDeviceHandle>);
+static_assert(matchesExtraction<const mscclpp::MemoryChannel&, mscclpp::MemoryChannelDeviceHandle>);
+static_assert(matchesExtraction<mscclpp::SwitchChannel, mscclpp::SwitchChannelDeviceHandle>);
+static_assert(matchesExtraction<const mscclpp::SwitchChannel&&, mscclpp::SwitchChannelDeviceHandle>);
+static_assert(
+    matchesExtraction<mscclpp::BasePortChannel, mscclpp::BasePortChannelDeviceHandle<Backend::Host>, Backend::Host>);
+static_assert(matchesExtraction<const mscclpp::BasePortChannel&, mscclpp::BasePortChannelDeviceHandle<Backend::Device>,
+                                Backend::Device>);
+static_assert(matchesExtraction<mscclpp::PortChannel, mscclpp::PortChannelDeviceHandle<Backend::Host>, Backend::Host>);
+static_assert(matchesExtraction<const mscclpp::PortChannel&&, mscclpp::PortChannelDeviceHandle<Backend::Device>,
+                                Backend::Device>);
+
+template <class T>
+constexpr bool rejectsFixedSelectors =
+    rejectsExtraction<T, Backend::Host> && rejectsExtraction<T, Backend::Device> && rejectsExtraction<T, 0> &&
+    rejectsExtraction<T, OtherBackend::Host> && rejectsExtraction<T, Backend::Host, Backend::Device>;
+template <class T>
+constexpr bool rejectsPortSelectors =
+    rejectsExtraction<T> && rejectsExtraction<T, 0> && rejectsExtraction<T, true> &&
+    rejectsExtraction<T, OtherBackend::Host> && rejectsExtraction<T, static_cast<Backend>(-1)> &&
+    rejectsExtraction<T, static_cast<Backend>(2)> && rejectsExtraction<T, Backend::Host, Backend::Device>;
+static_assert(rejectsFixedSelectors<mscclpp::BaseMemoryChannel>);
+static_assert(rejectsFixedSelectors<mscclpp::MemoryChannel>);
+static_assert(rejectsFixedSelectors<mscclpp::SwitchChannel>);
+static_assert(rejectsPortSelectors<mscclpp::BasePortChannel>);
+static_assert(rejectsPortSelectors<mscclpp::PortChannel>);
+static_assert(rejectsExtraction<int> && rejectsExtraction<void>);
+static_assert(rejectsExtraction<volatile mscclpp::MemoryChannel>);
+static_assert(rejectsExtraction<volatile mscclpp::PortChannel, Backend::Host>);
+
+// These fixtures test expression/cv/ref semantics, not production owner or GPU behavior.
+struct FixedExpressionOwner {
+  using DeviceHandle = void;  // The chosen expression, not this associated type, determines the result.
+  int value;
+  constexpr int& deviceHandle() & { return value; }
+  constexpr const int& deviceHandle() const& { return value; }
+  constexpr int&& deviceHandle() && { return std::move(value); }
+};
+struct SelectedExpressionOwner {
+  int host;
+  long device;
+  template <Backend B>
+    requires(B == Backend::Host || B == Backend::Device)
+  constexpr auto& deviceHandle() & {
+    if constexpr (B == Backend::Host)
+      return host;
+    else
+      return device;
+  }
+  template <Backend B>
+    requires(B == Backend::Host || B == Backend::Device)
+  constexpr const auto& deviceHandle() const& {
+    if constexpr (B == Backend::Host)
+      return host;
+    else
+      return device;
+  }
+  template <Backend B>
+    requires(B == Backend::Host || B == Backend::Device)
+  constexpr auto&& deviceHandle() && {
+    if constexpr (B == Backend::Host)
+      return std::move(host);
+    else
+      return std::move(device);
+  }
+};
+struct RvalueOnlyOwner {
+  int deviceHandle() &&;
+};
+static_assert(matchesExtraction<FixedExpressionOwner, int&>);
+static_assert(matchesExtraction<const FixedExpressionOwner&, const int&>);
+static_assert(matchesExtraction<FixedExpressionOwner&&, int&>);
+static_assert(std::is_same_v<decltype(mscclpp::deviceHandle(std::declval<FixedExpressionOwner&&>())), int&>);
+static_assert(matchesExtraction<SelectedExpressionOwner, int&, Backend::Host>);
+static_assert(matchesExtraction<SelectedExpressionOwner&&, long&, Backend::Device>);
+static_assert(matchesExtraction<const SelectedExpressionOwner&, const long&, Backend::Device>);
+static_assert(
+    std::is_same_v<decltype(mscclpp::deviceHandle<Backend::Device>(std::declval<SelectedExpressionOwner&&>())), long&>);
+static_assert(rejectsExtraction<RvalueOnlyOwner>);
+static_assert(rejectsFixedSelectors<FixedExpressionOwner>);
+static_assert(rejectsPortSelectors<SelectedExpressionOwner>);
+
+void fixedExtraction(const mscclpp::BaseMemoryChannel& base, const mscclpp::MemoryChannel& memory,
+                     const mscclpp::SwitchChannel& sw) {
+  (void)mscclpp::deviceHandle(base);
+  (void)mscclpp::deviceHandle(memory);
+  (void)mscclpp::deviceHandle(sw);
+}
+}  // namespace generic_handle_compile_test
+
+TEST(CompileTest, NamedLvalueExtraction) {
+  using namespace generic_handle_compile_test;
+  FixedExpressionOwner fixed{7};
+  auto& fixedHandle = mscclpp::deviceHandle(std::move(fixed));
+  EXPECT_TRUE(&fixedHandle == &fixed.value);
+  const auto& constFixed = fixed;
+  EXPECT_TRUE(&mscclpp::deviceHandle(constFixed) == &fixed.value);
+  SelectedExpressionOwner selected{11, 13};
+  EXPECT_TRUE(&mscclpp::deviceHandle<Backend::Host>(selected) == &selected.host);
+  EXPECT_TRUE(&mscclpp::deviceHandle<Backend::Device>(std::move(selected)) == &selected.device);
+  const auto& constSelected = selected;
+  EXPECT_TRUE(&mscclpp::deviceHandle<Backend::Device>(constSelected) == &selected.device);
+}
 
 namespace port_channel_compile_test {
 using Backend = mscclpp::PortChannelBackend;
@@ -53,6 +176,10 @@ __global__ void portAlgorithm(Handle channel) {
 void explicitExtraction(const mscclpp::PortChannel& host, const mscclpp::PortChannel& device) {
   portAlgorithm<<<1, 1>>>(host.deviceHandle<Backend::Host>());
   portAlgorithm<<<1, 1>>>(device.deviceHandle<Backend::Device>());
+}
+void genericExtraction(const mscclpp::PortChannel& host, const mscclpp::PortChannel& device) {
+  portAlgorithm<<<1, 1>>>(mscclpp::deviceHandle<Backend::Host>(host));
+  portAlgorithm<<<1, 1>>>(mscclpp::deviceHandle<Backend::Device>(device));
 }
 
 template <C Mode, uint32_t Capacity>

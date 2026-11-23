@@ -12,6 +12,7 @@
 #include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/version.hpp>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace mscclpp {
@@ -989,14 +990,37 @@ extern const TransportFlags AllIBTransports;
 /// A constant TransportFlags object representing all transports.
 extern const TransportFlags AllTransports;
 
-/// A type which could be safely used on the device side.
-template <class T>
-using DeviceHandle = typename T::DeviceHandle;
-
-/// Retrieve the deviceHandle instance from a host object.
+namespace detail {
 template <typename T>
-DeviceHandle<std::remove_reference_t<T>> deviceHandle(T&& t) {
+auto extractDeviceHandle(T& t) -> decltype(t.deviceHandle());
+template <auto Backend, typename T>
+auto extractDeviceHandle(T& t) -> decltype(t.template deviceHandle<Backend>());
+}  // namespace detail
+
+/// The result type of device-handle extraction from a named lvalue of T.
+/// @tparam T The owner type, preserving const and reference qualifiers.
+/// @tparam Backend Omit for a fixed member extractor, or supply one selector supported by its templated extractor.
+/// Unsupported extraction expressions, including multiple selectors, do not define a type.
+template <class T, auto... Backend>
+using DeviceHandle = decltype(detail::extractDeviceHandle<Backend...>(std::declval<T&>()));
+
+/// Retrieve a device handle using the owner's fixed member extractor.
+/// @param t The owner, accessed as a named lvalue even when supplied as an rvalue.
+/// @return The member extraction result, preserving its const and reference qualifiers.
+/// The handle has the same lifetime requirements as the member extraction result.
+template <typename T>
+DeviceHandle<T> deviceHandle(T&& t) {
   return t.deviceHandle();
+}
+
+/// Retrieve a device handle using the owner's backend-selected member extractor.
+/// @tparam Backend A selector supported by the owner's templated member extractor. No default is provided.
+/// @param t The owner, accessed as a named lvalue even when supplied as an rvalue.
+/// @return The selected member extraction result, preserving its const and reference qualifiers.
+/// The member's runtime validation and handle lifetime requirements apply unchanged.
+template <auto Backend, typename T>
+DeviceHandle<T, Backend> deviceHandle(T&& t) {
+  return t.template deviceHandle<Backend>();
 }
 
 /// Packet value type.

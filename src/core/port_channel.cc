@@ -243,8 +243,9 @@ ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger trigger) {
 }
 
 template <PortChannelBackend Backend>
-MSCCLPP_API_CPP BasePortChannelDeviceHandle<Backend> BasePortChannel::deviceHandle() const {
-  static_assert(Backend == PortChannelBackend::Host || Backend == PortChannelBackend::Device);
+MSCCLPP_API_CPP BasePortChannelDeviceHandle<Backend> BasePortChannel::deviceHandle() const
+  requires(Backend == PortChannelBackend::Host || Backend == PortChannelBackend::Device)
+{
   if constexpr (Backend == PortChannelBackend::Device) {
     const auto* device = std::get_if<DeviceState>(&state_);
     if (!device || !device->semaphore) {
@@ -265,7 +266,9 @@ MSCCLPP_API_CPP BasePortChannelDeviceHandle<Backend> BasePortChannel::deviceHand
 }
 
 template <PortChannelBackend Backend>
-MSCCLPP_API_CPP PortChannelDeviceHandle<Backend> PortChannel::deviceHandle() const {
+MSCCLPP_API_CPP PortChannelDeviceHandle<Backend> PortChannel::deviceHandle() const
+  requires(Backend == PortChannelBackend::Host || Backend == PortChannelBackend::Device)
+{
   const auto base = BasePortChannel::deviceHandle<Backend>();
   if constexpr (Backend == PortChannelBackend::Device) {
     const auto* regions = std::get_if<DeviceBinding>(&binding_);

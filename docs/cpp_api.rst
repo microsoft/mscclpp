@@ -257,15 +257,42 @@ compatible proxy/connection/regions; these checks do not establish general resou
 whole-owner assignment when rebinding. Host and Device GPU handles remain different types and cannot
 be assigned to each other; GPU operations do not dispatch on the CPU owner's runtime state.
 
+Generic handle extraction
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Use ``mscclpp::DeviceHandle<Owner>`` and ``mscclpp::deviceHandle(owner)`` for a fixed member extractor,
+such as Memory or Switch. For Port channels, supply the backend to both forms:
+
+.. code-block:: cpp
+
+   mscclpp::DeviceHandle<mscclpp::MemoryChannel> memoryHandle = mscclpp::deviceHandle(memory);
+   mscclpp::DeviceHandle<mscclpp::PortChannel, Backend::Host> hostHandle =
+       mscclpp::deviceHandle<Backend::Host>(host);
+
+These examples use initialized channel owners; ``host`` uses the Host backend. The alias derives the
+exact result type of the selected member call on an lvalue of ``Owner``, including const and reference
+qualifiers. It does not depend on a nested associated type. The helpers also access their argument as
+a named lvalue, even when given an rvalue. They do not move from the owner or extend its lifetime.
+Keep the owner and application buffers alive while GPU handles are in use.
+
+Port extraction accepts exactly one ``PortChannelBackend::Host`` or ``PortChannelBackend::Device``
+selector. Omitted Port selectors, selectors on fixed Memory/Switch extractors, wrong selector kinds,
+unsupported enum values and multiple selectors are rejected at compile time. Unavailable alias/call
+forms can be queried with ``requires``. Selecting the wrong backend for an initialized Port owner
+still throws ``Error`` with ``ErrorCode::InvalidUsage`` at runtime; namespace extraction preserves
+the member's default-state, binding, registration and moved-semaphore validation.
+
 Port owner source migration
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 * Replace ``BasePortChannel<B>`` and ``PortChannel<B>`` with ``BasePortChannel`` and ``PortChannel``.
 * Replace the fixed ``Channel::DeviceHandle`` type with ``Channel::DeviceHandle<B>`` for Port owners.
-* Replace no-argument Port extraction with ``channel.deviceHandle<B>()``. There is no default backend.
-* Port owners do not support ``mscclpp::DeviceHandle<Channel>`` or ``mscclpp::deviceHandle(channel)``.
-  Generic callers must carry the backend explicitly at the Port boundary. The generic helper and
-  associated-type protocol for other owners are unchanged.
+* Replace no-argument Port extraction with ``channel.deviceHandle<B>()`` or
+  ``mscclpp::deviceHandle<B>(channel)``. There is no default backend.
+* Name generic Port result types with ``mscclpp::DeviceHandle<Channel, B>``. The forms
+  ``mscclpp::DeviceHandle<Channel>`` and ``mscclpp::deviceHandle(channel)`` remain unsupported for Port.
+  Fixed extractors retain their no-selector alias/helper syntax; their result type follows the
+  actual member extraction expression.
 
 The canonical GPU Port types remain templates. In type positions, use ``PortChannelDeviceHandle<>*``
 rather than ``PortChannelDeviceHandle*``, and likewise for the base handle, or name

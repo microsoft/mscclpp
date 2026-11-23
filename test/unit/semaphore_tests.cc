@@ -172,24 +172,44 @@ TEST(SemaphoreValidationTest, ExplicitBackendAndIndependentBindingState) {
   Channel host = service.portChannel(sid, 0, 0);
   Base hostBase = service.basePortChannel(sid);
   EXPECT_EQ(host.deviceHandle<Backend::Host>().dst_, 0u);
+  EXPECT_EQ(mscclpp::deviceHandle<Backend::Host>(host).dst_, 0u);
+  EXPECT_EQ(mscclpp::deviceHandle<Backend::Host>(hostBase).semaphoreId_, sid);
   EXPECT_TRUE(rejectsInvalidUsage([&] { host.deviceHandle<Backend::Device>(); }));
   EXPECT_TRUE(rejectsInvalidUsage([&] { hostBase.deviceHandle<Backend::Device>(); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::deviceHandle<Backend::Device>(host); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::deviceHandle<Backend::Device>(hostBase); }));
   auto rawDevice = makeSemaphore({mscclpp::DeviceType::GPU, 0}, true);
   auto deviceSemaphore = std::make_shared<PortSemaphore>(rawDevice);
   Channel device(deviceSemaphore, rawDevice.remoteMemory(), rawDevice.localMemory());
   Base deviceBase = device;
   EXPECT_TRUE(rejectsInvalidUsage([&] { device.deviceHandle<Backend::Host>(); }));
   EXPECT_TRUE(rejectsInvalidUsage([&] { deviceBase.deviceHandle<Backend::Host>(); }));
+  EXPECT_EQ(mscclpp::deviceHandle<Backend::Device>(device).semaphore_.expectedInboundToken,
+            deviceSemaphore->deviceHandle().expectedInboundToken);
+  EXPECT_EQ(mscclpp::deviceHandle<Backend::Device>(deviceBase).semaphore_.expectedInboundToken,
+            deviceSemaphore->deviceHandle().expectedInboundToken);
+  EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::deviceHandle<Backend::Host>(device); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::deviceHandle<Backend::Host>(deviceBase); }));
+  Channel unassigned;
+  Base unassignedBase;
+  EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::deviceHandle<Backend::Host>(unassigned); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::deviceHandle<Backend::Device>(unassigned); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::deviceHandle<Backend::Host>(unassignedBase); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::deviceHandle<Backend::Device>(unassignedBase); }));
   Channel unboundHost, unboundDevice;
   static_cast<Base&>(unboundHost) = hostBase;
   static_cast<Base&>(unboundDevice) = deviceBase;
   EXPECT_TRUE(rejectsInvalidUsage([&] { unboundHost.deviceHandle<Backend::Host>(); }));
   EXPECT_TRUE(rejectsInvalidUsage([&] { unboundDevice.deviceHandle<Backend::Device>(); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::deviceHandle<Backend::Host>(unboundHost); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::deviceHandle<Backend::Device>(unboundDevice); }));
   Channel hostWithDeviceBase = host, deviceWithHostBase = device;
   static_cast<Base&>(hostWithDeviceBase) = deviceBase;
   static_cast<Base&>(deviceWithHostBase) = hostBase;
   EXPECT_TRUE(rejectsInvalidUsage([&] { hostWithDeviceBase.deviceHandle<Backend::Device>(); }));
   EXPECT_TRUE(rejectsInvalidUsage([&] { deviceWithHostBase.deviceHandle<Backend::Host>(); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::deviceHandle<Backend::Device>(hostWithDeviceBase); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::deviceHandle<Backend::Host>(deviceWithHostBase); }));
   Channel selected = host;
   selected = device;  // Whole-owner cross-backend assignment is now supported, not a compile failure.
   EXPECT_EQ(selected.deviceHandle<Backend::Device>().semaphore_.expectedInboundToken,
