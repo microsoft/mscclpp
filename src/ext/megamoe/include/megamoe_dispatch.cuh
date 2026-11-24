@@ -230,7 +230,7 @@ __device__ __forceinline__ void stageExpertTokens(const P& p, Storage& s, int lo
       if (!mapGroupToTile<TileN, Types::DispatchWarps>(w, nLocalExperts, window, dispatchGroupIdx, lane, tile,
                                                        groupIdxInTile))
         break;
-      int rows = w.blocks[tile].rows;
+      int rows = w.blocks[tile].nTokens;
       // Only full tiles are swizzled, so a tail tile's live groups stay first.
       if (rows == TileN) groupIdxInTile ^= tile & (nDispatchGroupsPerTile - 1);
       int firstRowIndexInGroup = groupIdxInTile * Types::DispatchWarps;
@@ -309,7 +309,7 @@ __device__ __forceinline__ void stageExpertTokens(const P& p, Storage& s, int lo
       if (!mapGroupToTile<TileN, Types::DispatchWarps>(w, nLocalExperts, window, dispatchGroupIdx, lane, tile,
                                                        groupIdxInTile))
         break;
-      int rows = w.blocks[tile].rows;
+      int rows = w.blocks[tile].nTokens;
       if (rows == TileN) groupIdxInTile ^= tile & (nDispatchGroupsPerTile - 1);
       int firstRowIndexInGroup = groupIdxInTile * Types::DispatchWarps;
       if (firstRowIndexInGroup >= rows) continue;
@@ -435,7 +435,7 @@ __device__ __forceinline__ void stageExpertTokens(const P& p, Storage& s, int lo
       if (!mapGroupToTile<TileN, Types::DispatchWarps>(w, nLocalExperts, window, dispatchGroupIdx, lane, tile,
                                                        groupIdxInTile))
         break;
-      int rows = w.blocks[tile].rows;
+      int rows = w.blocks[tile].nTokens;
       if (rows == TileN) groupIdxInTile ^= tile & (nDispatchGroupsPerTile - 1);
       int rowInTile = groupIdxInTile * Types::DispatchWarps + localWarp;
       if (rowInTile >= rows) continue;

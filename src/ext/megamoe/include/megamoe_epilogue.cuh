@@ -457,9 +457,9 @@ MSCCLPP_DEVICE_INLINE void epilogue(const KernelParams& params, const Task& task
   traceKernel(KernelTracePhase::EpilogueReady, true, int(task.fc1));
   pipeline.consumer_wait(state);
   traceKernel(KernelTracePhase::EpilogueReady, false, int(task.fc1));
-  for (int tokenOffset = 0; tokenOffset < task.tokens.rows; tokenOffset += ChunkTokens) {
-    int validRows = min(int(ChunkTokens), task.tokens.rows - tokenOffset);
-    bool lastChunk = tokenOffset + ChunkTokens >= task.tokens.rows;
+  for (int tokenOffset = 0; tokenOffset < task.tokens.nTokens; tokenOffset += ChunkTokens) {
+    int validRows = min(int(ChunkTokens), task.tokens.nTokens - tokenOffset);
+    bool lastChunk = tokenOffset + ChunkTokens >= task.tokens.nTokens;
     int readerGroup = threadIdx.x / CtaTileM;
     if (task.fc1) {
       int readerThread = threadIdx.x % CtaTileM;

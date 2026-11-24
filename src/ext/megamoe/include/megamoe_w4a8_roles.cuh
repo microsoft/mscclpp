@@ -45,11 +45,6 @@ __device__ __forceinline__ auto makeW4A8LoadPipeline(Storage& storage, int warp,
   return pipeline;
 }
 
-template <class KernelParams>
-MSCCLPP_DEVICE_INLINE bool cacheExpertWeights(const KernelParams&, const TokenBlock& tokenBlock) {
-  return (tokenBlock.groupShift & TokenBlockCacheWeightsBit) != 0;
-}
-
 template <class P, class Storage>
 __device__ __forceinline__ void runW4A8LoadRole(const P& p, Storage& s, typename P::Collective::Load& loadPipeline,
                                                 typename P::Collective::Load& activationPipeline,
@@ -75,8 +70,8 @@ __device__ __forceinline__ void runW4A8LoadRole(const P& p, Storage& s, typename
     for (int i = cluster; i < tasks; i += numClusters) {
       Task task = nextTask;
       const bool hasNext = (i + numClusters) < tasks;
-      const bool cacheWeights =
-          (Types::LoadWarps == 1 || warp == Schedule::LoadWarp) && cacheExpertWeights(p, task.tokens);
+      const bool weightEvictNormal =
+          (Types::LoadWarps == 1 || warp == Schedule::LoadWarp) && task.tokens.weightEvictNormal();
       if (!task.fc1 && (Types::LoadWarps == 1 || warp == Schedule::ActivationLoadWarp)) {
         traceKernel(KernelTracePhase::TokenReady, true, int(task.fc1));
         if (lane == 0)
@@ -97,18 +92,18 @@ __device__ __forceinline__ void runW4A8LoadRole(const P& p, Storage& s, typename
             if (warp == Schedule::LoadWarp)
               return task.fc1
                          ? firstMainloop.template load<1, ActDtype>(producerPipeline, state, load1, coord, iterator,
-                                                                    count, task.tokens.rows, cacheWeights)
+                                                                    count, task.tokens.nTokens, weightEvictNormal)
                          : secondMainloop.template load<1, ActDtype>(producerPipeline, state, load2, coord, iterator,
-                                                                     count, task.tokens.rows, cacheWeights);
+                                                                     count, task.tokens.nTokens, weightEvictNormal);
             return task.fc1 ? firstMainloop.template load<2, ActDtype>(producerPipeline, state, load1, coord, iterator,
-                                                                       count, task.tokens.rows, cacheWeights)
+                                                                       count, task.tokens.nTokens, weightEvictNormal)
                             : secondMainloop.template load<2, ActDtype>(producerPipeline, state, load2, coord, iterator,
-                                                                        count, task.tokens.rows, cacheWeights);
+                                                                        count, task.tokens.nTokens, weightEvictNormal);
           } else {
             return task.fc1 ? firstMainloop.template load<0, ActDtype>(loadPipeline, state, load1, coord, iterator,
-                                                                       count, task.tokens.rows, cacheWeights)
+                                                                       count, task.tokens.nTokens, weightEvictNormal)
                             : secondMainloop.template load<0, ActDtype>(loadPipeline, state, load2, coord, iterator,
-                                                                        count, task.tokens.rows, cacheWeights);
+                                                                        count, task.tokens.nTokens, weightEvictNormal);
           }
         }(fc1, fc2);
         state = get<0>(result);
@@ -119,7 +114,8 @@ __device__ __forceinline__ void runW4A8LoadRole(const P& p, Storage& s, typename
           traceKernel(KernelTracePhase::TokenReady, true, first / TilesPerChunk);
           if (lane == 0)
             waitAtLeast<int, scopeDevice>(
-                w4InputChunkCounter<Types>(p.workspace, hidden, task.block, first / TilesPerChunk), task.tokens.rows);
+                w4InputChunkCounter<Types>(p.workspace, hidden, task.block, first / TilesPerChunk),
+                task.tokens.nTokens);
           __syncwarp();
           traceKernel(KernelTracePhase::TokenReady, false, first / TilesPerChunk);
           int count = min(TilesPerChunk, kTiles - first);

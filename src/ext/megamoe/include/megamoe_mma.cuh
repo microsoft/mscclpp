@@ -112,7 +112,7 @@ __device__ __forceinline__ void runW8A16MmaRole(const P& p, int tokens, Storage&
       auto phase = task.fc1 ? KernelTracePhase::MmaFc1 : KernelTracePhase::MmaFc2;
       traceKernel(phase, true, i);
       auto result = mmaTiles<Local>(bPipeline, bState, tPipeline, tState, cPipeline, cState, accumulators, inputs,
-                                    taskKTiles(p, task, hidden, intermediate), task.tokens.rows);
+                                    taskKTiles(p, task, hidden, intermediate), task.tokens.nTokens);
       traceKernel(phase, false, i);
       bState = cute::get<0>(result);
       tState = cute::get<1>(result);
@@ -156,7 +156,7 @@ __device__ __forceinline__ void runMmaRole(const P& p, Storage& s, typename P::C
         traceKernel(phase, true, i);
         loadState = fc1.template mma<P::Activation>(make_tuple(loadPipeline, activationPipeline, accumulatePipeline),
                                                     make_tuple(loadState, accumulateState), accumulator, mmaInputs,
-                                                    coord, kTiles, task.tokens.rows);
+                                                    coord, kTiles, task.tokens.nTokens);
         if (hasNext) nextTask = taskAtFast(p, i + numClusters, tokenBlocks, localExperts, fc1Tiles, fc2Tiles);
         traceKernel(phase, false, i);
         accumulatePipeline.producer_commit(accumulateState);

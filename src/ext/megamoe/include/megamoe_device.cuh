@@ -68,14 +68,25 @@ struct alignas(16) Route {
 };
 
 struct alignas(8) TokenBlock {
-  int16_t expert;
-  int16_t rows;
-  int16_t groupOffset;
-  int16_t groupShift;
-};
+  int16_t expertIdx;
+  int16_t nTokens;
+  int16_t blockIdxInGroup;
+  // Packs the block-group shift in the low bits and the W4A8 weight L2 eviction flag in bit 8.
+  int16_t packedFlags;
 
-constexpr int TokenBlockGroupShiftMask = 0x7f;
-constexpr int16_t TokenBlockCacheWeightsBit = int16_t(1 << 8);
+  static constexpr int GroupShiftFieldMask = 0x7f;
+  static constexpr int16_t WeightEvictNormalBit = int16_t(1 << 8);
+
+  __host__ __device__ static constexpr TokenBlock make(int expertIdx, int nTokens, int blockIdxInGroup = 0,
+                                                       int groupShift = 0, bool weightEvictNormal = false) {
+    return TokenBlock{int16_t(expertIdx), int16_t(nTokens), int16_t(blockIdxInGroup),
+                      int16_t(groupShift | (weightEvictNormal ? WeightEvictNormalBit : 0))};
+  }
+
+  __host__ __device__ constexpr int groupShift() const { return int(packedFlags) & GroupShiftFieldMask; }
+
+  __host__ __device__ constexpr bool weightEvictNormal() const { return (packedFlags & WeightEvictNormalBit) != 0; }
+};
 
 static_assert(sizeof(TokenBlock) == sizeof(uint2));
 

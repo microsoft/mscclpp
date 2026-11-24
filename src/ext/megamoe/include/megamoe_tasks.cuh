@@ -32,13 +32,13 @@ __device__ __forceinline__ int taskTokenBlocks(const P& p, int tokens) {
 template <class P>
 __device__ __forceinline__ TokenBlock resolveTokenBlock(const P& p, int& block, int& m, int tiles, int tokens) {
   if constexpr (P::LocalExpert) {
-    return TokenBlock{0, int16_t(min(int(P::Tiles::N), tokens - block * P::Tiles::N)), 0, 0};
+    return TokenBlock::make(0, min(int(P::Tiles::N), tokens - block * P::Tiles::N));
   }
   TokenBlock tokenBlock = p.workspace.blocks[block];
-  int shift = int(tokenBlock.groupShift) & TokenBlockGroupShiftMask;
+  int shift = tokenBlock.groupShift();
   if (shift > 0) {
-    int inGroup = int(tokenBlock.groupOffset) * tiles + m;
-    block += (inGroup & ((1 << shift) - 1)) - int(tokenBlock.groupOffset);
+    int inGroup = int(tokenBlock.blockIdxInGroup) * tiles + m;
+    block += (inGroup & ((1 << shift) - 1)) - int(tokenBlock.blockIdxInGroup);
     m = inGroup >> shift;
   }
   return tokenBlock;
@@ -121,7 +121,7 @@ __device__ __forceinline__ int taskKTiles(const P&, const Task& task, int hidden
 template <class P>
 __device__ __forceinline__ auto taskCoord(const P&, const Task& task, int cta) {
   constexpr int BlockStride = P::Tiles::TokenStride / P::Tiles::N;
-  return cute::make_coord(task.m * P::Tiles::ClusterSize + cta, task.block * BlockStride, 0, task.tokens.expert);
+  return cute::make_coord(task.m * P::Tiles::ClusterSize + cta, task.block * BlockStride, 0, task.tokens.expertIdx);
 }
 
 }  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail

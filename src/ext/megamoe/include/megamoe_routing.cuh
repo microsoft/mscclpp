@@ -312,18 +312,18 @@ __device__ int buildTokenBlockMetadata(const P& p, int* routeOffsets = nullptr) 
       w.cursors[expert] = nExpertRows;
     }
     if (expert < nLocalExperts && routeOffsets) routeOffsets[expert] += firstBlock * RoutingTileN;
-    const int16_t cacheFlag = nExpertRows > RoutingTileN ? TokenBlockCacheWeightsBit : 0;
+    const bool weightEvictNormal = nExpertRows > RoutingTileN;
     for (int block = blockIdx.x; block < nExpertBlocks; block += gridDim.x) {
       int groupShift = 0;
-      int groupOffset = 0;
+      int blockIdxInGroup = 0;
       if (warpBlocks < 2 * warpExperts) {
         int xorBits = nFullBlocks ^ block;
         groupShift = block < nFullBlocks ? (xorBits >= MaxGroupBlocks ? MaxGroupShift : (31 - __clz(xorBits))) : 0;
-        groupOffset = block & ((1 << groupShift) - 1);
+        blockIdxInGroup = block & ((1 << groupShift) - 1);
       }
       w.blocks[firstBlock + block] =
-          TokenBlock{int16_t(expert), int16_t(min(int(RoutingTileN), nExpertRows - block * RoutingTileN)),
-                     int16_t(groupOffset), int16_t(groupShift | cacheFlag)};
+          TokenBlock::make(expert, min(int(RoutingTileN), nExpertRows - block * RoutingTileN), blockIdxInGroup,
+                           groupShift, weightEvictNormal);
     }
     nPrecedingBlocks += warpBlocks;
   }

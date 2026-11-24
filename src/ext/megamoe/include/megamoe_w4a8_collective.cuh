@@ -292,7 +292,7 @@ struct W4A8Mainloop {
   template <int Operands = 0, ActivationDtype ActDtype = ActivationDtype::Mxfp8, class Inputs, class Coord,
             class Iterator>
   __device__ auto load(MainloopPipeline pipe, MainloopPipelineState state, const Inputs& inputs, Coord coord,
-                       Iterator iterator, int kTiles, int validRows, bool cacheWeights) const {
+                       Iterator iterator, int kTiles, int validRows, bool weightEvictNormal) const {
     using namespace cute;
     int m = get<0>(coord) / ClusterSize, n = get<1>(coord), expert = get<3>(coord);
     auto a = inputs.tAgA_mkl(_, m, _, expert);
@@ -303,7 +303,7 @@ struct W4A8Mainloop {
     auto b = make_tensor(originalB.data() + rowOffset, originalB.layout());
     auto sfa = inputs.tAgSFA_mkl(_, m, _, expert);
     auto sfb = inputs.tBgSFB_nkl(_, n, _, expert);
-    const auto weightHint = cacheWeights ? CacheHint::EVICT_NORMAL : CacheHint::EVICT_FIRST;
+    const auto weightHint = weightEvictNormal ? CacheHint::EVICT_NORMAL : CacheHint::EVICT_FIRST;
     const cute::TmaDescriptor* bDesc = params.tma_load_b.get_tma_descriptor();
     uint32_t actTxBytes = ActivationTransactionBytes;
     if (TileN > 32 && validRows <= 32) {
