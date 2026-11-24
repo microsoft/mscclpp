@@ -182,8 +182,7 @@ MSCCLPP_DEVICE_INLINE void loadIntraDomainTokens(int ownerRank, const IntraDomai
 
   bool pending = inRound;
   while (__any_sync(0xffffffffu, pending)) {
-    if (pending && mscclpp::atomicLoad<uint32_t, mscclpp::scopeDevice>(
-                       workspace.combineRankReadyFlags_ + laneRoute.peerRank, mscclpp::memoryOrderAcquire) == flag) {
+    if (pending && pollEqual<mscclpp::scopeDevice>(workspace.combineRankReadyFlags_ + laneRoute.peerRank, flag)) {
       EP_DEVICE_ASSERT(laneRoute.slotIdx >= 0 && laneRoute.slotIdx < workload.maxTokensPerRank_);
       const auto* peerOutput =
           static_cast<const uint8_t*>(transport.mappedBuffer(const_cast<void*>(expertOutput), laneRoute.peerRank));

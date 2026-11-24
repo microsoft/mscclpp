@@ -252,9 +252,7 @@ MSCCLPP_DEVICE_INLINE void dispatchPublishIntraDomain(void* recvBuffer, const in
   counts[transport.rank_].write(nTokens, flag);
   if (nTokens == 0) return;
 
-  while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(workspace.dispatchRankPayloadCompletions_ + dstRank,
-                                                        mscclpp::memoryOrderAcquire) != nTokens) {
-  }
+  waitAtLeast<mscclpp::scopeDevice>(workspace.dispatchRankPayloadCompletions_ + dstRank, nTokens);
   if (transport.isSelf(dstRank)) {
     workspace.dispatchLocalPayloadReady_->release();
   } else {

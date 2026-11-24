@@ -266,8 +266,8 @@ MSCCLPP_DEVICE_INLINE void combineRankMajorTokens(void* output, const void* expe
 
         bool pending = active;
         while (__any_sync(0xffffffff, pending)) {
-          if (pending && mscclpp::atomicLoad<uint32_t, mscclpp::scopeDevice>(workspace.combineRankReadyFlags_ + peerIdx,
-                                                                             mscclpp::memoryOrderRelaxed) == flag) {
+          if (pending && pollEqual<mscclpp::scopeDevice, mscclpp::memoryOrderRelaxed>(
+                             workspace.combineRankReadyFlags_ + peerIdx, flag)) {
             const auto* peerOutput =
                 static_cast<const uint8_t*>(transport.mappedBuffer(const_cast<void*>(expertOutput), peerIdx));
             const size_t srcTokenIdx = static_cast<size_t>(transport.rank_) * maxTokensPerRank + slotIdx;

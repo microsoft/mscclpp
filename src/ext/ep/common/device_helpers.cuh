@@ -6,6 +6,7 @@
 #include <mscclpp/atomic_device.hpp>
 #include <mscclpp/memory_channel_device.hpp>
 #include <mscclpp/port_channel_device.hpp>
+#include <type_traits>
 
 #include "exception.hpp"
 
@@ -30,6 +31,32 @@ MSCCLPP_DEVICE_INLINE void atomicAddReleaseDevice(int* ptr, int value) {
 #else
   (void)mscclpp::atomicFetchAdd<int, mscclpp::scopeDevice>(ptr, value, mscclpp::memoryOrderRelease);
 #endif
+}
+
+// Non-blocking poll and spin-wait for per-round zero-reset counters/signals (*ptr >= minValue).
+template <auto Scope, auto Order = mscclpp::memoryOrderAcquire, typename T>
+MSCCLPP_DEVICE_INLINE bool pollAtLeast(const T* ptr, int minValue) {
+  static_assert(std::is_integral_v<T>);
+  return mscclpp::atomicLoad<T, Scope>(const_cast<T*>(ptr), Order) >= static_cast<T>(minValue);
+}
+
+template <auto Scope, auto Order = mscclpp::memoryOrderAcquire, typename T>
+MSCCLPP_DEVICE_INLINE void waitAtLeast(const T* ptr, int minValue) {
+  while (!pollAtLeast<Scope, Order>(ptr, minValue)) {
+  }
+}
+
+// Non-blocking poll and spin-wait for persistent cross-round epoch flags (*ptr == expected).
+template <auto Scope, auto Order = mscclpp::memoryOrderAcquire, typename T>
+MSCCLPP_DEVICE_INLINE bool pollEqual(const T* ptr, uint32_t expected) {
+  static_assert(std::is_integral_v<T>);
+  return mscclpp::atomicLoad<T, Scope>(const_cast<T*>(ptr), Order) == static_cast<T>(expected);
+}
+
+template <auto Scope, auto Order = mscclpp::memoryOrderAcquire, typename T>
+MSCCLPP_DEVICE_INLINE void waitEqual(const T* ptr, uint32_t expected) {
+  while (!pollEqual<Scope, Order>(ptr, expected)) {
+  }
 }
 
 template <typename dtype_a_t, typename dtype_b_t>

@@ -92,11 +92,8 @@ class Gateway {
       const uint64_t byteOffset = static_cast<uint64_t>(tokenBegin) * tokenBytes_;
       putWithAccumulateAfter<MaxQpsPerPeer>(
           channel, dstOffset + byteOffset, srcOffset + byteOffset, static_cast<uint64_t>(nChunkTokens) * tokenBytes_,
-          flagOffset, 1, queueIdx, [&] {
-            while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(chunkReadySignals_ + chunkIdx,
-                                                                  mscclpp::memoryOrderAcquire) != nChunkTokens) {
-            }
-          });
+          flagOffset, 1, queueIdx,
+          [&] { waitAtLeast<mscclpp::scopeDevice>(chunkReadySignals_ + chunkIdx, nChunkTokens); });
     }
   }
 
@@ -108,8 +105,7 @@ class Gateway {
     auto& channel = getChannel(queueIdx);
     const uint64_t signalOffset = transport_.symmetricOffset(completionSignal_);
     constexpr auto kExclusive = PortChannelDeviceHandle::Concurrency::Exclusive;
-    while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(waitSignal, mscclpp::memoryOrderAcquire) != 1) {
-    }
+    waitAtLeast<mscclpp::scopeDevice>(waitSignal, 1);
     channel.accumulate<kExclusive, MaxQpsPerPeer>(signalOffset, 1, queueIdx);
   }
 
@@ -118,8 +114,7 @@ class Gateway {
   MSCCLPP_DEVICE_INLINE void waitForwardComplete() const {
     static_assert(Mode == Scope::Thread);
     EP_DEVICE_ASSERT(completionSignal_ != nullptr);
-    while (mscclpp::atomicLoad<uint64_t, mscclpp::scopeSystem>(completionSignal_, mscclpp::memoryOrderAcquire) == 0) {
-    }
+    waitAtLeast<mscclpp::scopeSystem>(completionSignal_, 1);
     *completionSignal_ = 0;
   }
 
@@ -130,9 +125,7 @@ class Gateway {
     const int nQps = transport_.portChannelCtx_->numQpsPerPeer;
     const int chunkIdx = tokenIdx / nTokensPerChunk_;
     const int queueIdx = chunkIdx % nQps;
-    const uint64_t target = static_cast<uint64_t>(chunkIdx / nQps + 1);
-    return mscclpp::atomicLoad<uint64_t, mscclpp::scopeSystem>(qpSignals_ + queueIdx, mscclpp::memoryOrderAcquire) >=
-           target;
+    return pollAtLeast<mscclpp::scopeSystem>(qpSignals_ + queueIdx, chunkIdx / nQps + 1);
   }
 
   template <Scope Mode = Scope::Thread>
@@ -146,15 +139,13 @@ class Gateway {
   template <Scope Mode = Scope::Thread>
   MSCCLPP_DEVICE_INLINE static bool pollIntraDomain(const uint32_t* peerReadyFlags, int sourceRank, uint32_t flag) {
     static_assert(Mode == Scope::Thread);
-    return mscclpp::atomicLoad<uint32_t, mscclpp::scopeSystem>(const_cast<uint32_t*>(peerReadyFlags + sourceRank),
-                                                               mscclpp::memoryOrderAcquire) == flag;
+    return pollEqual<mscclpp::scopeSystem>(peerReadyFlags + sourceRank, flag);
   }
 
   template <Scope Mode = Scope::Thread>
   MSCCLPP_DEVICE_INLINE static void waitIntraDomain(const uint32_t* peerReadyFlags, int sourceRank, uint32_t flag) {
     static_assert(Mode == Scope::Thread);
-    while (!pollIntraDomain(peerReadyFlags, sourceRank, flag)) {
-    }
+    waitEqual<mscclpp::scopeSystem>(peerReadyFlags + sourceRank, flag);
   }
 
   // ---------------------------------------------------------------------------
@@ -311,9 +302,7 @@ class Gateway {
         if (tid == 0) {
           // Launch chunk 0 uncontested to kick off RDMA immediately, then pace by one 1-CTA-per-SM grid wave.
           const int prevLoadChunk = max(0, chunkIdx - loadWindowChunks);
-          while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(chunkLoadReadySignals_ + prevLoadChunk,
-                                                                mscclpp::memoryOrderAcquire) != nTokensPerChunk_) {
-          }
+          waitAtLeast<mscclpp::scopeDevice>(chunkLoadReadySignals_ + prevLoadChunk, nTokensPerChunk_);
         }
         threadBarrierFn();
       }
@@ -329,9 +318,7 @@ class Gateway {
       for (int tokenBegin = 0; tokenBegin < nPriorityTokens; tokenBegin += nTokensPerChunk_) {
         if (nTokens > tokenStride && tokenBegin + nTokensPerChunk_ > nPriorityTokens) break;
         const int nChunkTokens = min(nTokensPerChunk_, nTokens - tokenBegin);
-        while (mscclpp::atomicLoad<int, mscclpp::scopeDevice>(chunkLoadReadySignals_ + tokenBegin / nTokensPerChunk_,
-                                                              mscclpp::memoryOrderAcquire) != nChunkTokens) {
-        }
+        waitAtLeast<mscclpp::scopeDevice>(chunkLoadReadySignals_ + tokenBegin / nTokensPerChunk_, nChunkTokens);
       }
     }
     threadBarrierFn();
