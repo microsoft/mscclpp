@@ -149,6 +149,11 @@ struct BasePortChannel {
   /// @param other The other BasePortChannel to assign from.
   BasePortChannel& operator=(const BasePortChannel& other) = default;
 
+  /// Move synchronization ownership.
+  BasePortChannel(BasePortChannel&& other) noexcept = default;
+  /// Move synchronization ownership.
+  BasePortChannel& operator=(BasePortChannel&& other) noexcept = default;
+
   /// Device-side handle for BasePortChannel.
   /// @tparam Backend PortChannelBackend::Host or PortChannelBackend::Device.
   template <PortChannelBackend Backend>
@@ -218,6 +223,11 @@ struct PortChannel : public BasePortChannel {
   /// Assignment operator.
   /// @param other The other PortChannel to assign from.
   PortChannel& operator=(const PortChannel& other) = default;
+
+  /// Move synchronization ownership and memory bindings.
+  PortChannel(PortChannel&& other) noexcept = default;
+  /// Move synchronization ownership and memory bindings.
+  PortChannel& operator=(PortChannel&& other) noexcept = default;
 
   /// Device-side handle for PortChannel.
   /// @tparam Backend PortChannelBackend::Host or PortChannelBackend::Device.

@@ -48,6 +48,20 @@ mscclpp::PortChannel channel(semaphore, remoteMem, localMem);
 auto deviceHandle = channel.deviceHandle<mscclpp::PortChannelBackend::Device>();
 ```
 
+In Python, use an `IbMode.Device` connection and the same registered memories:
+
+```python
+from mscclpp import PortChannel, PortDevice2DeviceSemaphore
+
+semaphore = PortDevice2DeviceSemaphore(communicator, connection)
+channel = PortChannel(semaphore, remote_memory, local_memory)
+handle = channel.device_backend_handle()
+handle_bytes = handle.raw
+```
+
+`device_handle()` keeps its Host-backend behavior. `device_backend_handle()` selects Device and
+rejects a Host channel; both methods return non-owning GPU handles. Keep the channel and buffers alive during GPU use.
+
 Select the backend explicitly with `channel.deviceHandle<Backend>()` or `mscclpp::deviceHandle<Backend>(channel)`.
 The result type is `PortChannelDeviceHandle<Backend>` (also `mscclpp::DeviceHandle<mscclpp::PortChannel, Backend>`).
 See the [API reference](../cpp_api.rst) for selector requirements and source migration.

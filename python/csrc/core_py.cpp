@@ -320,10 +320,10 @@ NB_MODULE(_mscclpp, m) {
 #endif
   register_env(m);
   register_error(m);
+  register_semaphore(m);
   register_port_channel(m);
   register_memory_channel(m);
   register_fifo(m);
-  register_semaphore(m);
   register_utils(m);
   register_core(m);
   register_numa(m);
