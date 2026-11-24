@@ -185,39 +185,39 @@ struct alignas(1024) W8A16SharedStorageT {
   std::conditional_t<Types::LocalExpert, EmptyStorage, W4DispatchStorageT<Types>> dispatch;
 };
 
-enum class Fc2OffloadCmd : uint32_t {
+enum class OutputOffloadOp : uint32_t {
   Store = 0u,
   Noop = 1u,
   Stop = 2u,
 };
 
-struct alignas(8) Fc2OffloadTask {
+struct alignas(8) OutputOffloadTask {
   uint64_t packed;
 
-  static constexpr uint64_t CmdFieldMask = 0xfu;
+  static constexpr uint64_t OpFieldMask = 0xfu;
   static constexpr int NumTokensShift = 4;
   static constexpr uint64_t NumTokensFieldMask = 0xfffu;
   static constexpr int MTileIdxShift = 16;
   static constexpr uint64_t MTileIdxFieldMask = 0xffffu;
   static constexpr int BaseRowIdxShift = 32;
 
-  __host__ __device__ static constexpr Fc2OffloadTask make(Fc2OffloadCmd cmd, int baseRowIdx = 0, int nTokens = 0,
-                                                           int mTileIdx = 0) {
-    return Fc2OffloadTask{(uint64_t(uint32_t(baseRowIdx)) << BaseRowIdxShift) |
-                          ((uint64_t(uint32_t(mTileIdx)) & MTileIdxFieldMask) << MTileIdxShift) |
-                          ((uint64_t(uint32_t(nTokens)) & NumTokensFieldMask) << NumTokensShift) |
-                          (uint64_t(cmd) & CmdFieldMask)};
+  __host__ __device__ static constexpr OutputOffloadTask make(OutputOffloadOp op, int baseRowIdx = 0, int nTokens = 0,
+                                                              int mTileIdx = 0) {
+    return OutputOffloadTask{(uint64_t(uint32_t(baseRowIdx)) << BaseRowIdxShift) |
+                             ((uint64_t(uint32_t(mTileIdx)) & MTileIdxFieldMask) << MTileIdxShift) |
+                             ((uint64_t(uint32_t(nTokens)) & NumTokensFieldMask) << NumTokensShift) |
+                             (uint64_t(op) & OpFieldMask)};
   }
 
-  __host__ __device__ static constexpr Fc2OffloadTask makeStore(int baseRowIdx, int nTokens, int mTileIdx) {
-    return make(Fc2OffloadCmd::Store, baseRowIdx, nTokens, mTileIdx);
+  __host__ __device__ static constexpr OutputOffloadTask makeStore(int baseRowIdx, int nTokens, int mTileIdx) {
+    return make(OutputOffloadOp::Store, baseRowIdx, nTokens, mTileIdx);
   }
 
-  __host__ __device__ static constexpr Fc2OffloadTask makeNoop() { return make(Fc2OffloadCmd::Noop); }
+  __host__ __device__ static constexpr OutputOffloadTask makeNoop() { return make(OutputOffloadOp::Noop); }
 
-  __host__ __device__ static constexpr Fc2OffloadTask makeStop() { return make(Fc2OffloadCmd::Stop); }
+  __host__ __device__ static constexpr OutputOffloadTask makeStop() { return make(OutputOffloadOp::Stop); }
 
-  __host__ __device__ constexpr Fc2OffloadCmd cmd() const { return Fc2OffloadCmd(uint32_t(packed & CmdFieldMask)); }
+  __host__ __device__ constexpr OutputOffloadOp op() const { return OutputOffloadOp(uint32_t(packed & OpFieldMask)); }
 
   __host__ __device__ constexpr int nTokens() const { return int((packed >> NumTokensShift) & NumTokensFieldMask); }
 
@@ -226,7 +226,7 @@ struct alignas(8) Fc2OffloadTask {
   __host__ __device__ constexpr int baseRowIdx() const { return int(uint32_t(packed >> BaseRowIdxShift)); }
 };
 
-static_assert(sizeof(Fc2OffloadTask) == sizeof(uint64_t));
+static_assert(sizeof(OutputOffloadTask) == sizeof(uint64_t));
 
 template <class Types>
 struct alignas(1024) W4A8SharedStorageT {
@@ -242,7 +242,7 @@ struct alignas(1024) W4A8SharedStorageT {
   cutlass::arch::ClusterBarrier tmemReady;
   EpilogueStorage<Types::EpilogueTokens> epilogue;
   W4DispatchStorageT<Types> dispatch;
-  Fc2OffloadTask fc2OffloadTask;
+  OutputOffloadTask outputOffloadTask;
 };
 
 using W4A8SharedStorage = W4A8SharedStorageT<W4A8CollectiveTypes>;

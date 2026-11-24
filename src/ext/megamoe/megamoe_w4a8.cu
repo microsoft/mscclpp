@@ -137,7 +137,7 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
       runDispatchRole<Hidden, Types::DispatchChunk, Types::DispatchStages>(p, s, warp, tokens, input, inputScales,
                                                                            scores);
     } else {
-      runFc2StoreOffloadRole<Schedule>(p, s, warp, lane, hidden, output, tokens);
+      runOutputStoreOffloadRole<Schedule>(p, s, warp, lane, hidden, output, tokens);
     }
   }
   // Join even idle roles before the next register reconfiguration.
