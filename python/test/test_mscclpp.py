@@ -30,6 +30,7 @@ from mscclpp import (
     TcpBootstrap,
     Transport,
     is_nvls_supported,
+    is_bulk_supported,
     npkit,
     env,
     Device,
@@ -525,7 +526,7 @@ def test_port_channel_binding_defaults():
         for method in (owner.device_handle, owner.device_backend_handle):
             with pytest.raises(native.Error) as caught:
                 method()
-            assert caught.value.args[0] == ErrorCode.InvalidUsage.value
+            assert caught.value.args[0] == int(ErrorCode.InvalidUsage)
     with pytest.raises(TypeError):
         PortDevice2DeviceSemaphore()
 
@@ -541,27 +542,28 @@ def test_port_channel_host_backend_api(mpi_group: MpiGroup):
     raw = group.make_semaphores(connections)[1 - group.my_rank]
     with pytest.raises(native.Error) as caught:
         PortDevice2DeviceSemaphore(raw)
-    assert caught.value.args[0] == ErrorCode.InvalidUsage.value
+    assert caught.value.args[0] == int(ErrorCode.InvalidUsage)
     base = service.base_port_channel(service.add_semaphore(raw))
     assert isinstance(base.device_handle(), native.CppBasePortChannelDeviceHandle)
     with pytest.raises(native.Error) as caught:
         base.device_backend_handle()
-    assert caught.value.args[0] == ErrorCode.InvalidUsage.value
+    assert caught.value.args[0] == int(ErrorCode.InvalidUsage)
     for channel in channels.values():
         handle = channel.device_handle()
         assert isinstance(handle, native.CppPortChannelDeviceHandle)
         assert isinstance(handle.raw, bytes)
         with pytest.raises(native.Error) as caught:
             channel.device_backend_handle()
-        assert caught.value.args[0] == ErrorCode.InvalidUsage.value
+        assert caught.value.args[0] == int(ErrorCode.InvalidUsage)
 
 
 @parametrize_mpi_groups(2)
 def test_port_channel_device_backend_api(mpi_group: MpiGroup):
     from mscclpp import _mscclpp as native
 
-    if is_hip or os.environ.get("MSCCLPP_DISABLE_IB_TESTS", "0") != "0":
-        pytest.skip("Requires CUDA GPUNetIO and enabled IB tests")
+    local_support = not is_hip and os.environ.get("MSCCLPP_DISABLE_IB_TESTS", "0") == "0" and is_bulk_supported()
+    if not all(mpi_group.comm.allgather(local_support)):
+        pytest.skip("Requires CUDA GPUNetIO, enabled IB tests and SM90+ on every participating rank")
     group = CommGroup(mpi_group.comm)
     config = EndpointConfig(group.my_ib_device(group.my_rank % group.nranks_per_node))
     config.ib_mode = IbMode.Device
@@ -575,7 +577,7 @@ def test_port_channel_device_backend_api(mpi_group: MpiGroup):
     bound = PortChannel(semaphore, regions[peer], regions[group.my_rank])
     with pytest.raises(native.Error) as caught:
         PortChannel(semaphore, native.CppRegisteredMemory(), regions[group.my_rank])
-    assert caught.value.args[0] == ErrorCode.InvalidUsage.value
+    assert caught.value.args[0] == int(ErrorCode.InvalidUsage)
     semaphore_from_connection = PortDevice2DeviceSemaphore(group.communicator, connections[peer])
     assert isinstance(semaphore_from_connection.device_handle().raw, bytes)
     assert semaphore_from_connection.connection().transport() == connections[peer].transport()
@@ -590,7 +592,7 @@ def test_port_channel_device_backend_api(mpi_group: MpiGroup):
         assert len(handle.raw) == len(handle_type().raw)
         with pytest.raises(native.Error) as caught:
             owner.device_handle()
-        assert caught.value.args[0] == ErrorCode.InvalidUsage.value
+        assert caught.value.args[0] == int(ErrorCode.InvalidUsage)
     group.barrier()
 
 
