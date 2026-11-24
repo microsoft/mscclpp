@@ -24,24 +24,24 @@ __device__ __forceinline__ int fc1CompletionCount(int intermediate) {
 }
 
 template <class P>
-__device__ __forceinline__ int taskTokenBlocks(const P& p, int tokens) {
+__device__ __forceinline__ int taskTokenTiles(const P& p, int tokens) {
   if constexpr (P::LocalExpert) return (tokens + P::Tiles::N - 1) / P::Tiles::N;
-  return p.workspace.control->tokenBlocks;
+  return p.workspace.control->nTokenTiles;
 }
 
 template <class P>
-__device__ __forceinline__ TokenBlock resolveTokenBlock(const P& p, int& block, int& m, int tiles, int tokens) {
+__device__ __forceinline__ TokenTile resolveTokenTile(const P& p, int& block, int& m, int tiles, int tokens) {
   if constexpr (P::LocalExpert) {
-    return TokenBlock::make(0, min(int(P::Tiles::N), tokens - block * P::Tiles::N));
+    return TokenTile::make(0, min(int(P::Tiles::N), tokens - block * P::Tiles::N));
   }
-  TokenBlock tokenBlock = p.workspace.blocks[block];
-  int shift = tokenBlock.groupShift();
+  TokenTile tokenTile = p.workspace.tokenTiles[block];
+  int shift = tokenTile.groupShift();
   if (shift > 0) {
-    int inGroup = int(tokenBlock.blockIdxInGroup) * tiles + m;
-    block += (inGroup & ((1 << shift) - 1)) - int(tokenBlock.blockIdxInGroup);
+    int inGroup = int(tokenTile.tileIdxInGroup) * tiles + m;
+    block += (inGroup & ((1 << shift) - 1)) - int(tokenTile.tileIdxInGroup);
     m = inGroup >> shift;
   }
-  return tokenBlock;
+  return tokenTile;
 }
 
 template <class P>
@@ -50,21 +50,21 @@ constexpr bool AllowLag = !P::LocalExpert && P::WeightMxfp4 && (P::Collective::D
 constexpr int InterleaveBlockLag = 32;
 
 template <class P>
-__device__ __forceinline__ bool useInterleavedTasks(int tokenBlocks, int localExperts) {
-  return AllowLag<P> && (tokenBlocks > max(2 * localExperts, 2 * InterleaveBlockLag));
+__device__ __forceinline__ bool useInterleavedTasks(int nTokenTiles, int localExperts) {
+  return AllowLag<P> && (nTokenTiles > max(2 * localExperts, 2 * InterleaveBlockLag));
 }
 
 template <class P>
-__device__ __forceinline__ Task taskAtFast(const P& p, int ordinal, int tokenBlocks, int localExperts, int fc1Tiles,
+__device__ __forceinline__ Task taskAtFast(const P& p, int ordinal, int nTokenTiles, int localExperts, int fc1Tiles,
                                            int fc2Tiles, int tokens = 0) {
   bool fc1;
   int block, m;
   if constexpr (AllowLag<P>) {
-    if (useInterleavedTasks<P>(tokenBlocks, localExperts)) {
+    if (useInterleavedTasks<P>(nTokenTiles, localExperts)) {
       constexpr int Lag = InterleaveBlockLag;
       const int prologue = Lag * fc1Tiles;
       const int stepTasks = fc1Tiles + fc2Tiles;
-      const int steadySteps = tokenBlocks - Lag;
+      const int steadySteps = nTokenTiles - Lag;
       const int steadyEnd = prologue + steadySteps * stepTasks;
       if (ordinal < prologue) {
         fc1 = true;
@@ -90,26 +90,26 @@ __device__ __forceinline__ Task taskAtFast(const P& p, int ordinal, int tokenBlo
         block = steadySteps + tailBlock;
       }
       int tiles = fc1 ? fc1Tiles : fc2Tiles;
-      TokenBlock tokenBlock = resolveTokenBlock(p, block, m, tiles, tokens);
-      return Task{fc1, block, m, tokenBlock};
+      TokenTile tokenTile = resolveTokenTile(p, block, m, tiles, tokens);
+      return Task{fc1, block, m, tokenTile};
     }
   }
-  int fc1Tasks = tokenBlocks * fc1Tiles;
+  int fc1Tasks = nTokenTiles * fc1Tiles;
   fc1 = ordinal < fc1Tasks;
   int local = fc1 ? ordinal : ordinal - fc1Tasks;
   int tiles = fc1 ? fc1Tiles : fc2Tiles;
   (fc1 ? p.fc1TaskDivisor : p.fc2TaskDivisor)(block, m, local);
-  TokenBlock tokenBlock = resolveTokenBlock(p, block, m, tiles, tokens);
-  return Task{fc1, block, m, tokenBlock};
+  TokenTile tokenTile = resolveTokenTile(p, block, m, tiles, tokens);
+  return Task{fc1, block, m, tokenTile};
 }
 
 template <class P>
 __device__ Task taskAt(const P& p, int ordinal, int hidden, int intermediate, int tokens = 0) {
   int fc1Tiles = fc1TaskTiles<P>(intermediate);
   int fc2Tiles = fc2TaskTiles<P>(hidden);
-  int tokenBlocks = taskTokenBlocks(p, tokens);
+  int nTokenTiles = taskTokenTiles(p, tokens);
   int localExperts = p.config.numExperts / p.config.worldSize;
-  return taskAtFast(p, ordinal, tokenBlocks, localExperts, fc1Tiles, fc2Tiles, tokens);
+  return taskAtFast(p, ordinal, nTokenTiles, localExperts, fc1Tiles, fc2Tiles, tokens);
 }
 
 template <class P>

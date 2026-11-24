@@ -85,7 +85,7 @@ Workspace routedWorkspaceLayout(const NativeConfig& c, void* base, size_t& bytes
     w.inputChunkReady =
         at<int>(base, appendRegion(bytes, rows / W4TileN * (inputChunks - 1) * W4ReadyCounterStride * sizeof(int)));
   w.routes = at<Route>(base, appendRegion(bytes, rows * sizeof(Route)));
-  w.blocks = at<TokenBlock>(base, appendRegion(bytes, rows / W4TileN * sizeof(TokenBlock)));
+  w.tokenTiles = at<TokenTile>(base, appendRegion(bytes, rows / W4TileN * sizeof(TokenTile)));
   w.quantizedInput = at<uint8_t>(base, appendRegion(bytes, activationRows * c.hidden * elemBytes));
   if (isW4) w.inputScale = at<uint8_t>(base, appendRegion(bytes, blockScaleBytes(activationRows, c.hidden)));
   w.quantizedHidden = at<uint8_t>(base, appendRegion(bytes, activationRows * c.intermediate * elemBytes));
@@ -828,9 +828,9 @@ void launchW8A16Mode(const std::shared_ptr<KernelPlan>& plan, const int32_t* ids
     throw std::invalid_argument("MegaMoE token count or output pointer is invalid");
   if constexpr (LocalMode != 0) {
     if (tokens) {
-      const size_t tokenBlocks = (tokens + detail::W4TileN - 1) / detail::W4TileN;
+      const size_t nTokenTiles = (tokens + detail::W4TileN - 1) / detail::W4TileN;
       MSCCLPP_CUDATHROW(cudaMemsetAsync(params.workspace.hiddenReady, 0,
-                                        tokenBlocks * detail::W4ReadyCounterStride * sizeof(int), stream));
+                                        nTokenTiles * detail::W4ReadyCounterStride * sizeof(int), stream));
     }
   }
   std::array<cudaLaunchAttribute, 2> launchAttributes{};

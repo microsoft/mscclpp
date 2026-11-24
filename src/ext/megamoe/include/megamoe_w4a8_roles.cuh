@@ -51,7 +51,7 @@ __device__ __forceinline__ void runW4A8LoadRole(const P& p, Storage& s, typename
                                                 typename P::Collective::Mainloop& fc1,
                                                 typename P::Collective::Mainloop& fc2, const ProblemShape& shape1,
                                                 const ProblemShape& shape2, int hidden, int intermediate, int warp,
-                                                int lane, int cta, int cluster, int tasks, int tokenBlocks,
+                                                int lane, int cta, int cluster, int tasks, int nTokenTiles,
                                                 int localExperts) {
   using namespace cute;
   using Types = typename P::Collective;
@@ -66,7 +66,7 @@ __device__ __forceinline__ void runW4A8LoadRole(const P& p, Storage& s, typename
   const int fc2Tiles = fc2TaskTiles<P>(hidden);
   const int numClusters = gridDim.x / P::Tiles::ClusterSize;
   if (cluster < tasks) {
-    Task nextTask = taskAtFast(p, cluster, tokenBlocks, localExperts, fc1Tiles, fc2Tiles);
+    Task nextTask = taskAtFast(p, cluster, nTokenTiles, localExperts, fc1Tiles, fc2Tiles);
     for (int i = cluster; i < tasks; i += numClusters) {
       Task task = nextTask;
       const bool hasNext = (i + numClusters) < tasks;
@@ -122,32 +122,32 @@ __device__ __forceinline__ void runW4A8LoadRole(const P& p, Storage& s, typename
           if constexpr (Types::DispatchChunk >= 4096) {
             if (first == 0 && hasNext && count > 1) {
               loadTiles(0, 1);
-              nextTask = taskAtFast(p, i + numClusters, tokenBlocks, localExperts, fc1Tiles, fc2Tiles);
+              nextTask = taskAtFast(p, i + numClusters, nTokenTiles, localExperts, fc1Tiles, fc2Tiles);
               loadTiles(1, count - 1);
             } else {
               loadTiles(first, count);
               if (first == 0 && hasNext)
-                nextTask = taskAtFast(p, i + numClusters, tokenBlocks, localExperts, fc1Tiles, fc2Tiles);
+                nextTask = taskAtFast(p, i + numClusters, nTokenTiles, localExperts, fc1Tiles, fc2Tiles);
             }
           } else {
             loadTiles(first, count);
             if (first == 0 && hasNext)
-              nextTask = taskAtFast(p, i + numClusters, tokenBlocks, localExperts, fc1Tiles, fc2Tiles);
+              nextTask = taskAtFast(p, i + numClusters, nTokenTiles, localExperts, fc1Tiles, fc2Tiles);
           }
         }
       } else {
         if constexpr (Types::DispatchChunk >= 4096) {
           if (hasNext && kTiles > 1) {
             loadTiles(0, 1);
-            nextTask = taskAtFast(p, i + numClusters, tokenBlocks, localExperts, fc1Tiles, fc2Tiles);
+            nextTask = taskAtFast(p, i + numClusters, nTokenTiles, localExperts, fc1Tiles, fc2Tiles);
             loadTiles(1, kTiles - 1);
           } else {
             loadTiles(0, kTiles);
-            if (hasNext) nextTask = taskAtFast(p, i + numClusters, tokenBlocks, localExperts, fc1Tiles, fc2Tiles);
+            if (hasNext) nextTask = taskAtFast(p, i + numClusters, nTokenTiles, localExperts, fc1Tiles, fc2Tiles);
           }
         } else {
           loadTiles(0, kTiles);
-          if (hasNext) nextTask = taskAtFast(p, i + numClusters, tokenBlocks, localExperts, fc1Tiles, fc2Tiles);
+          if (hasNext) nextTask = taskAtFast(p, i + numClusters, nTokenTiles, localExperts, fc1Tiles, fc2Tiles);
         }
       }
       traceKernel(phase, false, i);

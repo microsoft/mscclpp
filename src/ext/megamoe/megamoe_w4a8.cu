@@ -94,8 +94,8 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
   if (warp < Schedule::DispatchBegin) {
     Mainloop fc1(p.fc1, ClusterShape{}, cta);
     Mainloop fc2(p.fc2, ClusterShape{}, cta);
-    int tokenBlocks = p.workspace.control->tokenBlocks;
-    int tasks = tokenBlocks * (fc1TaskTiles<Parameters>(intermediate) + fc2TaskTiles<Parameters>(hidden));
+    int nTokenTiles = p.workspace.control->nTokenTiles;
+    int tasks = nTokenTiles * (fc1TaskTiles<Parameters>(intermediate) + fc2TaskTiles<Parameters>(hidden));
     int localExperts = p.config.numExperts / p.config.worldSize;
     ProblemShape shape1{2 * intermediate, w4StorageRow<typename Parameters::Tiles>(p.workspace.poolRows), hidden,
                         localExperts};
@@ -108,7 +108,7 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
     if (producerWarp) {
       // Producers need initialized pipeline barriers, not the TMEM allocation.
       runW4A8LoadRole(p, s, loadPipeline, activationPipeline, fc1, fc2, shape1, shape2, hidden, intermediate, warp,
-                      lane, cta, cluster, tasks, tokenBlocks, localExperts);
+                      lane, cta, cluster, tasks, nTokenTiles, localExperts);
     } else {
       using EpilogueTile = Shape<Int<Parameters::Tiles::CtaM>, Int<Parameters::Tiles::N>>;
       auto tmemStorage = Mainloop::template init_tmem_tensors<EpilogueTile, false>(EpilogueTile{});
@@ -118,7 +118,7 @@ __global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ co
                                   tasks, output, tokens);
       } else {
         runMmaRole(p, s, loadPipeline, activationPipeline, accumulatePipeline, fc1, tmemStorage, hidden, intermediate,
-                   warp, cta, cluster, tasks, tokenBlocks, localExperts);
+                   warp, cta, cluster, tasks, nTokenTiles, localExperts);
       }
     }
   } else {

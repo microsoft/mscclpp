@@ -127,7 +127,7 @@ __device__ __forceinline__ void runMmaRole(const P& p, Storage& s, typename P::C
                                            typename P::Collective::Load& activationPipeline,
                                            typename P::Collective::Accumulate& accumulatePipeline,
                                            typename P::Collective::Mainloop& fc1, TmemStorage tmemStorage, int hidden,
-                                           int intermediate, int warp, int cta, int cluster, int tasks, int tokenBlocks,
+                                           int intermediate, int warp, int cta, int cluster, int tasks, int nTokenTiles,
                                            int localExperts) {
   using namespace cute;
   using Mainloop = typename P::Collective::Mainloop;
@@ -145,7 +145,7 @@ __device__ __forceinline__ void runMmaRole(const P& p, Storage& s, typename P::C
     const int fc2Tiles = fc2TaskTiles<P>(hidden);
     const int numClusters = gridDim.x / P::Tiles::ClusterSize;
     if (cluster < tasks) {
-      Task nextTask = taskAtFast(p, cluster, tokenBlocks, localExperts, fc1Tiles, fc2Tiles);
+      Task nextTask = taskAtFast(p, cluster, nTokenTiles, localExperts, fc1Tiles, fc2Tiles);
       for (int i = cluster; i < tasks; i += numClusters) {
         Task task = nextTask;
         const bool hasNext = (i + numClusters) < tasks;
@@ -157,7 +157,7 @@ __device__ __forceinline__ void runMmaRole(const P& p, Storage& s, typename P::C
         loadState = fc1.template mma<P::Activation>(make_tuple(loadPipeline, activationPipeline, accumulatePipeline),
                                                     make_tuple(loadState, accumulateState), accumulator, mmaInputs,
                                                     coord, kTiles, task.tokens.nTokens);
-        if (hasNext) nextTask = taskAtFast(p, i + numClusters, tokenBlocks, localExperts, fc1Tiles, fc2Tiles);
+        if (hasNext) nextTask = taskAtFast(p, i + numClusters, nTokenTiles, localExperts, fc1Tiles, fc2Tiles);
         traceKernel(phase, false, i);
         accumulatePipeline.producer_commit(accumulateState);
         ++accumulateState;

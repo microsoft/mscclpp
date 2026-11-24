@@ -230,7 +230,7 @@ __device__ __forceinline__ void stageExpertTokens(const P& p, Storage& s, int lo
       if (!mapGroupToTile<TileN, Types::DispatchWarps>(w, nLocalExperts, window, dispatchGroupIdx, lane, tile,
                                                        groupIdxInTile))
         break;
-      int rows = w.blocks[tile].nTokens;
+      int rows = w.tokenTiles[tile].nTokens;
       // Only full tiles are swizzled, so a tail tile's live groups stay first.
       if (rows == TileN) groupIdxInTile ^= tile & (nDispatchGroupsPerTile - 1);
       int firstRowIndexInGroup = groupIdxInTile * Types::DispatchWarps;
@@ -309,7 +309,7 @@ __device__ __forceinline__ void stageExpertTokens(const P& p, Storage& s, int lo
       if (!mapGroupToTile<TileN, Types::DispatchWarps>(w, nLocalExperts, window, dispatchGroupIdx, lane, tile,
                                                        groupIdxInTile))
         break;
-      int rows = w.blocks[tile].nTokens;
+      int rows = w.tokenTiles[tile].nTokens;
       if (rows == TileN) groupIdxInTile ^= tile & (nDispatchGroupsPerTile - 1);
       int firstRowIndexInGroup = groupIdxInTile * Types::DispatchWarps;
       if (firstRowIndexInGroup >= rows) continue;
@@ -423,10 +423,8 @@ __device__ __forceinline__ void stageExpertTokens(const P& p, Storage& s, int lo
     }
   } else {
     using DispatchStorage = std::remove_reference_t<decltype(s.dispatch)>;
-    constexpr int EffectiveStages = DispatchStorage::EffectiveDispatchStages;
-    constexpr int EffectiveBarriers = DispatchStorage::EffectiveDispatchBarriers;
-    static_assert(EffectiveStages == 1 || EffectiveStages == 2);
-    static_assert(EffectiveBarriers == EffectiveStages);
+    constexpr int NumStages = DispatchStorage::NumStages;
+    static_assert(NumStages == 1 || NumStages == 2);
     uint32_t loadPhaseBits = 0;
 
     for (int dispatchGroupIdx = blockIdx.x;; dispatchGroupIdx += gridDim.x) {
@@ -435,7 +433,7 @@ __device__ __forceinline__ void stageExpertTokens(const P& p, Storage& s, int lo
       if (!mapGroupToTile<TileN, Types::DispatchWarps>(w, nLocalExperts, window, dispatchGroupIdx, lane, tile,
                                                        groupIdxInTile))
         break;
-      int rows = w.blocks[tile].nTokens;
+      int rows = w.tokenTiles[tile].nTokens;
       if (rows == TileN) groupIdxInTile ^= tile & (nDispatchGroupsPerTile - 1);
       int rowInTile = groupIdxInTile * Types::DispatchWarps + localWarp;
       if (rowInTile >= rows) continue;
@@ -455,7 +453,7 @@ __device__ __forceinline__ void stageExpertTokens(const P& p, Storage& s, int lo
       uint8_t* destination = w.quantizedInput + size_t(storageRow) * rowBytes;
 
       auto issueChunk = [&](int chunk) {
-        int stage = EffectiveStages == 2 ? (chunk & 1) : 0;
+        int stage = NumStages == 2 ? (chunk & 1) : 0;
         int byteOffset = chunk * DispatchBytes;
         int bytes = min(DispatchBytes, rowBytes - byteOffset);
         if constexpr (P::Activation != ActivationDtype::Mxfp8) {
@@ -471,7 +469,7 @@ __device__ __forceinline__ void stageExpertTokens(const P& p, Storage& s, int lo
       if (lane == 0) {
         bulkFence();
 #pragma unroll
-        for (int stage = 0; stage < EffectiveStages; ++stage)
+        for (int stage = 0; stage < NumStages; ++stage)
           if (stage < chunks) issueChunk(stage);
         if (!p.config.combineRouteWeights) {
           w.routes[row].weight =
@@ -479,7 +477,7 @@ __device__ __forceinline__ void stageExpertTokens(const P& p, Storage& s, int lo
         }
       }
       for (int chunk = 0; chunk < chunks; ++chunk) {
-        int stage = EffectiveStages == 2 ? (chunk & 1) : 0;
+        int stage = NumStages == 2 ? (chunk & 1) : 0;
         int byteOffset = chunk * DispatchBytes;
         int bytes = min(DispatchBytes, rowBytes - byteOffset);
         if (lane == 0) {
@@ -502,10 +500,10 @@ __device__ __forceinline__ void stageExpertTokens(const P& p, Storage& s, int lo
           __syncwarp();
         }
         if (lane == 0) {
-          if (chunk + EffectiveStages < chunks) {
+          if (chunk + NumStages < chunks) {
             bulkStoreWaitSource();
             bulkFence();
-            issueChunk(chunk + EffectiveStages);
+            issueChunk(chunk + NumStages);
           }
           bulkStoreWait();
           int* counter = w4InputChunkCounter<Types>(w, hidden, tile, chunk);
@@ -516,7 +514,7 @@ __device__ __forceinline__ void stageExpertTokens(const P& p, Storage& s, int lo
     }
     if (lane == 0) {
 #pragma unroll
-      for (int b = 0; b < EffectiveBarriers; ++b) barriers[b].invalidate();
+      for (int stage = 0; stage < NumStages; ++stage) barriers[stage].invalidate();
     }
   }
 #endif
