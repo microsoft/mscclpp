@@ -12,7 +12,7 @@ Queue an Azure Pipelines validation run on a temporary upstream branch `pr-<pr_n
 
 - `pr_number`: Pull request number (infer from the active session's tracked PR if omitted).
 - `pipeline_name`: Optional pipeline definition name. Defaults to `mscclpp-ut`.
-- `cleanup <pr_number>`: Skip Steps 1-5 and delete `refs/heads/pr-<pr_number>` after confirming no build on that branch is `NotStarted` or `InProgress`.
+- `cleanup <pr_number>`: Resolve `<owner>/<repo>` and `<project>` (Steps 1-2), skip Steps 3-5, check `azure-devops-pipelines_build` (`action: "list"`, `project: "<project>"`, `branchName: "refs/heads/pr-<pr_number>"`, `top: 20`) across all pipeline definitions, and delete `refs/heads/pr-<pr_number>` only after confirming zero builds on that branch are `NotStarted` or `InProgress`.
 
 ## Execution Steps
 
@@ -27,7 +27,7 @@ Queue an Azure Pipelines validation run on a temporary upstream branch `pr-<pr_n
      ```bash
      gh pr diff <pr_number> --repo <owner>/<repo> --name-only
      ```
-   - **Pre-trigger confirmation**: If the diff touches CI, build, or deployment files (`.azure-pipelines/`, `.github/`, `test/deploy/`, `tools/`, `CMakeLists.txt`, or `setup.py`), review those changes first and ask the user for explicit confirmation before creating a branch or queueing a build.
+   - **Pre-trigger confirmation**: If the diff touches CI, build, container, or deployment inputs (`.azure-pipelines/`, `.github/`, `cmake/`, `docker/`, `test/deploy/`, `tools/`, any root or nested `**/CMakeLists.txt`, `*.cmake`, `pyproject.toml`, `setup.py`, `python/requirements*.txt`, or `*.sh` / `*.sh.in`), review those exact diffs first and ask the user for explicit confirmation before creating a branch or queueing a build.
 
 2. **Resolve the Azure DevOps project and pipeline ID dynamically**
    - Load the Azure DevOps pipeline tools via `tool_search_tool` if deferred (`azure-devops-pipelines_definition`, `azure-devops-pipelines_build`, `azure-devops-pipelines_write`).
@@ -54,9 +54,9 @@ Queue an Azure Pipelines validation run on a temporary upstream branch `pr-<pr_n
    - Wait ~10 seconds and re-check `gh pr view <pr_number> --repo <owner>/<repo> --json statusCheckRollup` to confirm the check runs now reference the new `buildId`.
 
 6. **Clean up `pr-<pr_number>` after completion**
-   - Keep `refs/heads/pr-<pr_number>` until the build reaches `Completed` so all matrix jobs can fetch the ref when starting.
-   - If `save_session_automation` is available and `get_session_automation` shows no conflicting schedule, register a 15-minute check (`interval: "minutes"`, `every_minutes: 15`) whose prompt:
-     1. Queries `azure-devops-pipelines_build` (`action: "list"`, `project: "<project>"`, `buildIds: [<buildId>]`).
-     2. Waits if `status` is `NotStarted` or `InProgress`.
-     3. Once `status` is `Completed`, verifies `refs/heads/pr-<pr_number>` still points to `<HEAD_SHA>`, deletes it with `gh api -X DELETE repos/<owner>/<repo>/git/refs/heads/pr-<pr_number>`, clears the schedule via `save_session_automation(clear=true)`, and reports the final build result.
-   - If `save_session_automation` is unavailable, remind the user to run `/trigger-fork-pr-ci cleanup <pr_number>` once the build finishes.
+   - Keep `refs/heads/pr-<pr_number>` until `<buildId>` and all other builds on `refs/heads/pr-<pr_number>` across every pipeline definition reach `Completed`, so concurrent pipeline runs on the same PR head can still fetch the ref when queued matrix jobs start.
+   - If `save_session_automation` is available and `get_session_automation` shows no active conflicting schedule, register a 15-minute check (`interval: "minutes"`, `every_minutes: 15`) whose prompt:
+     1. Queries `azure-devops-pipelines_build` for both `buildIds: [<buildId>]` and `branchName: "refs/heads/pr-<pr_number>"` (`action: "list"`, `project: "<project>"`, `top: 20`, omitting `definitions` so all pipelines are checked).
+     2. Waits if `<buildId>` or any build on `refs/heads/pr-<pr_number>` has `status` in `["NotStarted", "InProgress"]`.
+     3. Once `<buildId>` is `Completed` and no unfinished builds remain on `refs/heads/pr-<pr_number>` across any pipeline definition, verifies `refs/heads/pr-<pr_number>` still points to `<HEAD_SHA>`, deletes it with `gh api -X DELETE repos/<owner>/<repo>/git/refs/heads/pr-<pr_number>`, clears the schedule via `save_session_automation(clear=true)`, and reports the final build result.
+   - Otherwise — if `save_session_automation` is unavailable or `get_session_automation` already has a conflicting schedule (do **not** overwrite an existing schedule) — remind the user to run `/trigger-fork-pr-ci cleanup <pr_number>` once all builds on `refs/heads/pr-<pr_number>` finish.
