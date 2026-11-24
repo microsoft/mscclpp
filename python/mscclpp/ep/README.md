@@ -356,6 +356,51 @@ BF16 once (**FP32 addition grouping differs** from single-domain combine):
 Combine requires at least `worldSize` blocks and **exactly one fresh Dispatch
 before every Combine**, including CUDA graph replays.
 
+### Cross-round synchronization
+
+Paired gateway ranks (`A`, `B`) and their intra-domain peers (`B'`) alternate
+`Dispatch -> Combine` rounds on their bound CUDA streams using a monotonic
+per-round `flag` (shown below for `A -> B -> B'` dispatch and `B' -> B -> A`
+combine; the reverse direction is symmetric):
+
+```mermaid
+sequenceDiagram
+    participant A as Rank A (Domain 0)
+    participant B as Gateway Rank B (Domain 1)
+    participant B2 as Peer Rank B' (Domain 1)
+
+    loop Each round (monotonic flag)
+        Note over A,B2: Dispatch
+        Note over A: Reset local combine QP counters
+        A->>B: RDMA header (token counts, round flag)
+        A->>B: RDMA token chunks + increment dispatch QP counters
+        B->>B2: Write token count (round flag) + TMA-store tokens
+        Note over B: Last forwarder resets dispatch QP counters
+        B->>B2: Signal intra-domain payload ready (round flag)
+        B->>A: RDMA forward-complete signal
+
+        Note over A,B2: Stream boundary (expert compute)
+
+        Note over A,B2: Combine
+        B->>B2: Intra-domain ready signal
+        B2->>B: Intra-domain ready signal
+        B2-->>B: TMA-load expert outputs and reduce domain partials
+        B->>A: RDMA reduced chunks + increment combine QP counters
+        Note over B: Wait and reset forward-complete signal
+        Note over A: Wait for reduced chunks, wait and reset forward-complete signal
+    end
+```
+
+During `Dispatch`, `A` resets its combine QP counters before sending the
+round-tagged header and token chunks to `B`. Once `B`'s forwarders finish
+relaying tokens to intra-domain peers (`B'`), the last forwarder resets `B`'s
+dispatch QP counters before `B` notifies both `B'` (intra-domain ready) and `A`
+(RDMA forward-complete). During `Combine`, intra-domain peers synchronize before
+`B` gathers and reduces domain partials back to `A`, while each rank waits on
+and resets its peer's forward-complete signal before the stream can enter the
+next `Dispatch`—ensuring receive buffers and counters are never reused while
+prior-round transfers are in flight or before local resets complete.
+
 ## Unified EP benchmark
 
 `python -m mscclpp_benchmark.ep.bench` compares MSCCL++ EP, NVIDIA NCCL-EP,
