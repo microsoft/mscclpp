@@ -1,36 +1,40 @@
 ---
 name: trigger-fork-pr-ci
-description: Trigger Azure Pipelines CI (default mscclpp-ut) for a fork pull request by creating an isolated temporary pr-<N>-<sha>-<nonce> branch at the PR head commit, queueing the pipeline run, canceling superseded PR merge runs for that commit, and removing the temporary branch after completion. Use when asked to trigger mscclpp-ut or other CI pipelines for a fork or blocked pull request.
+description: Trigger Azure Pipelines CI (default mscclpp-ut) for a fork pull request by creating an isolated temporary pr-<N>-<sha>-<nonce> branch at the PR head commit, queueing the pipeline run, canceling active PR merge runs, and removing the temporary branch after completion. Use when asked to trigger mscclpp-ut or other CI pipelines for a fork pull request.
 argument-hint: "<pr_number> [pipeline_name]"
 ---
 
 # Trigger Fork PR CI
 
-Queue an Azure Pipelines validation run on an isolated, write-once upstream branch `pr-<pr_number>-<short_sha>-<nonce>` pointing to the pull request's exact head commit so GitHub Check Runs report directly back to that commit on the pull request, then clean up the temporary branch once the run completes.
+Queue an Azure Pipelines validation run for a fork pull request on an isolated, single-use upstream branch `pr-<pr_number>-<short_sha>-<nonce>` pointing to the PR's exact head commit so GitHub Check Runs report directly back to that commit, then clean up the temporary branch once the run completes.
+
+## Prerequisites and User Responsibility
+
+- **Fork PRs only**: Only run this workflow on cross-repository (fork) pull requests. Same-repository pull requests should use standard PR triggers or `/azp run`.
+- **Local Git checkout required**: Run from a local Git checkout of the target repository; stop and ask the user to open a repository workspace if none is available.
+- **Reviewer responsibility**: The user invoking this skill is responsible for reviewing the fork pull request's changes at `HEAD_SHA` before running upstream CI, and for running manual cleanup (`/trigger-fork-pr-ci cleanup <pr_number>`) if automated cleanup cannot run or encounters an ambiguous state.
 
 ## Inputs
 
 - `pr_number`: Pull request number (infer from the active session's tracked PR if omitted).
 - `pipeline_name`: Optional pipeline definition name. Defaults to `mscclpp-ut`.
-- `cleanup <pr_number>`: Allowed for open, closed, or merged PRs. Resolve `<owner>/<repo>` and `<project>` (Step 2, without requiring the PR to be open), list refs via `gh api --paginate "repos/<owner>/<repo>/git/matching-refs/heads/pr-<pr_number>"`, and filter strictly to exact `refs/heads/pr-<pr_number>` or prefix `refs/heads/pr-<pr_number>-`. For each matching `<branch_ref>`, exhaustively list all builds across every pipeline definition (`action: "list"`, `project: "<project>"`, `branchName: "<branch_ref>"`, `queryOrder: "QueueTimeDescending"`, paging `continuationToken` until `null` while omitting `definitions`, `top`, and `repositoryId`), and delete `<branch_ref>` only when the complete listing succeeds, returns at least one build, and every returned build has `status == "Completed"` (ask the user before deleting any zero-build leftover ref).
+- `cleanup <pr_number>`: Allowed for open, closed, or merged PRs. Resolve `<owner>/<repo>` and `<project>` (Step 2, without requiring the PR to be open), list refs via `gh api --paginate "repos/<owner>/<repo>/git/matching-refs/heads/pr-<pr_number>"`, and filter strictly to exact `refs/heads/pr-<pr_number>` or prefix `refs/heads/pr-<pr_number>-`. For each matching `<branch_ref>`, exhaustively list all builds across every pipeline definition (`action: "list"`, `project: "<project>"`, `branchName: "<branch_ref>"`, `queryOrder: "QueueTimeDescending"`, paging `continuationToken` until `null` while omitting `definitions`, `top`, and `repositoryId`), and delete `<branch_ref>` only when the complete listing succeeds, returns at least one build, and every returned build has `status == "Completed"` (report any zero-build or ambiguous refs to the user to confirm deletion).
 
 ## Execution Steps
 
-1. **Record immutable PR SHAs and verify modified paths (trigger mode only)**
-   - Resolve the target repository (`<owner>/<repo>`) from the current workspace (`gh repo view --json nameWithOwner --jq .nameWithOwner`).
+1. **Verify fork PR metadata and modified paths (trigger mode only)**
+   - Resolve the target repository (`<owner>/<repo>`) from the local Git checkout (`gh repo view --json nameWithOwner --jq .nameWithOwner`).
    - Query the pull request in a single call:
      ```bash
-     gh api repos/<owner>/<repo>/pulls/<pr_number> --jq '{number, state, base_sha: .base.sha, head_sha: .head.sha}'
+     gh api repos/<owner>/<repo>/pulls/<pr_number> --jq '{number, state, is_fork: (.head.repo != null and .head.repo.full_name != .base.repo.full_name), base_sha: .base.sha, head_sha: .head.sha}'
      ```
-   - Require `state == "open"` (apply this open-state check only when triggering CI, never during `cleanup <pr_number>`) and record the immutable 40-character `BASE_SHA` and `HEAD_SHA`.
-   - Obtain the complete, untruncated file list between `BASE_SHA` and `HEAD_SHA` without rename collapsing (never use `gh pr diff`, which reads the mutable PR head):
-     - In a local Git checkout, fetch both immutable commits and diff them with rename detection disabled so moved protected files still report their original source path:
-       ```bash
-       git fetch --no-tags origin <BASE_SHA> <HEAD_SHA>
-       git --no-pager diff --no-renames --name-only <BASE_SHA>...<HEAD_SHA>
-       ```
-     - If no local Git checkout is available, query `gh api "repos/<owner>/<repo>/compare/<BASE_SHA>...<HEAD_SHA>"`; because this REST endpoint caps `files` at 300 entries, if `files` is missing, incomplete, or reaches 300 entries, require explicit user confirmation (or fetch into a local checkout) before proceeding. Inspect **both** `files[].filename` and `files[].previous_filename` when checking paths.
-   - **Pre-trigger confirmation (bound to `HEAD_SHA`)**: If any changed source or destination path touches CI, build, container, or deployment inputs (`.azure-pipelines/`, `.github/`, `.devcontainer/`, `cmake/`, `docker/`, `test/deploy/`, `tools/`, any root or nested `**/CMakeLists.txt`, `*.cmake`, `**/Makefile`, `pyproject.toml`, `setup.py`, `setup.cfg`, `python/requirements*.txt`, or `*.sh` / `*.sh.in`), inspect the exact diff (`git --no-pager diff --no-renames <BASE_SHA>...<HEAD_SHA>`) first and ask the user for explicit confirmation bound to `HEAD_SHA` before creating a branch or queueing a build. Never reuse confirmation granted for a different `HEAD_SHA`.
+   - Require `state == "open"` and `is_fork == true` (if `is_fork` is `false`, stop and tell the user to trigger CI directly on the PR without creating a temporary branch), and record the immutable 40-character `BASE_SHA` and `HEAD_SHA`.
+   - Fetch both immutable commits into the local checkout and list changed paths with rename detection disabled:
+     ```bash
+     git fetch --no-tags origin <BASE_SHA> <HEAD_SHA>
+     git --no-pager diff --no-renames --name-only <BASE_SHA>...<HEAD_SHA>
+     ```
+   - **Pre-trigger confirmation (bound to `HEAD_SHA`)**: If any changed path touches CI, build, container, or deployment inputs (`.azure-pipelines/`, `.github/`, `.devcontainer/`, `cmake/`, `docker/`, `test/deploy/`, `tools/`, any root or nested `**/CMakeLists.txt`, `*.cmake`, `**/Makefile`, `pyproject.toml`, `setup.py`, `setup.cfg`, `python/requirements*.txt`, or `*.sh` / `*.sh.in`), inspect `git --no-pager diff --no-renames <BASE_SHA>...<HEAD_SHA>` first and ask the user for explicit confirmation bound to `HEAD_SHA` before creating a branch or queueing a build. Never reuse confirmation granted for a different `HEAD_SHA`.
 
 2. **Resolve the Azure DevOps project and pipeline ID dynamically**
    - Load the Azure DevOps pipeline tools via `tool_search_tool` if deferred (`azure-devops-pipelines_definition`, `azure-devops-pipelines_build`, `azure-devops-pipelines_write`).
@@ -47,7 +51,7 @@ Queue an Azure Pipelines validation run on an isolated, write-once upstream bran
      - `project`: `"<project>"`
      - `pipelineId`: `<pipeline_id>`
      - `resources`: `{ "repositories": { "self": { "refName": "refs/heads/<RUN_BRANCH>", "version": "<HEAD_SHA>" } } }`
-   - If `run_pipeline` fails after the ref was created, delete `refs/heads/<RUN_BRANCH>` immediately.
+   - If `run_pipeline` errors or times out after the ref was created, check `azure-devops-pipelines_build` (`action: "list"`, `project: "<project>"`, `branchName: "refs/heads/<RUN_BRANCH>"`): if a build was created, adopt its `buildId` and continue; delete `refs/heads/<RUN_BRANCH>` immediately only when that listing succeeds and returns zero builds (otherwise leave the ref intact and ask the user to reconcile via `cleanup <pr_number>`).
 
 4. **Cancel active fork merge runs**
    - `refs/pull/<pr_number>/merge` runs are automatically queued by GitHub PR webhooks for fork PRs, where they fail due to fork restrictions and hold CI runners.
