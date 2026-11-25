@@ -527,6 +527,7 @@ def test_port_channel_binding_defaults():
             with pytest.raises(native.Error) as caught:
                 method()
             assert caught.value.args[0] == int(ErrorCode.InvalidUsage)
+            del caught
     with pytest.raises(TypeError):
         PortDevice2DeviceSemaphore()
 
@@ -540,14 +541,17 @@ def test_port_channel_host_backend_api(mpi_group: MpiGroup):
     service = ProxyService()
     channels = group.make_port_channels(service, memory, connections)
     raw = group.make_semaphores(connections)[1 - group.my_rank]
+    group.barrier()
     with pytest.raises(native.Error) as caught:
         PortDevice2DeviceSemaphore(raw)
     assert caught.value.args[0] == int(ErrorCode.InvalidUsage)
+    del caught
     base = service.base_port_channel(service.add_semaphore(raw))
     assert isinstance(base.device_handle(), native.CppBasePortChannelDeviceHandle)
     with pytest.raises(native.Error) as caught:
         base.device_backend_handle()
     assert caught.value.args[0] == int(ErrorCode.InvalidUsage)
+    del caught
     for channel in channels.values():
         handle = channel.device_handle()
         assert isinstance(handle, native.CppPortChannelDeviceHandle)
@@ -555,6 +559,7 @@ def test_port_channel_host_backend_api(mpi_group: MpiGroup):
         with pytest.raises(native.Error) as caught:
             channel.device_backend_handle()
         assert caught.value.args[0] == int(ErrorCode.InvalidUsage)
+        del caught
 
 
 @parametrize_mpi_groups(2)
@@ -578,6 +583,7 @@ def test_port_channel_device_backend_api(mpi_group: MpiGroup):
     with pytest.raises(native.Error) as caught:
         PortChannel(semaphore, native.CppRegisteredMemory(), regions[group.my_rank])
     assert caught.value.args[0] == int(ErrorCode.InvalidUsage)
+    del caught
     semaphore_from_connection = PortDevice2DeviceSemaphore(group.communicator, connections[peer])
     assert isinstance(semaphore_from_connection.device_handle().raw, bytes)
     assert semaphore_from_connection.connection().transport() == connections[peer].transport()
@@ -593,6 +599,7 @@ def test_port_channel_device_backend_api(mpi_group: MpiGroup):
         with pytest.raises(native.Error) as caught:
             owner.device_handle()
         assert caught.value.args[0] == int(ErrorCode.InvalidUsage)
+        del caught
     group.barrier()
 
 
