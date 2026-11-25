@@ -62,7 +62,7 @@ MSCCLPP_DEVICE_INLINE void resolveLocalGatherSource(const P& p, const Route& rou
       directInput ? directInput : at<uint8_t>(p.local, IsBf16 ? p.symmetric.input : p.symmetric.quantizedInput);
   source = inputBase + sourceRow * rowBytes;
   if constexpr (RequiresLoadScale<P>) {
-    const int scaleStride = directInputScale ? (hidden / 32) : w4SourceScaleStride(hidden);
+    const int scaleStride = directInputScale ? (hidden / MxfpScaleBlockSize) : w4SourceScaleStride(hidden);
     const uint8_t* scaleBase =
         directInputScale ? directInputScale : at<uint8_t>(p.local, p.symmetric.quantizedInputScale);
     sourceScale = scaleBase + sourceRow * scaleStride;
@@ -112,9 +112,9 @@ __device__ __forceinline__ void storeDispatchChunk(const P& p, Storage& storage,
   __syncwarp();
   if constexpr (RequiresLoadScale<P>) {
     int k = 4 * lane;
-    if (k < bytes / 32) {
-      size_t offset =
-          p.fc1.layout_SFB(cute::make_coord(w4StorageRow<typename P::Tiles>(row), chunk * DispatchBytes + k * 32, 0));
+    if (k < bytes / MxfpScaleBlockSize) {
+      size_t offset = p.fc1.layout_SFB(
+          cute::make_coord(w4StorageRow<typename P::Tiles>(row), chunk * DispatchBytes + k * MxfpScaleBlockSize, 0));
       *reinterpret_cast<uint32_t*>(p.workspace.inputScale + offset) =
           *reinterpret_cast<const uint32_t*>(storage.scales[localWarp][stage] + k);
     }
@@ -232,10 +232,10 @@ MSCCLPP_DEVICE_INLINE void issueDispatchChunkLoad(Storage& s, int localWarp, int
                                                   const uint8_t* sourceScale, int byteOffset, int bytes,
                                                   BulkBarrier& barrier) {
 #if MSCCLPP_BULK_AVAILABLE
-  int scaleBytes = (bytes / 32 + 15) / 16 * 16;
+  int scaleBytes = alignedMxfpScaleBytes(bytes);
   barrier.arriveAndExpect(bytes + scaleBytes);
   bulkLoad(s.dispatch.tiles[localWarp][stage], source + byteOffset, bytes, barrier);
-  bulkLoad(s.dispatch.scales[localWarp][stage], sourceScale + (byteOffset / 32), scaleBytes, barrier);
+  bulkLoad(s.dispatch.scales[localWarp][stage], sourceScale + (byteOffset / MxfpScaleBlockSize), scaleBytes, barrier);
 #endif
 }
 
@@ -410,8 +410,8 @@ struct StageExpertTokens<DispatchMode::W4A8Coalesced> {
           if constexpr (RequiresLoadScale<P>) {
             __syncwarp();
             int k = 4 * lane;
-            if (k < bytes / 32) {
-              size_t offset = p.fc1.layout_SFB(cute::make_coord(storageRow, byteOffset + k * 32, 0));
+            if (k < bytes / MxfpScaleBlockSize) {
+              size_t offset = p.fc1.layout_SFB(cute::make_coord(storageRow, byteOffset + k * MxfpScaleBlockSize, 0));
               *reinterpret_cast<uint32_t*>(w.inputScale + offset) =
                   *reinterpret_cast<const uint32_t*>(s.dispatch.scales[localWarp][stage] + k);
             }
@@ -524,8 +524,8 @@ struct StageExpertTokens<DispatchMode::W4A8PerWarp> {
         if constexpr (RequiresLoadScale<P>) {
           __syncwarp();
           int k = 4 * lane;
-          if (k < bytes / 32) {
-            size_t offset = p.fc1.layout_SFB(cute::make_coord(storageRow, byteOffset + k * 32, 0));
+          if (k < bytes / MxfpScaleBlockSize) {
+            size_t offset = p.fc1.layout_SFB(cute::make_coord(storageRow, byteOffset + k * MxfpScaleBlockSize, 0));
             *reinterpret_cast<uint32_t*>(w.inputScale + offset) =
                 *reinterpret_cast<const uint32_t*>(s.dispatch.scales[localWarp][stage] + k);
           }
@@ -562,7 +562,7 @@ __device__ __forceinline__ void stageExpertTokens(const P& p, Storage& s, int lo
   using Types = typename P::Collective;
   static_assert(Hidden >= 0);
   static_assert(DispatchBytes == sizeof(s.dispatch.tiles[0][0]));
-  static_assert((DispatchBytes / 32 + 15) / 16 * 16 <= sizeof(s.dispatch.scales[0][0]));
+  static_assert(alignedMxfpScaleBytes(DispatchBytes) <= sizeof(s.dispatch.scales[0][0]));
   constexpr int ElemBytes = P::Activation == ActivationDtype::Bf16 ? sizeof(__bfloat16) : sizeof(uint8_t);
   constexpr int TileN = P::Tiles::N;
   constexpr int nDispatchGroupsPerTile = (TileN + Types::DispatchWarps - 1) / Types::DispatchWarps;

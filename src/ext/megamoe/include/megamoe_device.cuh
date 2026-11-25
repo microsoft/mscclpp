@@ -121,7 +121,14 @@ __host__ __device__ constexpr int w4StorageRow(int row) {
   return row / Tiles::N * Tiles::TokenStride + row % Tiles::N;
 }
 
-__host__ __device__ constexpr int w4SourceScaleStride(int hidden) { return (hidden / 32 + 15) / 16 * 16; }
+constexpr int MxfpScaleBlockSize = 32;
+constexpr int BulkCopyAlignment = 16;
+
+__host__ __device__ constexpr int alignedMxfpScaleBytes(int elemBytes) {
+  return (elemBytes / MxfpScaleBlockSize + BulkCopyAlignment - 1) / BulkCopyAlignment * BulkCopyAlignment;
+}
+
+__host__ __device__ constexpr int w4SourceScaleStride(int hidden) { return alignedMxfpScaleBytes(hidden); }
 
 template <class Types>
 __host__ __device__ constexpr int w4InputChunks(int hidden) {
@@ -145,7 +152,7 @@ struct W4DispatchStorageT {
       (Types::WeightMxfp4 && Types::DispatchStages == 1 && Types::DispatchWarps == 2 && Types::DispatchChunk >= 4096)
           ? 2
           : Types::DispatchStages;
-  static constexpr int RequiredScaleStageBytes = (Types::DispatchChunk / 32 + 15) / 16 * 16;
+  static constexpr int RequiredScaleStageBytes = alignedMxfpScaleBytes(Types::DispatchChunk);
   static constexpr int ScaleStageBytes = RequiredScaleStageBytes < 128 ? 128 : RequiredScaleStageBytes;
   alignas(128) uint8_t tiles[Types::DispatchWarps][NumStages][Types::DispatchChunk];
   BulkBarrier barriers[Types::DispatchWarps][NumStages];
