@@ -303,7 +303,8 @@ MSCCLPP_DEVICE_INLINE void dispatchControl(const int64_t* routes, const Workload
     const int nTokensPerChunk = gateway.nTokensPerChunk();
     gateway.send(warpIdx, warpIdx * nTokensPerChunk, nQps * nTokensPerChunk, nRemoteTokens);
     if (isControlQueue) {
-      gateway.signalForwardComplete(warpIdx, &hierarchicalCtx.dispatchScratch_->forwardComplete);
+      gateway.waitForward();
+      gateway.signalForwardComplete(warpIdx);
     }
   }
 }
@@ -384,8 +385,7 @@ MSCCLPP_DEVICE_INLINE void dispatchForward(void* output, void* outputScales, int
     syncNamedBarrier(warpGroupBarrierId, NWarpGroupThreads);
     if (warpIdx == 0) {
       gateway.signalIntraDomain<Gateway::Scope::Warp>(&hierarchicalCtx.dispatchScratch_->nCompletedForwarders,
-                                                      nForwarders, &hierarchicalCtx.dispatchScratch_->forwardComplete,
-                                                      state->payloadReady, flag);
+                                                      nForwarders, state->payloadReady, flag);
     }
   }
 }
@@ -411,7 +411,8 @@ __global__ __launch_bounds__(DispatchNThreads, 1) void hierarchicalDispatchKerne
   Gateway gateway(transport, hierarchicalCtx.gatewayRank_, hierarchicalCtx.nTokensPerChunk_, stride,
                   hierarchicalCtx.dispatchSendBuffer_, hierarchicalCtx.dispatchRecvBuffer_,
                   hierarchicalCtx.dispatchControl_->qpSignals, hierarchicalCtx.dispatchScratch_->chunkReadySignals,
-                  &hierarchicalCtx.dispatchControl_->completionSignal);
+                  &hierarchicalCtx.dispatchControl_->completionSignal, nullptr,
+                  &hierarchicalCtx.dispatchScratch_->forwardComplete);
   if (blockIdx.x == 0) {
     dispatchControl(routes, workload, recvBuffer, context, transport, gateway, flag,
                     reinterpret_cast<int*>(sharedMemory));

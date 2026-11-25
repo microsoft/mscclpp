@@ -40,7 +40,8 @@ class Gateway {
 
   MSCCLPP_DEVICE_INLINE Gateway(const TransportView& transport, int peerRank, int nTokensPerChunk, size_t tokenBytes,
                                 void* sendBuffer, void* recvBuffer, uint64_t* qpSignals, int* chunkReadySignals,
-                                uint64_t* completionSignal = nullptr, int* chunkLoadReadySignals = nullptr)
+                                uint64_t* completionSignal = nullptr, int* chunkLoadReadySignals = nullptr,
+                                int* forwardComplete = nullptr)
       : transport_(transport),
         peerRank_(peerRank),
         nTokensPerChunk_(nTokensPerChunk),
@@ -50,7 +51,8 @@ class Gateway {
         qpSignals_(qpSignals),
         chunkReadySignals_(chunkReadySignals),
         completionSignal_(completionSignal),
-        chunkLoadReadySignals_(chunkLoadReadySignals) {}
+        chunkLoadReadySignals_(chunkLoadReadySignals),
+        forwardComplete_(forwardComplete) {}
 
   MSCCLPP_DEVICE_INLINE int peerRank() const { return peerRank_; }
   MSCCLPP_DEVICE_INLINE int nTokensPerChunk() const { return nTokensPerChunk_; }
@@ -93,15 +95,22 @@ class Gateway {
     }
   }
 
-  // Wait on local waitSignal, then notify the peer that forwarding is complete so the next round can reuse recvBuffer_.
+  // Wait for forwarders on this GPU to finish intra-domain forwarding and resetting qpSignals_.
   template <Scope Mode = Scope::Thread>
-  MSCCLPP_DEVICE_INLINE void signalForwardComplete(int queueIdx, int* waitSignal) {
+  MSCCLPP_DEVICE_INLINE void waitForward() const {
     static_assert(Mode == Scope::Thread);
-    EP_DEVICE_ASSERT(completionSignal_ != nullptr && waitSignal != nullptr);
+    EP_DEVICE_ASSERT(forwardComplete_ != nullptr);
+    waitAtLeast<mscclpp::scopeDevice>(forwardComplete_, 1);
+  }
+
+  // Notify the peer that local forwarding is complete so the next round can reuse recvBuffer_.
+  template <Scope Mode = Scope::Thread>
+  MSCCLPP_DEVICE_INLINE void signalForwardComplete(int queueIdx) {
+    static_assert(Mode == Scope::Thread);
+    EP_DEVICE_ASSERT(completionSignal_ != nullptr);
     auto& channel = getChannel(queueIdx);
     const uint64_t signalOffset = transport_.symmetricOffset(completionSignal_);
     constexpr auto kExclusive = PortChannelDeviceHandle::Concurrency::Exclusive;
-    waitAtLeast<mscclpp::scopeDevice>(waitSignal, 1);
     channel.accumulate<kExclusive, MaxQpsPerPeer>(signalOffset, 1, queueIdx);
   }
 
@@ -211,11 +220,11 @@ class Gateway {
   // Intra-domain completion signal: the last forwarder resets incoming QP counters, marks local forwarding complete,
   // and notifies intra-domain receivers across warp lanes.
   template <Scope Mode>
-  MSCCLPP_DEVICE_INLINE void signalIntraDomain(int* nCompletedForwarders, int nForwarders, int* forwardComplete,
-                                               uint32_t* peerReadyFlags, uint32_t flag) const {
+  MSCCLPP_DEVICE_INLINE void signalIntraDomain(int* nCompletedForwarders, int nForwarders, uint32_t* peerReadyFlags,
+                                               uint32_t flag) const {
     static_assert(Mode == Scope::Warp);
     EP_DEVICE_ASSERT(__activemask() == 0xffffffffu);
-    EP_DEVICE_ASSERT(nCompletedForwarders != nullptr && nForwarders > 0 && forwardComplete != nullptr &&
+    EP_DEVICE_ASSERT(nCompletedForwarders != nullptr && nForwarders > 0 && forwardComplete_ != nullptr &&
                      peerReadyFlags != nullptr);
     const int laneIdx = getLaneId();
     const int nRanks = transport_.numRanks_;
@@ -227,7 +236,7 @@ class Gateway {
       isLast = nCompleted == nForwarders - 1;
       if (isLast) {
         for (int queueIdx = 0; queueIdx < nQps; ++queueIdx) qpSignals_[queueIdx] = 0;
-        mscclpp::atomicStore<int, mscclpp::scopeDevice>(forwardComplete, 1, mscclpp::memoryOrderRelease);
+        mscclpp::atomicStore<int, mscclpp::scopeDevice>(forwardComplete_, 1, mscclpp::memoryOrderRelease);
       }
     }
     if (__shfl_sync(0xffffffffu, isLast, 0)) {
@@ -360,6 +369,7 @@ class Gateway {
   int* chunkReadySignals_;
   uint64_t* completionSignal_;
   int* chunkLoadReadySignals_;
+  int* forwardComplete_;
   PortChannelDeviceHandle cachedChannel_{};
   int cachedQueueIdx_ = -1;
 };
