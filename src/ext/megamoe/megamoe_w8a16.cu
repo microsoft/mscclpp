@@ -18,8 +18,8 @@ extern "C" int mscclpp_megamoe_w8_trace_copy(void* events, size_t bytes, uint32_
 #endif
 
 template <bool Local, class Parameters>
-__device__ __forceinline__ int prepareW8A16TokenBlocks(const Parameters& p, int tokens, const int32_t* ids,
-                                                       const float* scores) {
+__device__ __forceinline__ int prepareW8A16TokenTiles(const Parameters& p, int tokens, const int32_t* ids,
+                                                      const float* scores) {
   if constexpr (Local) {
     return (tokens + Parameters::Tiles::N - 1) / Parameters::Tiles::N;
   } else {
@@ -30,7 +30,7 @@ __device__ __forceinline__ int prepareW8A16TokenBlocks(const Parameters& p, int 
       prepareRoutes<false>(p, tokens, ids, scores);
     }
     traceKernel(KernelTracePhase::Routing, false);
-    return p.workspace.control->tokenBlocks;
+    return p.workspace.control->nTokenTiles;
   }
 }
 
@@ -111,7 +111,7 @@ __global__ __launch_bounds__((LocalMode ? LocalThreads : W4Threads),
   if (warp == Schedule::MmaWarp) allocator.allocate(512, &s.tmem);
   if constexpr (!Local) initDispatchStorage<Types::DispatchStages, Schedule>(s, warp, lane);
   cutlass::arch::fence_barrier_init();
-  int tokenBlocks = prepareW8A16TokenBlocks<Local>(p, tokens, ids, scores);
+  int nTokenTiles = prepareW8A16TokenTiles<Local>(p, tokens, ids, scores);
   if constexpr (Local) {
     __syncthreads();
     cute::cluster_sync();
@@ -121,7 +121,7 @@ __global__ __launch_bounds__((LocalMode ? LocalThreads : W4Threads),
   Mainloop fc2(p.fc2, ClusterShape{}, cta);
   auto acc = Mainloop::TiledMma::make_fragment_C(append(fc1.partition_accumulator_shape(), _2{}));
   acc.data() = s.tmem;
-  int tasks = tokenBlocks * (fc1TaskTiles<Parameters>(intermediate) + fc2TaskTiles<Parameters>(hidden));
+  int tasks = nTokenTiles * (fc1TaskTiles<Parameters>(intermediate) + fc2TaskTiles<Parameters>(hidden));
   int localExperts = p.config.numExperts / p.config.worldSize;
   ProblemShape shape1{2 * intermediate, p.workspace.poolRows, hidden, localExperts};
   ProblemShape shape2{hidden, p.workspace.poolRows, intermediate, localExperts};

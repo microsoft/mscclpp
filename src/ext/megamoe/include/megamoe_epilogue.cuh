@@ -49,7 +49,7 @@ template <int EpilogueThreads, int ChunkTokens, int LocalMode = 0, class KernelP
           class Coordinates>
 MSCCLPP_DEVICE_INLINE void activateFc1Chunk(const KernelParams& params, const Task& task, Storage& s,
                                             const Values& values, const Coordinates&, int tokenOffset, int validRows,
-                                            int intermediate, bool lastChunk) {
+                                            int intermediate, bool lastChunk, bool interleaved = false) {
   using namespace cute;
   using Tiles = typename KernelParams::Tiles;
   constexpr int KernelTileN = Tiles::N;
@@ -99,7 +99,8 @@ MSCCLPP_DEVICE_INLINE void activateFc1Chunk(const KernelParams& params, const Ta
       }
     }
   }
-  if (tokenOffset > 0)
+  if (tokenOffset == 0 && interleaved) bulkStoreWaitSource();
+  if (tokenOffset > 0 || interleaved)
     cutlass::arch::NamedBarrier::sync(EpilogueThreads, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
   if (baseToken < validRows) {
 #pragma unroll
@@ -353,10 +354,80 @@ MSCCLPP_DEVICE_INLINE void storeOutputChunk(const KernelParams& params, const Ta
 
 #endif  // MSCCLPP_BULK_AVAILABLE
 
+template <class Schedule, int LocalMode, class KernelParams>
+constexpr bool UseOutputOffload =
+    (LocalMode == 0) && KernelParams::WeightMxfp4 && (KernelParams::Tiles::K >= 256) &&
+    (KernelParams::Collective::DispatchWarps >= 4) && (KernelParams::Collective::EpilogueTokens == 32) &&
+    ((Schedule::EpilogueEnd - Schedule::EpilogueBegin) == 4) && ((Schedule::NumWarps - Schedule::DispatchEnd) >= 4);
+
+constexpr uint32_t OutputOffloadSlotEmptyBarrier = 0u;
+constexpr uint32_t OutputOffloadSlotFullBarrier = 1u;
+constexpr int OutputOffloadThreads = 256;
+
+template <class Schedule, class KernelParams, class Storage>
+MSCCLPP_DEVICE_INLINE void runOutputStoreOffloadRole(const KernelParams& params, Storage& s, int warp, int lane,
+                                                     int hidden, __bfloat16* finalOutput = nullptr,
+                                                     int runtimeTokens = 0) {
+#if MSCCLPP_BULK_AVAILABLE
+  if constexpr (UseOutputOffload<Schedule, 0, KernelParams>) {
+    constexpr int OffloadBegin = Schedule::NumWarps - 4;
+    if (warp < OffloadBegin || warp >= Schedule::NumWarps) return;
+    using Tiles = typename KernelParams::Tiles;
+    constexpr int CtaTileM = Tiles::CtaM;
+    cutlass::arch::NamedBarrier::arrive(OutputOffloadThreads, OutputOffloadSlotEmptyBarrier);
+    while (true) {
+      cutlass::arch::NamedBarrier::sync(OutputOffloadThreads, OutputOffloadSlotFullBarrier);
+      const OutputOffloadTask offloadTask = s.outputOffloadTask;
+      if (offloadTask.op() == OutputOffloadOp::Stop) break;
+      if (offloadTask.op() == OutputOffloadOp::Store) {
+        const int validRows = offloadTask.nTokens();
+        const int feature =
+            offloadTask.mTileIdx() * (CtaTileM * Tiles::ClusterSize) + (blockIdx.x % Tiles::ClusterSize) * CtaTileM;
+        const int baseRow = offloadTask.baseRowIdx();
+        const int token = (warp - OffloadBegin) + lane * 4;
+        if (feature < hidden && lane < 8 && token < validRows) {
+          Route route = params.workspace.routes[baseRow + token];
+          traceKernel(KernelTracePhase::Fc2Store, true, baseRow);
+          if (params.config.computeOnly) {
+            size_t offset =
+                ((size_t(route.rank) * runtimeTokens + route.token) * params.config.topK + route.slot) * hidden +
+                feature;
+            bulkStore(finalOutput + offset, s.epilogue.packed + token * PackedRowStride, CtaTileM * sizeof(__bfloat16));
+            bulkStoreCommit();
+          } else if constexpr (KernelParams::Activation == ActivationDtype::Fp8Static) {
+            auto* out = peerAt<uint8_t>(params, route.rank, params.symmetric.partialOutput);
+            size_t offset = (size_t(route.token) * params.config.topK + route.slot) * params.config.hidden + feature;
+            bulkStore(out + offset, s.epilogue.packedFp8 + token * PackedFp8RowStride, CtaTileM * sizeof(uint8_t));
+            bulkStoreCommit();
+          } else {
+            __bfloat16* out;
+            size_t offset;
+            if (!params.config.combineRouteWeights && params.config.worldSize == 1 && params.config.topK == 1) {
+              out = finalOutput;
+              offset = size_t(route.token) * hidden + feature;
+            } else {
+              out = peerAt<__bfloat16>(params, route.rank, params.symmetric.partialOutput);
+              offset = (size_t(route.token) * params.config.topK + route.slot) * params.config.hidden + feature;
+            }
+            bulkStore(out + offset, s.epilogue.packed + token * PackedRowStride, CtaTileM * sizeof(__bfloat16));
+            bulkStoreCommit();
+          }
+          traceKernel(KernelTracePhase::Fc2Store, false, baseRow);
+        }
+        bulkStoreWaitSource();
+      }
+      cutlass::arch::NamedBarrier::arrive(OutputOffloadThreads, OutputOffloadSlotEmptyBarrier);
+    }
+    bulkStoreWait();
+  }
+#endif
+}
+
 template <class Schedule, int LocalMode = 0, class KernelParams, class Storage, class Pipeline, class Accumulators>
 MSCCLPP_DEVICE_INLINE void epilogue(const KernelParams& params, const Task& task, Storage& s, Pipeline& pipeline,
                                     typename Pipeline::PipelineState& state, Accumulators accumulators, int hidden,
-                                    int intermediate, __bfloat16* finalOutput = nullptr, int tokens = 0) {
+                                    int intermediate, __bfloat16* finalOutput = nullptr, int tokens = 0,
+                                    bool interleaved = false) {
 #if MSCCLPP_BULK_AVAILABLE
   using namespace cute;
   using Tiles = typename KernelParams::Tiles;
@@ -368,6 +439,7 @@ MSCCLPP_DEVICE_INLINE void epilogue(const KernelParams& params, const Task& task
   constexpr int EpilogueThreads = EpilogueWarps * WarpSize;
   constexpr int ReaderGroups = EpilogueThreads / CtaTileM;
   constexpr int ReadTokens = ChunkTokens / ReaderGroups;
+  constexpr bool OffloadOutput = UseOutputOffload<Schedule, LocalMode, KernelParams>;
   int warp = threadIdx.x / WarpSize;
   int lane = threadIdx.x % WarpSize;
   auto matrix = accumulators(make_coord(_, _), _0{}, _0{}, state.index());
@@ -376,9 +448,9 @@ MSCCLPP_DEVICE_INLINE void epilogue(const KernelParams& params, const Task& task
   traceKernel(KernelTracePhase::EpilogueReady, true, int(task.fc1));
   pipeline.consumer_wait(state);
   traceKernel(KernelTracePhase::EpilogueReady, false, int(task.fc1));
-  for (int tokenOffset = 0; tokenOffset < task.tokens.rows; tokenOffset += ChunkTokens) {
-    int validRows = min(int(ChunkTokens), task.tokens.rows - tokenOffset);
-    bool lastChunk = tokenOffset + ChunkTokens >= task.tokens.rows;
+  for (int tokenOffset = 0; tokenOffset < task.tokens.nTokens; tokenOffset += ChunkTokens) {
+    int validRows = min(int(ChunkTokens), task.tokens.nTokens - tokenOffset);
+    bool lastChunk = tokenOffset + ChunkTokens >= task.tokens.nTokens;
     int readerGroup = threadIdx.x / CtaTileM;
     if (task.fc1) {
       int readerThread = threadIdx.x % CtaTileM;
@@ -397,7 +469,8 @@ MSCCLPP_DEVICE_INLINE void epilogue(const KernelParams& params, const Task& task
       if (lastChunk) pipeline.consumer_release(state);
       traceKernel(KernelTracePhase::ActivationQuantize, true, tokenOffset);
       activateFc1Chunk<EpilogueThreads, ChunkTokens, LocalMode>(params, task, s, values, coordinates, tokenOffset,
-                                                                validRows, intermediate, lastChunk);
+                                                                validRows, intermediate, lastChunk,
+                                                                OffloadOutput ? false : interleaved);
       traceKernel(KernelTracePhase::ActivationQuantize, false, tokenOffset);
       continue;
     }
@@ -411,16 +484,26 @@ MSCCLPP_DEVICE_INLINE void epilogue(const KernelParams& params, const Task& task
     }
     cutlass::arch::fence_view_async_tmem_load();
     if (lastChunk) pipeline.consumer_release(state);
-    bulkStoreWaitSource();
-    cutlass::arch::NamedBarrier::sync(EpilogueThreads, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
-    if (readerGroup * ReadTokens < validRows)
-      packFc2Chunk<ReadTokens, LocalMode>(params, task, s, accumulator, tokenOffset, validRows, readerGroup);
-    bulkFence();
-    cutlass::arch::NamedBarrier::sync(EpilogueThreads, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
-    traceKernel(KernelTracePhase::Fc2Store, true, tokenOffset);
-    storeOutputChunk<EpilogueWarps, LocalMode>(params, task, s, tokenOffset, validRows, hidden, warp, lane, finalOutput,
-                                               tokens);
-    traceKernel(KernelTracePhase::Fc2Store, false, tokenOffset);
+    if constexpr (OffloadOutput) {
+      cutlass::arch::NamedBarrier::sync(OutputOffloadThreads, OutputOffloadSlotEmptyBarrier);
+      if (readerGroup * ReadTokens < validRows)
+        packFc2Chunk<ReadTokens, LocalMode>(params, task, s, accumulator, tokenOffset, validRows, readerGroup);
+      if (threadIdx.x == 0)
+        s.outputOffloadTask = OutputOffloadTask::makeStore(task.block * KernelTileN + tokenOffset, validRows, task.m);
+      bulkFence();
+      cutlass::arch::NamedBarrier::arrive(OutputOffloadThreads, OutputOffloadSlotFullBarrier);
+    } else {
+      bulkStoreWaitSource();
+      cutlass::arch::NamedBarrier::sync(EpilogueThreads, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
+      if (readerGroup * ReadTokens < validRows)
+        packFc2Chunk<ReadTokens, LocalMode>(params, task, s, accumulator, tokenOffset, validRows, readerGroup);
+      bulkFence();
+      cutlass::arch::NamedBarrier::sync(EpilogueThreads, cutlass::arch::ReservedNamedBarriers::EpilogueBarrier);
+      traceKernel(KernelTracePhase::Fc2Store, true, tokenOffset);
+      storeOutputChunk<EpilogueWarps, LocalMode>(params, task, s, tokenOffset, validRows, hidden, warp, lane,
+                                                 finalOutput, tokens);
+      traceKernel(KernelTracePhase::Fc2Store, false, tokenOffset);
+    }
   }
   ++state;
   if (task.fc1 && threadIdx.x == 0) {
@@ -436,12 +519,41 @@ MSCCLPP_DEVICE_INLINE void runEpilogueRole(const KernelParams& params, Storage& 
                                            int tasks, __bfloat16* finalOutput = nullptr, int tokens = 0) {
   cutlass::arch::warpgroup_reg_alloc<KernelParams::Collective::EpilogueRegisters>();
   typename Accumulate::PipelineState state;
-  for (int i = cluster; i < tasks; i += gridDim.x / KernelParams::Tiles::ClusterSize)
-    epilogue<Schedule, LocalMode>(params, taskAt(params, i, hidden, intermediate, tokens), s, pipeline, state,
-                                  accumulators, hidden, intermediate, finalOutput, tokens);
+  const int nTokenTiles = taskTokenTiles(params, tokens);
+  const int localExperts = params.config.numExperts / params.config.worldSize;
+  const int fc1Tiles = fc1TaskTiles<KernelParams>(intermediate);
+  const int fc2Tiles = fc2TaskTiles<KernelParams>(hidden);
+  const int numClusters = gridDim.x / KernelParams::Tiles::ClusterSize;
+  const bool interleaved = useInterleavedTasks<KernelParams>(nTokenTiles, localExperts);
+  constexpr bool OffloadOutput = UseOutputOffload<Schedule, LocalMode, KernelParams>;
+  bool prevWasFc2 = false;
+  if (cluster < tasks) {
+    Task nextTask = taskAtFast(params, cluster, nTokenTiles, localExperts, fc1Tiles, fc2Tiles, tokens);
+    for (int i = cluster; i < tasks; i += numClusters) {
+      Task task = nextTask;
+      if (i + numClusters < tasks)
+        nextTask = taskAtFast(params, i + numClusters, nTokenTiles, localExperts, fc1Tiles, fc2Tiles, tokens);
+      if constexpr (OffloadOutput) {
+        if (task.fc1 && interleaved && prevWasFc2) {
+          cutlass::arch::NamedBarrier::sync(OutputOffloadThreads, OutputOffloadSlotEmptyBarrier);
+          if (threadIdx.x == 0) s.outputOffloadTask = OutputOffloadTask::makeNoop();
+          cutlass::arch::NamedBarrier::arrive(OutputOffloadThreads, OutputOffloadSlotFullBarrier);
+        }
+      }
+      epilogue<Schedule, LocalMode>(params, task, s, pipeline, state, accumulators, hidden, intermediate, finalOutput,
+                                    tokens, interleaved);
+      prevWasFc2 = !task.fc1;
+    }
+  }
 #if MSCCLPP_BULK_AVAILABLE
-  // Every lane may own FC2 bulk stores; they must complete before the CTA publishes its completion.
-  bulkStoreWait();
+  if constexpr (OffloadOutput) {
+    cutlass::arch::NamedBarrier::sync(OutputOffloadThreads, OutputOffloadSlotEmptyBarrier);
+    if (threadIdx.x == 0) s.outputOffloadTask = OutputOffloadTask::makeStop();
+    cutlass::arch::NamedBarrier::arrive(OutputOffloadThreads, OutputOffloadSlotFullBarrier);
+  } else {
+    // Every lane may own FC2 bulk stores; they must complete before the CTA publishes its completion.
+    bulkStoreWait();
+  }
 #endif
 }
 
@@ -644,6 +756,28 @@ __device__ void finishAndCombine(const KernelParams& p, int tokens, __bfloat16* 
   traceKernel(KernelTracePhase::Combine, true);
   combineResults<Hidden>(p, tokens, output);
   traceKernel(KernelTracePhase::Combine, false);
+}
+
+template <int Hidden = 0, class KernelParams>
+__device__ void finishW4A8(const KernelParams& p, int tokens, __bfloat16* output) {
+  if (p.config.computeOnly) return;
+  if constexpr (KernelParams::WeightMxfp4 && KernelParams::Activation == ActivationDtype::Mxfp8) {
+    if (!p.config.combineRouteWeights && p.config.worldSize == 1 && p.config.topK == 1) return;
+    traceKernel(KernelTracePhase::OutputJoin, true);
+    syncResidentGrid(&p.workspace.control->residentGridSyncState, gridDim.x);
+    if (blockIdx.x == 0) {
+      if (threadIdx.x == 0) {
+        *at<uint64_t>(p.local, p.symmetric.epoch) = p.workspace.control->epoch;
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
+        if (tokens > 0) cudaTriggerProgrammaticLaunchCompletion();
+#endif
+      }
+      if (threadIdx.x < p.config.worldSize) signalAndWait(p, threadIdx.x);
+    }
+    traceKernel(KernelTracePhase::OutputJoin, false);
+    return;
+  }
+  finishAndCombine<Hidden>(p, tokens, output);
 }
 
 }  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail

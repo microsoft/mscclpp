@@ -48,7 +48,7 @@ __device__ __forceinline__ void loadW8A16ActivationTiles(const P& p, const Task&
     for (int first = 0; first < kTiles; first += TilesPerChunk) {
       traceKernel(KernelTracePhase::TokenReady, true, first / TilesPerChunk);
       waitAtLeast<int, scopeDevice>(w4InputChunkCounter<Types>(p.workspace, hidden, task.block, first / TilesPerChunk),
-                                    task.tokens.rows);
+                                    task.tokens.nTokens);
       traceKernel(KernelTracePhase::TokenReady, false, first / TilesPerChunk);
       loadTiles(first, min(TilesPerChunk, kTiles - first));
     }
@@ -102,7 +102,7 @@ __device__ __forceinline__ void runW8A16TransferRole(const P& p, int tokens, Sto
       Task task = taskAt(p, i, hidden, intermediate, tokens);
       auto coord = taskCoord(p, task, cta);
       int kTiles = taskKTiles(p, task, hidden, intermediate);
-      int mmaRows = (int(task.tokens.rows) + 15) / 16 * 16;
+      int mmaRows = (int(task.tokens.nTokens) + 15) / 16 * 16;
       auto shiftLoadB = [&](const auto& baseInputs, const auto& params) {
         auto rowLayout = params.tma_load_b.get_tma_tensor(make_shape(1, 1, 1)).layout();
         auto rowOffset = rowLayout(make_coord(cta * (mmaRows - P::Tiles::N) / P::Tiles::ClusterSize, 0, 0));

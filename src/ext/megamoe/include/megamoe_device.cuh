@@ -49,7 +49,7 @@ static_assert(validW4RegisterBudget(W4EpilogueWarps, W4EpilogueRegisters, W4Tran
 
 struct Control {
   uint64_t epoch;
-  int tokenBlocks;
+  int nTokenTiles;
   uint32_t residentGridSyncState;
 };
 
@@ -67,20 +67,34 @@ struct alignas(16) Route {
   float weight;
 };
 
-struct alignas(8) TokenBlock {
-  int16_t expert;
-  int16_t rows;
-  int16_t groupOffset;
-  int16_t groupShift;
+struct alignas(8) TokenTile {
+  int16_t expertIdx;
+  int16_t nTokens;
+  int16_t tileIdxInGroup;
+  // Packs the tile-group shift in the low bits and the W4A8 weight L2 eviction flag in bit 8.
+  int16_t packedFlags;
+
+  static constexpr int GroupShiftFieldMask = 0x7f;
+  static constexpr int16_t WeightEvictNormalFlag = int16_t(1 << 8);
+
+  __host__ __device__ static constexpr TokenTile make(int expertIdx, int nTokens, int tileIdxInGroup = 0,
+                                                      int groupShift = 0, bool weightEvictNormal = false) {
+    return TokenTile{int16_t(expertIdx), int16_t(nTokens), int16_t(tileIdxInGroup),
+                     int16_t(groupShift | (weightEvictNormal ? WeightEvictNormalFlag : 0))};
+  }
+
+  __host__ __device__ constexpr int groupShift() const { return int(packedFlags) & GroupShiftFieldMask; }
+
+  __host__ __device__ constexpr bool weightEvictNormal() const { return (packedFlags & WeightEvictNormalFlag) != 0; }
 };
 
-static_assert(sizeof(TokenBlock) == sizeof(uint2));
+static_assert(sizeof(TokenTile) == sizeof(uint2));
 
 struct Task {
   bool fc1;
   int block;
   int m;
-  TokenBlock tokens;
+  TokenTile tokens;
 };
 
 struct Workspace {
@@ -92,7 +106,7 @@ struct Workspace {
   int* hiddenReady;
   int* inputChunkReady;
   Route* routes;
-  TokenBlock* blocks;
+  TokenTile* tokenTiles;
   uint8_t* quantizedInput;
   uint8_t* inputScale;
   uint8_t* quantizedHidden;
@@ -107,7 +121,14 @@ __host__ __device__ constexpr int w4StorageRow(int row) {
   return row / Tiles::N * Tiles::TokenStride + row % Tiles::N;
 }
 
-__host__ __device__ constexpr int w4SourceScaleStride(int hidden) { return (hidden / 32 + 15) / 16 * 16; }
+constexpr int MxfpScaleBlockSize = 32;
+constexpr int BulkCopyAlignment = 16;
+
+__host__ __device__ constexpr int alignedMxfpScaleBytes(int elemBytes) {
+  return (elemBytes / MxfpScaleBlockSize + BulkCopyAlignment - 1) / BulkCopyAlignment * BulkCopyAlignment;
+}
+
+__host__ __device__ constexpr int w4SourceScaleStride(int hidden) { return alignedMxfpScaleBytes(hidden); }
 
 template <class Types>
 __host__ __device__ constexpr int w4InputChunks(int hidden) {
@@ -127,11 +148,15 @@ __device__ __forceinline__ int* w4InputChunkCounter(const Workspace& w, int hidd
 
 template <class Types>
 struct W4DispatchStorageT {
-  static constexpr int RequiredScaleStageBytes = (Types::DispatchChunk / 32 + 15) / 16 * 16;
+  static constexpr int NumStages =
+      (Types::WeightMxfp4 && Types::DispatchStages == 1 && Types::DispatchWarps == 2 && Types::DispatchChunk >= 4096)
+          ? 2
+          : Types::DispatchStages;
+  static constexpr int RequiredScaleStageBytes = alignedMxfpScaleBytes(Types::DispatchChunk);
   static constexpr int ScaleStageBytes = RequiredScaleStageBytes < 128 ? 128 : RequiredScaleStageBytes;
-  alignas(128) uint8_t tiles[Types::DispatchWarps][Types::DispatchStages][Types::DispatchChunk];
-  BulkBarrier barriers[Types::DispatchWarps][Types::DispatchStages];
-  alignas(128) uint8_t scales[Types::DispatchWarps][Types::DispatchStages][ScaleStageBytes];
+  alignas(128) uint8_t tiles[Types::DispatchWarps][NumStages][Types::DispatchChunk];
+  BulkBarrier barriers[Types::DispatchWarps][NumStages];
+  alignas(128) uint8_t scales[Types::DispatchWarps][NumStages][ScaleStageBytes];
   uint32_t arrivals;
   uint32_t publishedPhase;
 };
@@ -167,6 +192,49 @@ struct alignas(1024) W8A16SharedStorageT {
   std::conditional_t<Types::LocalExpert, EmptyStorage, W4DispatchStorageT<Types>> dispatch;
 };
 
+enum class OutputOffloadOp : uint32_t {
+  Store = 0u,
+  Noop = 1u,
+  Stop = 2u,
+};
+
+struct alignas(8) OutputOffloadTask {
+  uint64_t packed;
+
+  static constexpr uint64_t OpFieldMask = 0xfu;
+  static constexpr int NumTokensShift = 4;
+  static constexpr uint64_t NumTokensFieldMask = 0xfffu;
+  static constexpr int MTileIdxShift = 16;
+  static constexpr uint64_t MTileIdxFieldMask = 0xffffu;
+  static constexpr int BaseRowIdxShift = 32;
+
+  __host__ __device__ static constexpr OutputOffloadTask make(OutputOffloadOp op, int baseRowIdx = 0, int nTokens = 0,
+                                                              int mTileIdx = 0) {
+    return OutputOffloadTask{(uint64_t(uint32_t(baseRowIdx)) << BaseRowIdxShift) |
+                             ((uint64_t(uint32_t(mTileIdx)) & MTileIdxFieldMask) << MTileIdxShift) |
+                             ((uint64_t(uint32_t(nTokens)) & NumTokensFieldMask) << NumTokensShift) |
+                             (uint64_t(op) & OpFieldMask)};
+  }
+
+  __host__ __device__ static constexpr OutputOffloadTask makeStore(int baseRowIdx, int nTokens, int mTileIdx) {
+    return make(OutputOffloadOp::Store, baseRowIdx, nTokens, mTileIdx);
+  }
+
+  __host__ __device__ static constexpr OutputOffloadTask makeNoop() { return make(OutputOffloadOp::Noop); }
+
+  __host__ __device__ static constexpr OutputOffloadTask makeStop() { return make(OutputOffloadOp::Stop); }
+
+  __host__ __device__ constexpr OutputOffloadOp op() const { return OutputOffloadOp(uint32_t(packed & OpFieldMask)); }
+
+  __host__ __device__ constexpr int nTokens() const { return int((packed >> NumTokensShift) & NumTokensFieldMask); }
+
+  __host__ __device__ constexpr int mTileIdx() const { return int((packed >> MTileIdxShift) & MTileIdxFieldMask); }
+
+  __host__ __device__ constexpr int baseRowIdx() const { return int(uint32_t(packed >> BaseRowIdxShift)); }
+};
+
+static_assert(sizeof(OutputOffloadTask) == sizeof(uint64_t));
+
 template <class Types>
 struct alignas(1024) W4A8SharedStorageT {
   // Routing finishes before GEMM uses these buffers; pipeline state and dispatch flags remain separate.
@@ -181,6 +249,7 @@ struct alignas(1024) W4A8SharedStorageT {
   cutlass::arch::ClusterBarrier tmemReady;
   EpilogueStorage<Types::EpilogueTokens> epilogue;
   W4DispatchStorageT<Types> dispatch;
+  OutputOffloadTask outputOffloadTask;
 };
 
 using W4A8SharedStorage = W4A8SharedStorageT<W4A8CollectiveTypes>;
