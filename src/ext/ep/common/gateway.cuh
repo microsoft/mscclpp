@@ -5,6 +5,7 @@
 
 #include <mscclpp/bulk_device.hpp>
 #include <mscclpp/gpu_data_types.hpp>
+#include <mscclpp/packet_device.hpp>
 
 #include "common/device_helpers.cuh"
 #include "config.hpp"
@@ -59,14 +60,15 @@ class Gateway {
   // Single-thread operations (Scope::Thread)
   // ---------------------------------------------------------------------------
 
-  template <Scope Mode = Scope::Thread>
-  MSCCLPP_DEVICE_INLINE void sendHeader(int queueIdx, void* dstHeader, const void* srcHeader, size_t headerBytes) {
+  // Post an unmediated RDMA write for self-validating packets (LL8Packet / LL16Packet) without qpSignals_.
+  template <Scope Mode = Scope::Thread, typename Packet>
+  MSCCLPP_DEVICE_INLINE void sendPacket(int queueIdx, Packet* dst, const Packet* src, size_t nPackets = 1) {
     static_assert(Mode == Scope::Thread);
+    static_assert(std::is_same_v<Packet, mscclpp::LL8Packet> || std::is_same_v<Packet, mscclpp::LL16Packet>);
     auto& channel = getChannel(queueIdx);
     constexpr auto kExclusive = PortChannelDeviceHandle::Concurrency::Exclusive;
-    channel.put<kExclusive, MaxQpsPerPeer>(transport_.symmetricOffset(dstHeader), transport_.symmetricOffset(srcHeader),
-                                           headerBytes, queueIdx);
-    resetFlushQueueFlag(queueIdx);
+    channel.put<kExclusive, MaxQpsPerPeer>(transport_.symmetricOffset(dst), transport_.symmetricOffset(src),
+                                           nPackets * sizeof(Packet), queueIdx);
   }
 
   // Stream ready chunk-aligned tokens starting at tokenIdx with step tokenStride up to nTokens on queueIdx.
@@ -76,15 +78,9 @@ class Gateway {
     EP_DEVICE_ASSERT(queueIdx >= 0 && tokenIdx >= 0 && tokenStride > 0 && nTokens >= 0);
     EP_DEVICE_ASSERT(tokenIdx % nTokensPerChunk_ == 0 && tokenStride % nTokensPerChunk_ == 0);
     auto& channel = getChannel(queueIdx);
-    constexpr auto kExclusive = PortChannelDeviceHandle::Concurrency::Exclusive;
     const uint64_t dstOffset = transport_.symmetricOffset(recvBuffer_);
     const uint64_t srcOffset = transport_.symmetricOffset(sendBuffer_);
     const uint64_t flagOffset = transport_.symmetricOffset(qpSignals_ + queueIdx);
-    if (requireFlushQueue(queueIdx, tokenIdx < nTokens)) {
-      // Drain prior-round SQ completions while producers/reducers prepare the first chunk.
-      channel.flush<kExclusive>(-1);
-    }
-    resetFlushQueueFlag(queueIdx);
     const int chunkStride = tokenStride / nTokensPerChunk_;
     for (int chunkIdx = tokenIdx / nTokensPerChunk_, tokenBegin = tokenIdx; tokenBegin < nTokens;
          chunkIdx += chunkStride, tokenBegin += tokenStride) {
@@ -333,12 +329,6 @@ class Gateway {
     return cachedChannel_;
   }
 
-  MSCCLPP_DEVICE_INLINE bool requireFlushQueue(int queueIdx, bool hasTokens) const {
-    return (flushQueueFlags_ & (1u << queueIdx)) != 0 && hasTokens;
-  }
-
-  MSCCLPP_DEVICE_INLINE void resetFlushQueueFlag(int queueIdx) { flushQueueFlags_ &= ~(1u << queueIdx); }
-
   MSCCLPP_DEVICE_INLINE void resetRecvSignals(int tid, int nThreads) const {
     const int nQps = transport_.portChannelCtx_->numQpsPerPeer;
     for (int queueIdx = tid; queueIdx < nQps; queueIdx += nThreads) {
@@ -372,7 +362,6 @@ class Gateway {
   int* chunkLoadReadySignals_;
   PortChannelDeviceHandle cachedChannel_{};
   int cachedQueueIdx_ = -1;
-  uint32_t flushQueueFlags_ = ~0u;
 };
 
 #endif  // defined(MSCCLPP_DEVICE_CUDA) && defined(USE_IBVERBS) && MSCCLPP_BULK_AVAILABLE

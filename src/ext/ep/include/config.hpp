@@ -91,10 +91,12 @@ struct alignas(BufferAlignmentBytes) InterDomainDispatchHeader {
   mscclpp::LL8Packet nRemoteTokens;
   mscclpp::LL8Packet nTokensPerRank[MaxNumRanks];
 
-  MSCCLPP_HOST_DEVICE_INLINE static constexpr size_t wireBytes(int nRanks) {
-    return static_cast<size_t>(1 + nRanks) * sizeof(mscclpp::LL8Packet);
-  }
+  MSCCLPP_HOST_DEVICE_INLINE mscclpp::LL8Packet* packets() { return &nRemoteTokens; }
+  MSCCLPP_HOST_DEVICE_INLINE const mscclpp::LL8Packet* packets() const { return &nRemoteTokens; }
+
+  MSCCLPP_HOST_DEVICE_INLINE static constexpr size_t nPackets(int nRanks) { return static_cast<size_t>(1 + nRanks); }
 };
+static_assert(offsetof(InterDomainDispatchHeader, nTokensPerRank) == sizeof(mscclpp::LL8Packet));
 
 struct HierarchicalDispatchScratch {
   int nRemoteTokens;

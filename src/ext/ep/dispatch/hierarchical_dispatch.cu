@@ -297,7 +297,8 @@ MSCCLPP_DEVICE_INLINE void dispatchControl(const int64_t* routes, const Workload
   if (warpIdx < nQps && laneIdx == 0) {
     const bool isControlQueue = warpIdx == HierarchicalDispatchControlQueueIdx;
     if (isControlQueue) {
-      gateway.sendHeader(warpIdx, &state->recvHeader, &state->sendHeader, InterDomainDispatchHeader::wireBytes(nRanks));
+      gateway.sendPacket(warpIdx, state->recvHeader.packets(), state->sendHeader.packets(),
+                         InterDomainDispatchHeader::nPackets(nRanks));
     }
     const int nTokensPerChunk = gateway.nTokensPerChunk();
     gateway.send(warpIdx, warpIdx * nTokensPerChunk, nQps * nTokensPerChunk, nRemoteTokens);

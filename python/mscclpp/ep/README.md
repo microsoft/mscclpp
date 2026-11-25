@@ -316,7 +316,7 @@ in the other domain:
 - **Control block (block 0).** Counts routes, writes a self-validating `LL8Packet`
   header (`nRemoteTokens` and per-rank counts), publishes local intra-domain counts and
   completion signals, and posts RDMA transfers. QP 0 sends the header
-  (`Gateway::sendHeader`), all QPs stream ready chunks (`Gateway::send`), and
+  (`Gateway::sendPacket`), all QPs stream ready chunks (`Gateway::send`), and
   QP 0 signals the peer (`Gateway::signalForwardComplete`) once local forwarding finishes.
 - **Forwarder blocks (`1 .. min((gridBlocks - 1) // 2, 16)`).** Read the peer
   header (forwarder 0 relays per-rank counts to intra-domain peers), wait for
