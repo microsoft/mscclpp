@@ -258,7 +258,7 @@ class CollectiveProgram:
         if self.replication_policy == ReplicationPolicy.interleaved:
             return lambda value, size, instance, num_instances: value * num_instances + instance * size
         else:
-            return lambda value, instance, num_instances: value
+            return lambda value, size, instance, num_instances: value
 
     def set_loop_context(self, loop_context):
         if self.loop_context is not None and loop_context is not None:
