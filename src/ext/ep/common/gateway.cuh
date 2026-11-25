@@ -74,15 +74,20 @@ class Gateway {
   }
 
   // Stream ready chunk-aligned tokens starting at tokenIdx with step tokenStride up to nTokens on queueIdx.
+  // When flushQueue is true, drain prior-round SQ completions before waiting for the first chunk.
   template <Scope Mode = Scope::Thread>
-  MSCCLPP_DEVICE_INLINE void send(int queueIdx, int tokenIdx, int tokenStride, int nTokens) {
+  MSCCLPP_DEVICE_INLINE void send(int queueIdx, int tokenIdx, int tokenStride, int nTokens, bool flushQueue = false) {
     static_assert(Mode == Scope::Thread);
     EP_DEVICE_ASSERT(queueIdx >= 0 && tokenIdx >= 0 && tokenStride > 0 && nTokens >= 0);
     EP_DEVICE_ASSERT(tokenIdx % nTokensPerChunk_ == 0 && tokenStride % nTokensPerChunk_ == 0);
     auto& channel = getChannel(queueIdx);
+    constexpr auto kExclusive = PortChannelDeviceHandle::Concurrency::Exclusive;
     const uint64_t dstOffset = transport_.symmetricOffset(recvBuffer_);
     const uint64_t srcOffset = transport_.symmetricOffset(sendBuffer_);
     const uint64_t flagOffset = transport_.symmetricOffset(qpSignals_ + queueIdx);
+    if (flushQueue && tokenIdx < nTokens) {
+      channel.flush<kExclusive>(-1);
+    }
     const int chunkStride = tokenStride / nTokensPerChunk_;
     for (int chunkIdx = tokenIdx / nTokensPerChunk_, tokenBegin = tokenIdx; tokenBegin < nTokens;
          chunkIdx += chunkStride, tokenBegin += tokenStride) {

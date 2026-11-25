@@ -443,7 +443,7 @@ __global__ __launch_bounds__(CombineNThreads, 1) void hierarchicalCombineKernel(
       const int nQps = transport.portChannelCtx_->numQpsPerPeer;
       if (queueIdx >= 0 && queueIdx < nQps && getLaneId() == 0) {
         gateway.send(queueIdx, queueIdx * gateway.nTokensPerChunk(), nQps * gateway.nTokensPerChunk(),
-                     *hierarchicalCtx.nIncomingTokens_);
+                     *hierarchicalCtx.nIncomingTokens_, /*flushQueue=*/true);
       }
       __syncthreads();
     } else {

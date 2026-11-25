@@ -301,7 +301,8 @@ MSCCLPP_DEVICE_INLINE void dispatchControl(const int64_t* routes, const Workload
                          InterDomainDispatchHeader::nPackets(nRanks));
     }
     const int nTokensPerChunk = gateway.nTokensPerChunk();
-    gateway.send(warpIdx, warpIdx * nTokensPerChunk, nQps * nTokensPerChunk, nRemoteTokens);
+    gateway.send(warpIdx, warpIdx * nTokensPerChunk, nQps * nTokensPerChunk, nRemoteTokens,
+                 /*flushQueue=*/!isControlQueue);
     if (isControlQueue) {
       gateway.waitForward();
       gateway.signalForwardComplete(warpIdx);
