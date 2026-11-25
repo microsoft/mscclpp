@@ -69,11 +69,10 @@ MSCCLPP_DEVICE_INLINE void runW4A8LoadRole(const KernelParams& params, Storage& 
   auto state = cutlass::make_producer_start_state<Load>();
   auto load1 = fc1.load_init(shape1, sharedStorage.tensors);
   auto load2 = fc2.load_init(shape2, sharedStorage.tensors);
-  const int fc1Tiles = fc1TaskTiles<KernelParams>(intermediate);
-  const int fc2Tiles = fc2TaskTiles<KernelParams>(hidden);
+  const auto scheduler = makeTaskScheduler<KernelParams>(nTokenTiles, nLocalExperts, hidden, intermediate);
   const int numClusters = gridDim.x / KernelParams::Tiles::ClusterSize;
   if (clusterIdx < nTasks) {
-    Task nextTask = taskAtFast(params, clusterIdx, nTokenTiles, nLocalExperts, fc1Tiles, fc2Tiles);
+    Task nextTask = scheduler.taskAt(params, clusterIdx);
     for (int i = clusterIdx; i < nTasks; i += numClusters) {
       Task task = nextTask;
       const bool hasNext = (i + numClusters) < nTasks;
@@ -129,32 +128,30 @@ MSCCLPP_DEVICE_INLINE void runW4A8LoadRole(const KernelParams& params, Storage& 
           if constexpr (Types::DispatchChunk >= 4096) {
             if (first == 0 && hasNext && count > 1) {
               loadTiles(0, 1);
-              nextTask = taskAtFast(params, i + numClusters, nTokenTiles, nLocalExperts, fc1Tiles, fc2Tiles);
+              nextTask = scheduler.taskAt(params, i + numClusters);
               loadTiles(1, count - 1);
             } else {
               loadTiles(first, count);
-              if (first == 0 && hasNext)
-                nextTask = taskAtFast(params, i + numClusters, nTokenTiles, nLocalExperts, fc1Tiles, fc2Tiles);
+              if (first == 0 && hasNext) nextTask = scheduler.taskAt(params, i + numClusters);
             }
           } else {
             loadTiles(first, count);
-            if (first == 0 && hasNext)
-              nextTask = taskAtFast(params, i + numClusters, nTokenTiles, nLocalExperts, fc1Tiles, fc2Tiles);
+            if (first == 0 && hasNext) nextTask = scheduler.taskAt(params, i + numClusters);
           }
         }
       } else {
         if constexpr (Types::DispatchChunk >= 4096) {
           if (hasNext && kTiles > 1) {
             loadTiles(0, 1);
-            nextTask = taskAtFast(params, i + numClusters, nTokenTiles, nLocalExperts, fc1Tiles, fc2Tiles);
+            nextTask = scheduler.taskAt(params, i + numClusters);
             loadTiles(1, kTiles - 1);
           } else {
             loadTiles(0, kTiles);
-            if (hasNext) nextTask = taskAtFast(params, i + numClusters, nTokenTiles, nLocalExperts, fc1Tiles, fc2Tiles);
+            if (hasNext) nextTask = scheduler.taskAt(params, i + numClusters);
           }
         } else {
           loadTiles(0, kTiles);
-          if (hasNext) nextTask = taskAtFast(params, i + numClusters, nTokenTiles, nLocalExperts, fc1Tiles, fc2Tiles);
+          if (hasNext) nextTask = scheduler.taskAt(params, i + numClusters);
         }
       }
       traceKernel(phase, false, i);

@@ -141,11 +141,10 @@ MSCCLPP_DEVICE_INLINE void runMmaRole(const KernelParams& params, Storage& share
     if constexpr (KernelParams::Activation == ActivationDtype::Fp8Static) {
       if (elect_one_sync()) copy(get<8>(mmaInputs), get<9>(mmaInputs)(_, _, _, _, 0), get<10>(mmaInputs));
     }
-    const int fc1Tiles = fc1TaskTiles<KernelParams>(intermediate);
-    const int fc2Tiles = fc2TaskTiles<KernelParams>(hidden);
+    const auto scheduler = makeTaskScheduler<KernelParams>(nTokenTiles, nLocalExperts, hidden, intermediate);
     const int numClusters = gridDim.x / KernelParams::Tiles::ClusterSize;
     if (clusterIdx < nTasks) {
-      Task nextTask = taskAtFast(params, clusterIdx, nTokenTiles, nLocalExperts, fc1Tiles, fc2Tiles);
+      Task nextTask = scheduler.taskAt(params, clusterIdx);
       for (int i = clusterIdx; i < nTasks; i += numClusters) {
         Task task = nextTask;
         const bool hasNext = (i + numClusters) < nTasks;
@@ -157,7 +156,7 @@ MSCCLPP_DEVICE_INLINE void runMmaRole(const KernelParams& params, Storage& share
         loadState = fc1.template mma<KernelParams::Activation>(
             make_tuple(loadPipeline, activationPipeline, accumulatePipeline), make_tuple(loadState, accumulateState),
             accumulator, mmaInputs, coord, kTiles, task.tokens.nTokens);
-        if (hasNext) nextTask = taskAtFast(params, i + numClusters, nTokenTiles, nLocalExperts, fc1Tiles, fc2Tiles);
+        if (hasNext) nextTask = scheduler.taskAt(params, i + numClusters);
         traceKernel(phase, false, i);
         accumulatePipeline.producer_commit(accumulateState);
         ++accumulateState;

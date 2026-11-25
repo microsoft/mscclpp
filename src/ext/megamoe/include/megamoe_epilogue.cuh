@@ -520,19 +520,17 @@ MSCCLPP_DEVICE_INLINE void runEpilogueRole(const KernelParams& params, Storage& 
   cutlass::arch::warpgroup_reg_alloc<KernelParams::Collective::EpilogueRegisters>();
   typename Accumulate::PipelineState state;
   const int nTokenTiles = taskTokenTiles(params, tokens);
-  const int localExperts = params.config.numExperts / params.config.worldSize;
-  const int fc1Tiles = fc1TaskTiles<KernelParams>(intermediate);
-  const int fc2Tiles = fc2TaskTiles<KernelParams>(hidden);
+  const int nLocalExperts = params.config.numExperts / params.config.worldSize;
+  const auto scheduler = makeTaskScheduler<KernelParams>(nTokenTiles, nLocalExperts, hidden, intermediate);
   const int numClusters = gridDim.x / KernelParams::Tiles::ClusterSize;
-  const bool interleaved = useInterleavedTasks<KernelParams>(nTokenTiles, localExperts);
+  const bool interleaved = scheduler.isInterleaved;
   constexpr bool OffloadOutput = UseOutputOffload<Schedule, LocalMode, KernelParams>;
   bool prevWasFc2 = false;
   if (cluster < tasks) {
-    Task nextTask = taskAtFast(params, cluster, nTokenTiles, localExperts, fc1Tiles, fc2Tiles, tokens);
+    Task nextTask = scheduler.taskAt(params, cluster, tokens);
     for (int i = cluster; i < tasks; i += numClusters) {
       Task task = nextTask;
-      if (i + numClusters < tasks)
-        nextTask = taskAtFast(params, i + numClusters, nTokenTiles, localExperts, fc1Tiles, fc2Tiles, tokens);
+      if (i + numClusters < tasks) nextTask = scheduler.taskAt(params, i + numClusters, tokens);
       if constexpr (OffloadOutput) {
         if (task.fc1 && interleaved && prevWasFc2) {
           cutlass::arch::NamedBarrier::sync(OutputOffloadThreads, OutputOffloadSlotEmptyBarrier);

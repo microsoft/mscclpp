@@ -8,120 +8,174 @@
 
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 
-template <class P>
+template <class KernelParams>
 MSCCLPP_DEVICE_INLINE int fc1TaskTiles(int intermediate) {
-  return 2 * intermediate / P::Tiles::M;
+  return 2 * intermediate / KernelParams::Tiles::M;
 }
 
-template <class P>
+template <class KernelParams>
 MSCCLPP_DEVICE_INLINE int fc2TaskTiles(int hidden) {
-  return (hidden + P::Tiles::M - 1) / P::Tiles::M;
+  return (hidden + KernelParams::Tiles::M - 1) / KernelParams::Tiles::M;
 }
 
-template <class P>
+template <class KernelParams>
 MSCCLPP_DEVICE_INLINE int fc1CompletionCount(int intermediate) {
-  return P::Tiles::ClusterSize * fc1TaskTiles<P>(intermediate);
+  return KernelParams::Tiles::ClusterSize * fc1TaskTiles<KernelParams>(intermediate);
 }
 
-template <class P>
-MSCCLPP_DEVICE_INLINE int taskTokenTiles(const P& p, int tokens) {
-  if constexpr (P::LocalExpert) return (tokens + P::Tiles::N - 1) / P::Tiles::N;
-  return p.workspace.control->nTokenTiles;
+template <class KernelParams>
+MSCCLPP_DEVICE_INLINE int taskTokenTiles(const KernelParams& params, int nTokens) {
+  if constexpr (KernelParams::LocalExpert) return (nTokens + KernelParams::Tiles::N - 1) / KernelParams::Tiles::N;
+  return params.workspace.control->nTokenTiles;
 }
 
-template <class P>
-MSCCLPP_DEVICE_INLINE TokenTile resolveTokenTile(const P& p, int& block, int& m, int tiles, int tokens) {
-  if constexpr (P::LocalExpert) {
-    return TokenTile::make(0, min(int(P::Tiles::N), tokens - block * P::Tiles::N));
+template <class KernelParams>
+MSCCLPP_DEVICE_INLINE TokenTile resolveTokenTile(const KernelParams& params, int& tileIdx, int& mTileIdx,
+                                                 int nLayerTiles, int nTokens) {
+  if constexpr (KernelParams::LocalExpert) {
+    return TokenTile::make(0, min(int(KernelParams::Tiles::N), nTokens - tileIdx * KernelParams::Tiles::N));
   }
-  TokenTile tokenTile = p.workspace.tokenTiles[block];
+  TokenTile tokenTile = params.workspace.tokenTiles[tileIdx];
   int shift = tokenTile.groupShift();
   if (shift > 0) {
-    int inGroup = int(tokenTile.tileIdxInGroup) * tiles + m;
-    block += (inGroup & ((1 << shift) - 1)) - int(tokenTile.tileIdxInGroup);
-    m = inGroup >> shift;
+    int inGroup = int(tokenTile.tileIdxInGroup) * nLayerTiles + mTileIdx;
+    tileIdx += (inGroup & ((1 << shift) - 1)) - int(tokenTile.tileIdxInGroup);
+    mTileIdx = inGroup >> shift;
   }
   return tokenTile;
 }
 
-template <class P>
-constexpr bool AllowLag = !P::LocalExpert && P::WeightMxfp4 && (P::Collective::DispatchWarps >= 4);
+struct ScheduledTaskCoord {
+  bool isFc1;
+  int tileIdx;
+  int mTileIdx;
+};
 
-constexpr int InterleaveBlockLag = 32;
+template <class Policy, class KernelParams>
+concept TaskSchedulePolicy =
+    requires(const KernelParams& params, int taskOrdinal, int nTokenTiles, int nFc1Tiles, int nFc2Tiles) {
+      requires std::is_same_v<decltype(Policy::mapOrdinal(params, taskOrdinal, nTokenTiles, nFc1Tiles, nFc2Tiles)),
+                              ScheduledTaskCoord>;
+    };
 
-template <class P>
-MSCCLPP_DEVICE_INLINE bool useInterleavedTasks(int nTokenTiles, int localExperts) {
-  return AllowLag<P> && (nTokenTiles > max(2 * localExperts, 2 * InterleaveBlockLag));
-}
-
-template <class P>
-MSCCLPP_DEVICE_INLINE Task taskAtFast(const P& p, int ordinal, int nTokenTiles, int localExperts, int fc1Tiles,
-                                      int fc2Tiles, int tokens = 0) {
-  bool fc1;
-  int block, m;
-  if constexpr (AllowLag<P>) {
-    if (useInterleavedTasks<P>(nTokenTiles, localExperts)) {
-      constexpr int Lag = InterleaveBlockLag;
-      const int prologue = Lag * fc1Tiles;
-      const int stepTasks = fc1Tiles + fc2Tiles;
-      const int steadySteps = nTokenTiles - Lag;
-      const int steadyEnd = prologue + steadySteps * stepTasks;
-      if (ordinal < prologue) {
-        fc1 = true;
-        p.fc1TaskDivisor(block, m, ordinal);
-      } else if (ordinal < steadyEnd) {
-        int rel = ordinal - prologue;
-        int s = rel / stepTasks;
-        int rem = rel - s * stepTasks;
-        if (rem < fc1Tiles) {
-          fc1 = true;
-          block = Lag + s;
-          m = rem;
-        } else {
-          fc1 = false;
-          block = s;
-          m = rem - fc1Tiles;
-        }
-      } else {
-        fc1 = false;
-        int rel = ordinal - steadyEnd;
-        int tailBlock;
-        p.fc2TaskDivisor(tailBlock, m, rel);
-        block = steadySteps + tailBlock;
-      }
-      int tiles = fc1 ? fc1Tiles : fc2Tiles;
-      TokenTile tokenTile = resolveTokenTile(p, block, m, tiles, tokens);
-      return Task{fc1, block, m, tokenTile};
-    }
+// Executes all FC1 tasks across every token tile before starting FC2 tasks.
+struct SequentialTaskSchedulePolicy {
+  template <class KernelParams>
+  MSCCLPP_DEVICE_INLINE static ScheduledTaskCoord mapOrdinal(const KernelParams& params, int taskOrdinal,
+                                                             int nTokenTiles, int nFc1Tiles, int /*nFc2Tiles*/) {
+    const int nFc1Tasks = nTokenTiles * nFc1Tiles;
+    const bool isFc1 = taskOrdinal < nFc1Tasks;
+    const int layerOrdinal = isFc1 ? taskOrdinal : (taskOrdinal - nFc1Tasks);
+    int tileIdx = 0;
+    int mTileIdx = 0;
+    (isFc1 ? params.fc1TaskDivisor : params.fc2TaskDivisor)(tileIdx, mTileIdx, layerOrdinal);
+    return ScheduledTaskCoord{isFc1, tileIdx, mTileIdx};
   }
-  int fc1Tasks = nTokenTiles * fc1Tiles;
-  fc1 = ordinal < fc1Tasks;
-  int local = fc1 ? ordinal : ordinal - fc1Tasks;
-  int tiles = fc1 ? fc1Tiles : fc2Tiles;
-  (fc1 ? p.fc1TaskDivisor : p.fc2TaskDivisor)(block, m, local);
-  TokenTile tokenTile = resolveTokenTile(p, block, m, tiles, tokens);
-  return Task{fc1, block, m, tokenTile};
+};
+
+constexpr int DefaultInterleaveTileLag = 32;
+
+// Overlaps outbound FC2 stores of tile `s` with FC1 compute of tile `s + TileLag` after a `TileLag`-tile FC1 prologue.
+template <int TileLag = DefaultInterleaveTileLag>
+struct LaggedInterleavedTaskSchedulePolicy {
+  static_assert(TileLag > 0);
+
+  template <class KernelParams>
+  MSCCLPP_DEVICE_INLINE static ScheduledTaskCoord mapOrdinal(const KernelParams& params, int taskOrdinal,
+                                                             int nTokenTiles, int nFc1Tiles, int nFc2Tiles) {
+    const int prologueTasks = TileLag * nFc1Tiles;
+    const int tasksPerStep = nFc1Tiles + nFc2Tiles;
+    const int nSteadySteps = nTokenTiles - TileLag;
+    const int steadyEndOrdinal = prologueTasks + nSteadySteps * tasksPerStep;
+
+    if (taskOrdinal < prologueTasks) {
+      int tileIdx = 0;
+      int mTileIdx = 0;
+      params.fc1TaskDivisor(tileIdx, mTileIdx, taskOrdinal);
+      return ScheduledTaskCoord{true, tileIdx, mTileIdx};
+    }
+    if (taskOrdinal < steadyEndOrdinal) {
+      const int steadyOffset = taskOrdinal - prologueTasks;
+      const int stepIdx = steadyOffset / tasksPerStep;
+      const int stepRem = steadyOffset - stepIdx * tasksPerStep;
+      if (stepRem < nFc1Tiles) {
+        return ScheduledTaskCoord{true, TileLag + stepIdx, stepRem};
+      }
+      return ScheduledTaskCoord{false, stepIdx, stepRem - nFc1Tiles};
+    }
+    const int tailOrdinal = taskOrdinal - steadyEndOrdinal;
+    int tailTileOffset = 0;
+    int mTileIdx = 0;
+    params.fc2TaskDivisor(tailTileOffset, mTileIdx, tailOrdinal);
+    return ScheduledTaskCoord{false, nSteadySteps + tailTileOffset, mTileIdx};
+  }
+};
+
+template <class Policy, class KernelParams>
+  requires TaskSchedulePolicy<Policy, KernelParams>
+MSCCLPP_DEVICE_INLINE Task resolveScheduledTask(const KernelParams& params, int taskOrdinal, int nTokenTiles,
+                                                int nFc1Tiles, int nFc2Tiles, int nTokens = 0) {
+  ScheduledTaskCoord coord = Policy::mapOrdinal(params, taskOrdinal, nTokenTiles, nFc1Tiles, nFc2Tiles);
+  const int nLayerTiles = coord.isFc1 ? nFc1Tiles : nFc2Tiles;
+  TokenTile tokenTile = resolveTokenTile(params, coord.tileIdx, coord.mTileIdx, nLayerTiles, nTokens);
+  return Task{coord.isFc1, coord.tileIdx, coord.mTileIdx, tokenTile};
 }
 
-template <class P>
-__device__ Task taskAt(const P& p, int ordinal, int hidden, int intermediate, int tokens = 0) {
-  int fc1Tiles = fc1TaskTiles<P>(intermediate);
-  int fc2Tiles = fc2TaskTiles<P>(hidden);
-  int nTokenTiles = taskTokenTiles(p, tokens);
-  int localExperts = p.config.numExperts / p.config.worldSize;
-  return taskAtFast(p, ordinal, nTokenTiles, localExperts, fc1Tiles, fc2Tiles, tokens);
+template <class KernelParams>
+constexpr bool SupportsInterleavedSchedule =
+    !KernelParams::LocalExpert && KernelParams::WeightMxfp4 && (KernelParams::Collective::DispatchWarps >= 4);
+
+template <class KernelParams>
+MSCCLPP_DEVICE_INLINE bool shouldInterleaveTasks(int nTokenTiles, int nLocalExperts) {
+  return SupportsInterleavedSchedule<KernelParams> &&
+         (nTokenTiles > max(2 * nLocalExperts, 2 * DefaultInterleaveTileLag));
 }
 
-template <class P>
-MSCCLPP_DEVICE_INLINE int taskKTiles(const P&, const Task& task, int hidden, int intermediate) {
-  constexpr int KernelTileK = P::Tiles::K;
+struct TaskScheduler {
+  int nTokenTiles;
+  int nFc1Tiles;
+  int nFc2Tiles;
+  bool isInterleaved;
+
+  template <class KernelParams>
+  MSCCLPP_DEVICE_INLINE Task taskAt(const KernelParams& params, int taskOrdinal, int nTokens = 0) const {
+    if constexpr (SupportsInterleavedSchedule<KernelParams>) {
+      if (isInterleaved) {
+        return resolveScheduledTask<LaggedInterleavedTaskSchedulePolicy<>>(params, taskOrdinal, nTokenTiles, nFc1Tiles,
+                                                                           nFc2Tiles, nTokens);
+      }
+    }
+    return resolveScheduledTask<SequentialTaskSchedulePolicy>(params, taskOrdinal, nTokenTiles, nFc1Tiles, nFc2Tiles,
+                                                              nTokens);
+  }
+};
+
+template <class KernelParams>
+MSCCLPP_DEVICE_INLINE TaskScheduler makeTaskScheduler(int nTokenTiles, int nLocalExperts, int hidden,
+                                                      int intermediate) {
+  return TaskScheduler{nTokenTiles, fc1TaskTiles<KernelParams>(intermediate), fc2TaskTiles<KernelParams>(hidden),
+                       shouldInterleaveTasks<KernelParams>(nTokenTiles, nLocalExperts)};
+}
+
+template <class KernelParams>
+__device__ Task taskAt(const KernelParams& params, int taskOrdinal, int hidden, int intermediate, int nTokens = 0) {
+  const int nTokenTiles = taskTokenTiles(params, nTokens);
+  const int nLocalExperts = params.config.numExperts / params.config.worldSize;
+  return makeTaskScheduler<KernelParams>(nTokenTiles, nLocalExperts, hidden, intermediate)
+      .taskAt(params, taskOrdinal, nTokens);
+}
+
+template <class KernelParams>
+MSCCLPP_DEVICE_INLINE int taskKTiles(const KernelParams&, const Task& task, int hidden, int intermediate) {
+  constexpr int KernelTileK = KernelParams::Tiles::K;
   return ((task.fc1 ? hidden : intermediate) + KernelTileK - 1) / KernelTileK;
 }
 
-template <class P>
-MSCCLPP_DEVICE_INLINE auto taskCoord(const P&, const Task& task, int cta) {
-  constexpr int BlockStride = P::Tiles::TokenStride / P::Tiles::N;
-  return cute::make_coord(task.m * P::Tiles::ClusterSize + cta, task.block * BlockStride, 0, task.tokens.expertIdx);
+template <class KernelParams>
+MSCCLPP_DEVICE_INLINE auto taskCoord(const KernelParams&, const Task& task, int ctaIdx) {
+  constexpr int BlockStride = KernelParams::Tiles::TokenStride / KernelParams::Tiles::N;
+  return cute::make_coord(task.m * KernelParams::Tiles::ClusterSize + ctaIdx, task.block * BlockStride, 0,
+                          task.tokens.expertIdx);
 }
 
 }  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail
