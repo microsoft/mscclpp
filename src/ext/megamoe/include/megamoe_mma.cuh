@@ -24,15 +24,49 @@ MSCCLPP_DEVICE_INLINE Pipeline makeAccumulatorPipeline(typename Pipeline::Shared
   return Pipeline(storage, params, ClusterShape{}, cute::true_type{}, cute::false_type{});
 }
 
+MSCCLPP_DEVICE_INLINE void issueW8A16Mma(uint32_t destination, uint32_t weightAddress, uint64_t activationDescriptor,
+                                         uint32_t instruction, uint32_t accumulate) {
+  asm volatile(
+      "{ .reg .pred p; setp.ne.b32 p, %4, 0;"
+      "tcgen05.mma.cta_group::2.kind::f16 [%0], [%1], %2, %3,"
+      "{%5,%5,%5,%5,%5,%5,%5,%5}, p; }"
+      :
+      : "r"(destination), "r"(weightAddress), "l"(activationDescriptor), "r"(instruction), "r"(accumulate),
+        "r"(uint32_t(0)));
+}
+
+template <int ClusterSize>
+MSCCLPP_DEVICE_INLINE void issueW4A8BlockScaledMma(uint32_t destination, uint64_t descriptorA, uint64_t descriptorB,
+                                                   uint32_t instruction, uint32_t scaleA, uint32_t scaleB,
+                                                   uint32_t accumulate) {
+  static_assert(ClusterSize == 1 || ClusterSize == 2);
+  if constexpr (ClusterSize == 1) {
+    asm volatile(
+        "{ .reg .pred p; setp.ne.b32 p, %6, 0;"
+        "tcgen05.mma.cta_group::1.kind::mxf8f6f4.block_scale [%0], %1, %2, %3, [%4], [%5], p; }"
+        :
+        : "r"(destination), "l"(descriptorA), "l"(descriptorB), "r"(instruction), "r"(scaleA), "r"(scaleB),
+          "r"(accumulate));
+  } else {
+    asm volatile(
+        "{ .reg .pred p; setp.ne.b32 p, %6, 0;"
+        "tcgen05.mma.cta_group::2.kind::mxf8f6f4.block_scale [%0], %1, %2, %3, [%4], [%5], p; }"
+        :
+        : "r"(destination), "l"(descriptorA), "l"(descriptorB), "r"(instruction), "r"(scaleA), "r"(scaleB),
+          "r"(accumulate));
+  }
+}
+
 template <bool Local = false, class FrgEngine, class FrgLayout, class TensorA, class TensorB>
-MSCCLPP_DEVICE_INLINE auto mmaTiles(typename W8A16CollectiveTypesT<Local>::LoadB loadPipeline,
-                                    typename W8A16CollectiveTypesT<Local>::LoadB::PipelineState loadState,
-                                    typename W8A16CollectiveTypesT<Local>::Transform transformPipeline,
-                                    typename W8A16CollectiveTypesT<Local>::Transform::PipelineState transformState,
-                                    typename W8A16CollectiveTypesT<Local>::Accumulate accumulatePipeline,
-                                    typename W8A16CollectiveTypesT<Local>::Accumulate::PipelineState accumulateState,
-                                    const cute::Tensor<FrgEngine, FrgLayout>& accumulators,
-                                    const cute::tuple<TensorA, TensorB>& operands, int kTiles, int validRows) {
+MSCCLPP_DEVICE_INLINE auto mmaW8A16Tiles(
+    typename W8A16CollectiveTypesT<Local>::LoadB loadPipeline,
+    typename W8A16CollectiveTypesT<Local>::LoadB::PipelineState loadState,
+    typename W8A16CollectiveTypesT<Local>::Transform transformPipeline,
+    typename W8A16CollectiveTypesT<Local>::Transform::PipelineState transformState,
+    typename W8A16CollectiveTypesT<Local>::Accumulate accumulatePipeline,
+    typename W8A16CollectiveTypesT<Local>::Accumulate::PipelineState accumulateState,
+    const cute::Tensor<FrgEngine, FrgLayout>& accumulators, const cute::tuple<TensorA, TensorB>& operands, int kTiles,
+    int validRows) {
   using namespace cute;
   using TiledMma = typename W8A16CollectiveTypesT<Local>::Mainloop::TiledMma;
   TiledMma tiledMma;
@@ -69,16 +103,8 @@ MSCCLPP_DEVICE_INLINE auto mmaTiles(typename W8A16CollectiveTypesT<Local>::LoadB
       for (int k = 0; k < size<2>(weights); ++k) {
         auto weight = a(_, _, k);
         auto activation = b(_, _, k);
-        uint32_t weightAddress = raw_pointer_cast(weight.data());
-        uint64_t activationDescriptor = activation(0);
-        uint32_t accumulate = k == 0 ? uint32_t(tiledMma.accumulate_) : 1;
-        asm volatile(
-            "{ .reg .pred p; setp.ne.b32 p, %4, 0;"
-            "tcgen05.mma.cta_group::2.kind::f16 [%0], [%1], %2, %3,"
-            "{%5,%5,%5,%5,%5,%5,%5,%5}, p; }"
-            :
-            : "r"(destination), "r"(weightAddress), "l"(activationDescriptor), "r"(instruction), "r"(accumulate),
-              "r"(uint32_t(0)));
+        issueW8A16Mma(destination, raw_pointer_cast(weight.data()), activation(0), instruction,
+                      k == 0 ? uint32_t(tiledMma.accumulate_) : 1u);
       }
     }
     tiledMma.accumulate_ = UMMA::ScaleOut::One;
@@ -96,6 +122,83 @@ MSCCLPP_DEVICE_INLINE auto mmaTiles(typename W8A16CollectiveTypesT<Local>::LoadB
   return make_tuple(currentLoad, currentTransform, accumulateState);
 }
 
+template <int ClusterSize, bool SplitPipelines, ActivationDtype ActDtype, class LoadPipeline, class LoadState,
+          class AccumulatePipeline, class AccumulateState, class Accumulators, class MmaInputs>
+MSCCLPP_DEVICE_INLINE LoadState mmaW4A8Tiles(LoadPipeline& loadPipe, LoadPipeline& activationPipe, LoadState loadState,
+                                             AccumulatePipeline& accPipe, AccumulateState accState,
+                                             Accumulators accumulators, const MmaInputs& inputs, int kTiles,
+                                             int validRows) {
+  using namespace cute;
+  auto [tiled, a, b, sfa, sfb, copyA, sourceA, targetA, copyB, sourceB, targetB] = inputs;
+  tiled.idesc_.n_dim_ = ((validRows + 15) / 16 * 16) >> 3;
+  traceKernel(KernelTracePhase::AccumulatorFree, true, accState.index());
+  accPipe.producer_acquire(accState);
+  traceKernel(KernelTracePhase::AccumulatorFree, false, accState.index());
+  tiled.accumulate_ = UMMA::ScaleOut::Zero;
+  uint64_t waitNs = 0;
+  uint64_t activationWaitNs = 0;
+  uint64_t issueNs = 0;
+  uint64_t releaseNs = 0;
+  uint32_t weightReady = 0;
+  uint32_t activationReady = 0;
+  const int iterations = kTiles;
+  // Elect once for the entire K-tile loop while keeping pipeline waits/releases warp-wide.
+  const bool issuer = elect_one_sync();
+  const uint32_t destination = raw_pointer_cast(get<0>(accumulators).data());
+  for (; kTiles > 0; --kTiles) {
+#if MSCCLPP_MEGAMOE_TRACE == 1
+    // Nonblocking probes sample both operands before either blocking wait.
+    weightReady +=
+        cutlass::arch::ClusterBarrier::test_wait(loadPipe.producer_get_barrier(loadState), loadState.phase(), 1);
+    if constexpr (SplitPipelines)
+      activationReady += cutlass::arch::ClusterBarrier::test_wait(activationPipe.producer_get_barrier(loadState),
+                                                                  loadState.phase(), 1);
+#endif
+    auto start = traceKernelClock();
+    loadPipe.consumer_wait(loadState);
+    waitNs += traceKernelClock() - start;
+    if constexpr (SplitPipelines) {
+      start = traceKernelClock();
+      activationPipe.consumer_wait(loadState);
+      activationWaitNs += traceKernelClock() - start;
+    }
+    int stage = loadState.index();
+    start = traceKernelClock();
+    if (issuer) {
+      copy(copyA, sourceA(_, _, _, _, stage), targetA);
+      if constexpr (ActDtype == ActivationDtype::Mxfp8) copy(copyB, sourceB(_, _, _, _, stage), targetB);
+#pragma unroll
+      for (int k = 0; k < size<2>(a); ++k) {
+        uint32_t scaleA = raw_pointer_cast(sfa(_, _, k).data());
+        uint32_t scaleB = raw_pointer_cast(sfb(_, _, k).data());
+        uint32_t instruction =
+            uint32_t(UMMA::make_runtime_instr_desc_block_scaled<>(tiled.idesc_, scaleA, scaleB) >> 32);
+        issueW4A8BlockScaledMma<ClusterSize>(destination, a(_, _, k, stage)(0), b(_, _, k, stage)(0), instruction,
+                                             scaleA, scaleB, k == 0 ? uint32_t(tiled.accumulate_) : 1u);
+      }
+    }
+    tiled.accumulate_ = UMMA::ScaleOut::One;
+    issueNs += traceKernelClock() - start;
+    start = traceKernelClock();
+    loadPipe.consumer_release(loadState);
+    if constexpr (SplitPipelines) activationPipe.consumer_release(loadState);
+    releaseNs += traceKernelClock() - start;
+    ++loadState;
+  }
+  if constexpr (SplitPipelines) {
+    traceKernelTotal(KernelTracePhase::MmaWeightWait, waitNs, iterations);
+    traceKernelTotal(KernelTracePhase::MmaActivationWait, activationWaitNs, iterations);
+    traceKernelCount(KernelTracePhase::WeightReadyAtEntry, weightReady, iterations);
+    traceKernelCount(KernelTracePhase::ActivationReadyAtEntry, activationReady, iterations);
+  } else {
+    traceKernelTotal(KernelTracePhase::MmaInputWait, waitNs, iterations);
+    traceKernelCount(KernelTracePhase::InputReadyAtEntry, weightReady, iterations);
+  }
+  traceKernelTotal(KernelTracePhase::MmaIssue, issueNs, iterations);
+  traceKernelTotal(KernelTracePhase::StageRelease, releaseNs, iterations);
+  return loadState;
+}
+
 template <bool Local, class Schedule, class KernelParams, class Storage, class LoadB, class Transform, class Accumulate,
           class Mainloop, class Accumulators>
 MSCCLPP_DEVICE_INLINE void runW8A16MmaRole(const KernelParams& params, int nTokens, Storage& sharedStorage,
@@ -111,8 +214,8 @@ MSCCLPP_DEVICE_INLINE void runW8A16MmaRole(const KernelParams& params, int nToke
       Task task = taskAt(params, i, hidden, intermediate, nTokens);
       auto phase = task.fc1 ? KernelTracePhase::MmaFc1 : KernelTracePhase::MmaFc2;
       traceKernel(phase, true, i);
-      auto result = mmaTiles<Local>(bPipeline, bState, tPipeline, tState, cPipeline, cState, accumulators, inputs,
-                                    taskKTiles(params, task, hidden, intermediate), task.tokens.nTokens);
+      auto result = mmaW8A16Tiles<Local>(bPipeline, bState, tPipeline, tState, cPipeline, cState, accumulators, inputs,
+                                         taskKTiles(params, task, hidden, intermediate), task.tokens.nTokens);
       traceKernel(phase, false, i);
       bState = cute::get<0>(result);
       tState = cute::get<1>(result);
@@ -131,16 +234,20 @@ MSCCLPP_DEVICE_INLINE void runMmaRole(const KernelParams& params, Storage& share
                                       int hidden, int intermediate, int warpIdx, int ctaIdx, int clusterIdx, int nTasks,
                                       int nTokenTiles, int nLocalExperts) {
   using namespace cute;
-  using Mainloop = typename KernelParams::Collective::Mainloop;
-  using Load = typename KernelParams::Collective::Load;
-  using Accumulate = typename KernelParams::Collective::Accumulate;
-  using Schedule = typename KernelParams::Collective::WarpSchedule;
+  using Types = typename KernelParams::Collective;
+  using Mainloop = typename Types::Mainloop;
+  using Load = typename Types::Load;
+  using Accumulate = typename Types::Accumulate;
+  using Schedule = typename Types::WarpSchedule;
   if (warpIdx == Schedule::MmaWarp && ctaIdx == 0) {
+    (void)ctaIdx;
     typename Load::PipelineState loadState;
     auto accumulateState = cutlass::make_producer_start_state<Accumulate>();
     auto mmaInputs = fc1.mma_init(tmemStorage, sharedStorage.tensors);
     if constexpr (KernelParams::Activation == ActivationDtype::Fp8Static) {
-      if (elect_one_sync()) copy(get<8>(mmaInputs), get<9>(mmaInputs)(_, _, _, _, 0), get<10>(mmaInputs));
+      if (elect_one_sync()) {
+        copy(mmaInputs.tiled_copy_s2t_SFB, mmaInputs.thr_tCsSFB_s2t(_, _, _, _, 0), mmaInputs.thr_tCtSFB_s2t);
+      }
     }
     const auto scheduler = makeTaskScheduler<KernelParams>(nTokenTiles, nLocalExperts, hidden, intermediate);
     const int numClusters = gridDim.x / KernelParams::Tiles::ClusterSize;
@@ -149,14 +256,13 @@ MSCCLPP_DEVICE_INLINE void runMmaRole(const KernelParams& params, Storage& share
       for (int i = clusterIdx; i < nTasks; i += numClusters) {
         Task task = nextTask;
         const bool hasNext = (i + numClusters) < nTasks;
-        auto coord = taskCoord(params, task, ctaIdx);
         int kTiles = taskKTiles(params, task, hidden, intermediate);
         auto accumulator = Mainloop::slice_accumulator(tmemStorage, accumulateState.index());
         auto phase = task.fc1 ? KernelTracePhase::MmaFc1 : KernelTracePhase::MmaFc2;
         traceKernel(phase, true, i);
-        loadState = fc1.template mma<KernelParams::Activation>(
-            make_tuple(loadPipeline, activationPipeline, accumulatePipeline), make_tuple(loadState, accumulateState),
-            accumulator, mmaInputs, coord, kTiles, task.tokens.nTokens);
+        loadState = mmaW4A8Tiles<KernelParams::Tiles::ClusterSize, Types::SplitPipelines, KernelParams::Activation>(
+            loadPipeline, activationPipeline, loadState, accumulatePipeline, accumulateState, accumulator, mmaInputs,
+            kTiles, task.tokens.nTokens);
         if (hasNext) nextTask = scheduler.taskAt(params, i + numClusters);
         traceKernel(phase, false, i);
         accumulatePipeline.producer_commit(accumulateState);

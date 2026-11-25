@@ -98,7 +98,15 @@ struct W4A8CollectiveTypesT {
       cutlass::arch::Sm100, cutlass::arch::OpClassBlockScaledTensorOp, Weight, cutlass::layout::RowMajor, 128,
       Activation, cutlass::layout::ColumnMajor, 16, float, W4TileShape, ClusterShape,
       cutlass::gemm::collective::StageCount<LoadStages_>, KernelSchedule>::CollectiveOp;
-  using Mainloop = W4A8Mainloop<Builder, TileN_, TileK_, LoadStages_, SplitPipelines, W4ClusterSize>;
+  using Policy = cutlass::gemm::MainloopSm100TmaUmmaWarpSpecializedBlockScaled<LoadStages_, 2, 3, ClusterShape,
+                                                                               cutlass::arch::Sm100>;
+  using CollectiveBase = cutlass::gemm::collective::CollectiveMma<
+      Policy, W4TileShape, typename Builder::ElementPairA, typename Builder::StridePairA,
+      typename Builder::ElementPairB, typename Builder::StridePairB, typename Builder::TiledMma,
+      typename Builder::GmemTiledCopyPairA, typename Builder::SmemLayoutAtomPairA, typename Builder::SmemCopyAtomA,
+      typename Builder::TransformA, typename Builder::GmemTiledCopyPairB, typename Builder::SmemLayoutAtomPairB,
+      typename Builder::SmemCopyAtomB, typename Builder::TransformB>;
+  using Mainloop = W4A8Mainloop<CollectiveBase, TileN_, TileK_, LoadStages_, SplitPipelines, W4ClusterSize>;
   using Load = typename Mainloop::MainloopPipeline;
   using Accumulate = cutlass::PipelineUmmaAsync<3, typename Mainloop::AtomThrShapeMNK>;
   using ScaleConfig = typename Mainloop::Sm1xxBlkScaledConfig;
