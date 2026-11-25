@@ -56,7 +56,8 @@ MSCCLPP_DEVICE_INLINE W8A16Pipelines<Local> initW8A16PipelinesAndStorage(Storage
                      ? LoadB::ThreadCategory::Producer
                      : (threadLoc.warpIdx == Schedule::MmaWarp ? LoadB::ThreadCategory::Consumer
                                                                : LoadB::ThreadCategory::NonParticipant);
-  bParams.is_leader = threadLoc.laneIdx == 0 && threadLoc.ctaIdx == 0 && threadLoc.warpIdx == Schedule::LoadBWarp;
+  // W8A16Mainloop::load_B sets exact sub-tile transaction bytes per K-tile.
+  bParams.is_leader = false;
   bParams.num_consumers = WARP_SIZE;
   bParams.transaction_bytes = Mainloop::TmaTransactionBytes_B;
   bParams.initializing_warp = Schedule::LoadBWarp;
@@ -106,6 +107,19 @@ MSCCLPP_DEVICE_INLINE int runW8A16RoutingStage(const KernelParams& params, int n
   }
 }
 
+template <int BlockSize, class ScaleLayout>
+constexpr bool hasUniformScaleBlocks(ScaleLayout layout) {
+  constexpr int Total = decltype(cute::size(layout))::value;
+  if (Total % BlockSize != 0) return false;
+  for (int block = 0; block < Total / BlockSize; ++block) {
+    const auto baseOffset = layout(block * BlockSize);
+    for (int i = 1; i < BlockSize; ++i) {
+      if (layout(block * BlockSize + i) != baseOffset) return false;
+    }
+  }
+  return true;
+}
+
 template <bool Local = false, class Inputs>
 MSCCLPP_DEVICE_INLINE void transformWeights(
     typename W8A16CollectiveTypesT<Local>::LoadA& load,
@@ -114,35 +128,47 @@ MSCCLPP_DEVICE_INLINE void transformWeights(
     typename W8A16CollectiveTypesT<Local>::Transform::PipelineState& transformState, Inputs& inputs, int kTiles) {
   using namespace cute;
   using Types = W8A16CollectiveTypesT<Local>;
-  using Mainloop = typename Types::Mainloop;
-  using Utils = cutlass::gemm::collective::detail::MixedInputUtils<Mainloop>;
   auto copyOp = get<1>(inputs);
   auto& raw = get<2>(inputs);
   auto& converted = get<3>(inputs);
   auto& scaleInputs = get<4>(inputs);
+  auto& smemScales = get<2>(scaleInputs);
   auto rRaw = make_tensor<typename Types::Weight>(shape(raw(_, _, _, _, 0)));
   auto rConverted = make_tensor<typename Types::Activation>(shape(rRaw));
   auto packedRaw = recast<uint16_t>(rRaw);
   auto packedConverted = recast<uint32_t>(rConverted);
-  auto scaleBytes = recast<uint8_t>(get<1>(scaleInputs));
-  static_assert(size(rRaw) == size(scaleBytes));
+  constexpr int NumElements = decltype(size(rRaw))::value;
+  constexpr int NumScaleBlocks = NumElements / MxfpScaleBlockSize;
+  constexpr int PairsPerScaleBlock = MxfpScaleBlockSize / 2;
+  static_assert(NumElements == NumScaleBlocks * MxfpScaleBlockSize);
+  using ScaleStageLayout = decltype(smemScales(_, _, _, _, _0{}).layout());
+  static_assert(hasUniformScaleBlocks<MxfpScaleBlockSize>(ScaleStageLayout{}));
   cutlass::arch::NamedBarrier copyBarrier(128, cutlass::arch::ReservedNamedBarriers::TransformBarrier);
 
+  CUTLASS_PRAGMA_NO_UNROLL
   for (int k = 0; k < kTiles; ++k) {
     load.consumer_wait(loadState);
     transformed.producer_acquire(transformState);
     copy(AutoVectorizingCopy{}, raw(_, _, _, _, loadState.index()), rRaw);
-    Utils::copy_scale_zeros_for_transform(scaleInputs, loadState.index());
+    auto stageScales = smemScales(_, _, _, _, loadState.index());
+    uint8_t blockScales[NumScaleBlocks];
+#pragma unroll
+    for (int b = 0; b < NumScaleBlocks; ++b) {
+      blockScales[b] = mscclpp::bit_cast<uint8_t>(stageScales(b * MxfpScaleBlockSize));
+    }
     copyBarrier.sync();
     load.consumer_release(loadState);
     ++loadState;
 
-    // Keep E8M0 in its byte representation: the stock mixed-input helper only
-    // multiplies scales when their element type already matches the MMA type.
+    // Each K32 block shares one E8M0 scale byte; expand once per block and reuse across all 16 BF16 pairs.
 #pragma unroll
-    for (int i = 0; i < size(packedConverted); ++i) {
-      uint16_t scales = uint16_t(scaleBytes(2 * i)) | (uint16_t(scaleBytes(2 * i + 1)) << 8);
-      packedConverted(i) = decodeScaledPair(packedRaw(i), scales);
+    for (int b = 0; b < NumScaleBlocks; ++b) {
+      const uint32_t expandedScale = expandE8M0ScalePair(blockScales[b]);
+#pragma unroll
+      for (int j = 0; j < PairsPerScaleBlock; ++j) {
+        const int pairIdx = b * PairsPerScaleBlock + j;
+        packedConverted(pairIdx) = decodeScaledPairWithExpandedScale(packedRaw(pairIdx), expandedScale);
+      }
     }
     copy(copyOp, rConverted, converted(_, _, _, _, transformState.index()));
     cutlass::arch::fence_view_async_tmem_store();
@@ -156,18 +182,26 @@ template <bool Local, class KernelParams, class Storage, class LoadA, class Tran
 MSCCLPP_DEVICE_INLINE void runW8A16TransformRole(const KernelParams& params, int nTokens, Storage& sharedStorage,
                                                  LoadA& loadPipeline, Transform& transformPipeline, Mainloop& fc1,
                                                  const ProblemShape& shape1, Accumulators accumulators, int hidden,
-                                                 int intermediate, int clusterIdx, int nTasks) {
-  cutlass::arch::warpgroup_reg_alloc<KernelParams::Collective::EpilogueRegisters>();
+                                                 int intermediate, int clusterIdx, int nTasks, int nTokenTiles,
+                                                 int nLocalExperts) {
+  cutlass::arch::warpgroup_reg_alloc<KernelParams::Collective::TransformRegisters>();
   typename LoadA::PipelineState loadState;
   auto transformState = cutlass::make_producer_start_state<Transform>();
   auto inputs = fc1.transform_init(params.fc1, shape1, accumulators, sharedStorage.tensors);
-  for (int i = clusterIdx; i < nTasks; i += gridDim.x / KernelParams::Tiles::ClusterSize) {
-    Task task = taskAt(params, i, hidden, intermediate, nTokens);
-    auto phase = task.fc1 ? KernelTracePhase::TransformFc1 : KernelTracePhase::TransformFc2;
-    traceKernel(phase, true, i);
-    transformWeights<Local>(loadPipeline, loadState, transformPipeline, transformState, inputs,
-                            taskKTiles(params, task, hidden, intermediate));
-    traceKernel(phase, false, i);
+  const auto scheduler = makeTaskScheduler<KernelParams>(nTokenTiles, nLocalExperts, hidden, intermediate);
+  const int numClusters = gridDim.x / KernelParams::Tiles::ClusterSize;
+  if (clusterIdx < nTasks) {
+    Task nextTask = scheduler.taskAt(params, clusterIdx, nTokens);
+    for (int i = clusterIdx; i < nTasks; i += numClusters) {
+      Task task = nextTask;
+      const bool hasNext = (i + numClusters) < nTasks;
+      auto phase = task.fc1 ? KernelTracePhase::TransformFc1 : KernelTracePhase::TransformFc2;
+      traceKernel(phase, true, i);
+      transformWeights<Local>(loadPipeline, loadState, transformPipeline, transformState, inputs,
+                              taskKTiles(params, task, hidden, intermediate));
+      if (hasNext) nextTask = scheduler.taskAt(params, i + numClusters, nTokens);
+      traceKernel(phase, false, i);
+    }
   }
   transformPipeline.producer_tail(transformState);
 }
@@ -206,13 +240,15 @@ struct W8A16ComputeContext {
   using Types = typename KernelParams::Collective;
   using Mainloop = typename Types::Mainloop;
   using Accumulators = decltype(Mainloop::TiledMma::make_fragment_C(
-      cute::append(std::declval<Mainloop>().partition_accumulator_shape(), cute::_2{})));
+      cute::append(std::declval<Mainloop>().partition_accumulator_shape(), cute::Int<Types::Accumulate::Stages>{})));
   Mainloop fc1;
   Mainloop fc2;
   Accumulators accumulators;
   ProblemShape shape1;
   ProblemShape shape2;
+  int nTokenTiles;
   int nTasks;
+  int nLocalExperts;
 };
 
 template <class KernelParams, class Storage>
@@ -227,7 +263,8 @@ MSCCLPP_DEVICE_INLINE W8A16ComputeContext<KernelParams> makeW8A16ComputeContext(
   const int intermediate = params.config.intermediate;
   Mainloop fc1(params.fc1, ClusterShape{}, ctaIdx);
   Mainloop fc2(params.fc2, ClusterShape{}, ctaIdx);
-  auto acc = Mainloop::TiledMma::make_fragment_C(append(fc1.partition_accumulator_shape(), _2{}));
+  auto acc =
+      Mainloop::TiledMma::make_fragment_C(append(fc1.partition_accumulator_shape(), Int<Types::Accumulate::Stages>{}));
   acc.data() = sharedStorage.tmem;
   const int nTasks = nTokenTiles * (fc1TaskTiles<KernelParams>(intermediate) + fc2TaskTiles<KernelParams>(hidden));
   const int nLocalExperts = params.config.numExperts / params.config.worldSize;
@@ -237,7 +274,9 @@ MSCCLPP_DEVICE_INLINE W8A16ComputeContext<KernelParams> makeW8A16ComputeContext(
       acc,
       ProblemShape{2 * intermediate, params.workspace.poolRows, hidden, nLocalExperts},
       ProblemShape{hidden, params.workspace.poolRows, intermediate, nLocalExperts},
-      nTasks};
+      nTokenTiles,
+      nTasks,
+      nLocalExperts};
 }
 
 template <class KernelParams, class Storage, class LoadA, class ComputeCtx>
@@ -251,17 +290,29 @@ MSCCLPP_DEVICE_INLINE void runW8A16LoadAStage(const KernelParams& params, Storag
   auto state = cutlass::make_producer_start_state<LoadA>();
   auto load1 = computeCtx.fc1.load_init(computeCtx.shape1, params.fc1, sharedStorage.tensors);
   auto load2 = computeCtx.fc2.load_init(computeCtx.shape2, params.fc2, sharedStorage.tensors);
-  for (int i = threadLoc.clusterIdx; i < computeCtx.nTasks; i += gridDim.x / KernelParams::Tiles::ClusterSize) {
-    Task task = taskAt(params, i, hidden, intermediate, nTokens);
-    auto coord = taskCoord(params, task, threadLoc.ctaIdx);
-    int kTiles = taskKTiles(params, task, hidden, intermediate);
-    auto iterator = cute::make_coord_iterator(0, kTiles);
-    auto phase = task.fc1 ? KernelTracePhase::LoadFc1 : KernelTracePhase::LoadFc2;
-    traceKernel(phase, true, i);
-    auto result = task.fc1 ? computeCtx.fc1.load_A(params.fc1, aPipeline, state, load1, coord, iterator, kTiles)
-                           : computeCtx.fc2.load_A(params.fc2, aPipeline, state, load2, coord, iterator, kTiles);
-    traceKernel(phase, false, i);
-    state = get<0>(result);
+  const auto scheduler =
+      makeTaskScheduler<KernelParams>(computeCtx.nTokenTiles, computeCtx.nLocalExperts, hidden, intermediate);
+  const int numClusters = gridDim.x / KernelParams::Tiles::ClusterSize;
+  if (threadLoc.clusterIdx < computeCtx.nTasks) {
+    Task nextTask = scheduler.taskAt(params, threadLoc.clusterIdx, nTokens);
+    for (int i = threadLoc.clusterIdx; i < computeCtx.nTasks; i += numClusters) {
+      Task task = nextTask;
+      const bool hasNext = (i + numClusters) < computeCtx.nTasks;
+      auto coord = taskCoord(params, task, threadLoc.ctaIdx);
+      int kTiles = taskKTiles(params, task, hidden, intermediate);
+      const bool weightEvictNormal =
+          KernelParams::LocalExpert ? (nTokens > KernelParams::Tiles::N) : task.tokens.weightEvictNormal();
+      auto iterator = cute::make_coord_iterator(0, kTiles);
+      auto phase = task.fc1 ? KernelTracePhase::LoadFc1 : KernelTracePhase::LoadFc2;
+      traceKernel(phase, true, i);
+      auto result =
+          task.fc1
+              ? computeCtx.fc1.load_A(params.fc1, aPipeline, state, load1, coord, iterator, kTiles, weightEvictNormal)
+              : computeCtx.fc2.load_A(params.fc2, aPipeline, state, load2, coord, iterator, kTiles, weightEvictNormal);
+      if (hasNext) nextTask = scheduler.taskAt(params, i + numClusters, nTokens);
+      traceKernel(phase, false, i);
+      state = get<0>(result);
+    }
   }
   aPipeline.producer_tail(state);
 }
@@ -277,30 +328,29 @@ MSCCLPP_DEVICE_INLINE void runW8A16LoadBStage(const KernelParams& params, Storag
   auto state = cutlass::make_producer_start_state<LoadB>();
   auto load1 = computeCtx.fc1.load_init(computeCtx.shape1, params.fc1, sharedStorage.tensors);
   auto load2 = computeCtx.fc2.load_init(computeCtx.shape2, params.fc2, sharedStorage.tensors);
-  for (int i = threadLoc.clusterIdx; i < computeCtx.nTasks; i += gridDim.x / KernelParams::Tiles::ClusterSize) {
-    Task task = taskAt(params, i, hidden, intermediate, nTokens);
-    auto coord = taskCoord(params, task, threadLoc.ctaIdx);
-    int kTiles = taskKTiles(params, task, hidden, intermediate);
-    int mmaRows = (int(task.tokens.nTokens) + 15) / 16 * 16;
-    auto shiftLoadB = [&](const auto& baseInputs, const auto& mainloopParams) {
-      auto rowLayout = mainloopParams.tma_load_b.get_tma_tensor(make_shape(1, 1, 1)).layout();
-      auto rowOffset = rowLayout(
-          make_coord(threadLoc.ctaIdx * (mmaRows - KernelParams::Tiles::N) / KernelParams::Tiles::ClusterSize, 0, 0));
-      auto shiftedB = make_tensor(get<3>(baseInputs).data() + rowOffset, get<3>(baseInputs).layout());
-      return cute::make_tuple(get<0>(baseInputs), get<1>(baseInputs), get<2>(baseInputs), shiftedB, get<4>(baseInputs),
-                              get<5>(baseInputs), get<6>(baseInputs), get<7>(baseInputs), get<8>(baseInputs));
-    };
-    auto phase = task.fc1 ? KernelTracePhase::LoadFc1 : KernelTracePhase::LoadFc2;
-    traceKernel(phase, true, i);
-    loadW8A16ActivationTiles<Local>(params, task, hidden, intermediate, kTiles, [&](int first, int count) {
-      auto iterator = cute::make_coord_iterator(first, kTiles);
-      auto result = task.fc1 ? computeCtx.fc1.load_B(params.fc1, bPipeline, state, shiftLoadB(load1, params.fc1), coord,
-                                                     iterator, count)
-                             : computeCtx.fc2.load_B(params.fc2, bPipeline, state, shiftLoadB(load2, params.fc2), coord,
-                                                     iterator, count);
-      state = get<0>(result);
-    });
-    traceKernel(phase, false, i);
+  const auto scheduler =
+      makeTaskScheduler<KernelParams>(computeCtx.nTokenTiles, computeCtx.nLocalExperts, hidden, intermediate);
+  const int numClusters = gridDim.x / KernelParams::Tiles::ClusterSize;
+  if (threadLoc.clusterIdx < computeCtx.nTasks) {
+    Task nextTask = scheduler.taskAt(params, threadLoc.clusterIdx, nTokens);
+    for (int i = threadLoc.clusterIdx; i < computeCtx.nTasks; i += numClusters) {
+      Task task = nextTask;
+      const bool hasNext = (i + numClusters) < computeCtx.nTasks;
+      auto coord = taskCoord(params, task, threadLoc.ctaIdx);
+      int kTiles = taskKTiles(params, task, hidden, intermediate);
+      auto phase = task.fc1 ? KernelTracePhase::LoadFc1 : KernelTracePhase::LoadFc2;
+      traceKernel(phase, true, i);
+      loadW8A16ActivationTiles<Local>(params, task, hidden, intermediate, kTiles, [&](int first, int count) {
+        auto iterator = cute::make_coord_iterator(first, kTiles);
+        auto result = task.fc1 ? computeCtx.fc1.load_B(params.fc1, bPipeline, state, load1, coord, iterator, count,
+                                                       task.tokens.nTokens)
+                               : computeCtx.fc2.load_B(params.fc2, bPipeline, state, load2, coord, iterator, count,
+                                                       task.tokens.nTokens);
+        state = get<0>(result);
+      });
+      if (hasNext) nextTask = scheduler.taskAt(params, i + numClusters, nTokens);
+      traceKernel(phase, false, i);
+    }
   }
   bPipeline.producer_tail(state);
 }
@@ -311,17 +361,18 @@ MSCCLPP_DEVICE_INLINE void runW8A16TransformStage(const KernelParams& params, St
                                                   const KernelThreadLocation& threadLoc, int nTokens) {
   runW8A16TransformRole<Local>(params, nTokens, sharedStorage, aPipeline, tPipeline, computeCtx.fc1, computeCtx.shape1,
                                computeCtx.accumulators, params.config.hidden, params.config.intermediate,
-                               threadLoc.clusterIdx, computeCtx.nTasks);
+                               threadLoc.clusterIdx, computeCtx.nTasks, computeCtx.nTokenTiles,
+                               computeCtx.nLocalExperts);
 }
 
 template <bool Local, class Schedule, class KernelParams, class Storage, class Pipelines, class ComputeCtx>
 MSCCLPP_DEVICE_INLINE void runW8A16MmaStage(const KernelParams& params, Storage& sharedStorage, Pipelines& pipelines,
                                             ComputeCtx& computeCtx, const KernelThreadLocation& threadLoc,
                                             int nTokens) {
-  runW8A16MmaRole<Local, Schedule>(params, nTokens, sharedStorage, pipelines.loadB, pipelines.transform,
-                                   pipelines.accumulate, computeCtx.fc1, computeCtx.accumulators, params.config.hidden,
-                                   params.config.intermediate, threadLoc.warpIdx, threadLoc.ctaIdx,
-                                   threadLoc.clusterIdx, computeCtx.nTasks);
+  runW8A16MmaRole<Local, Schedule>(
+      params, nTokens, sharedStorage, pipelines.loadB, pipelines.transform, pipelines.accumulate, computeCtx.fc1,
+      computeCtx.accumulators, params.config.hidden, params.config.intermediate, threadLoc.warpIdx, threadLoc.ctaIdx,
+      threadLoc.clusterIdx, computeCtx.nTasks, computeCtx.nTokenTiles, computeCtx.nLocalExperts);
 }
 
 template <class Schedule, int LocalMode, class KernelParams, class Storage, class Accumulate, class ComputeCtx>
@@ -336,18 +387,32 @@ MSCCLPP_DEVICE_INLINE void runW8A16EpilogueStage(const KernelParams& params, Sto
 
 template <bool Local, class Schedule, class RoleFn>
 MSCCLPP_DEVICE_INLINE void dispatchW8A16WarpRole(int warpIdx, RoleFn&& runRole) {
+  using Types = W8A16CollectiveTypesT<Local>;
+  if constexpr (!Local) {
+    static_assert(4 * Types::EpilogueRegisters + 4 * Types::TransformRegisters + 4 * Types::DispatchRegisters +
+                      4 * TransferRegisters <=
+                  Types::NumWarps * EntryRegisters);
+  }
   if (warpIdx >= Schedule::EpilogueBegin && warpIdx < Schedule::EpilogueEnd) {
     runRole.template operator()<WarpRole::Epilogue>();
   } else if (warpIdx >= Schedule::TransformBegin && warpIdx < Schedule::TransformEnd) {
     runRole.template operator()<WarpRole::Transform>();
+  } else if constexpr (!Local) {
+    if (warpIdx >= Schedule::DispatchBegin && warpIdx < Schedule::DispatchEnd) {
+      cutlass::arch::warpgroup_reg_dealloc<Types::DispatchRegisters>();
+      runRole.template operator()<WarpRole::Dispatch>();
+      return;
+    }
+    cutlass::arch::warpgroup_reg_dealloc<TransferRegisters>();
+    if (warpIdx == Schedule::LoadAWarp) {
+      runRole.template operator()<WarpRole::LoadA>();
+    } else if (warpIdx == Schedule::LoadBWarp) {
+      runRole.template operator()<WarpRole::LoadB>();
+    } else if (warpIdx == Schedule::MmaWarp) {
+      runRole.template operator()<WarpRole::Mma>();
+    }
   } else {
     cutlass::arch::warpgroup_reg_dealloc<TransferRegisters>();
-    if constexpr (!Local) {
-      if (warpIdx >= Schedule::DispatchBegin && warpIdx < Schedule::DispatchEnd) {
-        runRole.template operator()<WarpRole::Dispatch>();
-        return;
-      }
-    }
     if (warpIdx == Schedule::LoadAWarp) {
       runRole.template operator()<WarpRole::LoadA>();
     } else if (warpIdx == Schedule::LoadBWarp) {
@@ -361,6 +426,7 @@ MSCCLPP_DEVICE_INLINE void dispatchW8A16WarpRole(int warpIdx, RoleFn&& runRole) 
 template <int Hidden, bool Local, class KernelParams, class Storage, class Allocator>
 MSCCLPP_DEVICE_INLINE void finishW8A16KernelStage(const KernelParams& params, Storage& sharedStorage,
                                                   Allocator& allocator, int warpIdx, int nTokens, __bfloat16* output) {
+  (void)output;
   using Schedule = typename W8A16CollectiveTypesT<Local>::WarpSchedule;
   constexpr int RestoreRegisters = Local ? LocalEntryRegisters : EntryRegisters;
   __syncthreads();
@@ -375,7 +441,9 @@ MSCCLPP_DEVICE_INLINE void finishW8A16KernelStage(const KernelParams& params, St
     allocator.release_allocation_lock();
     allocator.free(sharedStorage.tmem, 512);
   }
-  if constexpr (!Local) joinAndCombineOutputs<Hidden>(params, nTokens, output);
+  if constexpr (!Local) {
+    if (!params.config.computeOnly) completeStandaloneCombineEpoch(params, nTokens);
+  }
 }
 
 }  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail

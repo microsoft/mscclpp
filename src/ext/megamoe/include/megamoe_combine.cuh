@@ -230,6 +230,21 @@ MSCCLPP_DEVICE_INLINE void combineResults(const KernelParams& params, int nToken
     combineResultsMode<Hidden, false>(params, nTokens, output);
 }
 
+template <class KernelParams>
+MSCCLPP_DEVICE_INLINE void completeStandaloneCombineEpoch(const KernelParams& params, int nTokens) {
+  if (!params.config.combineRouteWeights && params.config.worldSize == 1 && params.config.topK == 1) return;
+  traceKernel(KernelTracePhase::OutputJoin, true);
+  syncResidentGrid(&params.workspace.control->residentGridSyncState, gridDim.x);
+  if (blockIdx.x == 0) {
+    if (threadIdx.x == 0) {
+      *at<uint64_t>(params.local, params.symmetric.epoch) = params.workspace.control->epoch;
+      if (nTokens > 0) cudaTriggerProgrammaticLaunchCompletion();
+    }
+    if (threadIdx.x < params.config.worldSize) signalAndWait(params, threadIdx.x);
+  }
+  traceKernel(KernelTracePhase::OutputJoin, false);
+}
+
 template <int Hidden = 0, class KernelParams>
 __device__ void joinAndCombineOutputs(const KernelParams& params, int nTokens, __bfloat16* output) {
   if (params.config.computeOnly) return;

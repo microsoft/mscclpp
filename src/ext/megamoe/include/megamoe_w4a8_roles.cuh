@@ -331,23 +331,6 @@ MSCCLPP_DEVICE_INLINE void dispatchW4A8WarpRole(int warpIdx, RoleFn&& runRole) {
   }
 }
 
-template <class KernelParams>
-MSCCLPP_DEVICE_INLINE void completeW4A8StandaloneCombineEpoch(const KernelParams& params, int nTokens) {
-  if (!params.config.combineRouteWeights && params.config.worldSize == 1 && params.config.topK == 1) return;
-  traceKernel(KernelTracePhase::OutputJoin, true);
-  syncResidentGrid(&params.workspace.control->residentGridSyncState, gridDim.x);
-  if (blockIdx.x == 0) {
-    if (threadIdx.x == 0) {
-      *at<uint64_t>(params.local, params.symmetric.epoch) = params.workspace.control->epoch;
-#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
-      if (nTokens > 0) cudaTriggerProgrammaticLaunchCompletion();
-#endif
-    }
-    if (threadIdx.x < params.config.worldSize) signalAndWait(params, threadIdx.x);
-  }
-  traceKernel(KernelTracePhase::OutputJoin, false);
-}
-
 template <int Hidden, class Types, class KernelParams, class Storage, class Allocator>
 MSCCLPP_DEVICE_INLINE void finishW4A8KernelStage(const KernelParams& params, Storage& sharedStorage,
                                                  Allocator& allocator, int warpIdx, int nTokens, __bfloat16* output) {
@@ -365,7 +348,7 @@ MSCCLPP_DEVICE_INLINE void finishW4A8KernelStage(const KernelParams& params, Sto
   }
   if (params.config.computeOnly) return;
   if constexpr (KernelParams::WeightMxfp4 && KernelParams::Activation == ActivationDtype::Mxfp8) {
-    completeW4A8StandaloneCombineEpoch(params, nTokens);
+    completeStandaloneCombineEpoch(params, nTokens);
     return;
   }
   joinAndCombineOutputs<Hidden>(params, nTokens, output);

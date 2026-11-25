@@ -58,6 +58,18 @@
 #ifndef MSCCLPP_MEGAMOE_W4_CLUSTER_SIZE
 #define MSCCLPP_MEGAMOE_W4_CLUSTER_SIZE 2
 #endif
+#ifndef MSCCLPP_MEGAMOE_W8_LOAD_STAGES
+#define MSCCLPP_MEGAMOE_W8_LOAD_STAGES 5
+#endif
+#ifndef MSCCLPP_MEGAMOE_W8_TRANSFORM_STAGES
+#define MSCCLPP_MEGAMOE_W8_TRANSFORM_STAGES 4
+#endif
+#ifndef MSCCLPP_MEGAMOE_W8_ACCUM_STAGES
+#define MSCCLPP_MEGAMOE_W8_ACCUM_STAGES 2
+#endif
+#ifndef MSCCLPP_MEGAMOE_W8_DISPATCH_STAGES
+#define MSCCLPP_MEGAMOE_W8_DISPATCH_STAGES 2
+#endif
 #if defined(MSCCLPP_MEGAMOE_JIT_MODULE) && MSCCLPP_MEGAMOE_JIT_MODULE
 #define MSCCLPP_MEGAMOE_KERNEL_NAMESPACE mscclpp::megamoe::jit
 #else
@@ -66,8 +78,16 @@
 
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 
-constexpr int W8LoadStages = 4;
-constexpr int W8TransformStages = 4;
+constexpr int W8LoadStages = MSCCLPP_MEGAMOE_W8_LOAD_STAGES;
+constexpr int W8TransformStages = MSCCLPP_MEGAMOE_W8_TRANSFORM_STAGES;
+constexpr int W8AccumStages = MSCCLPP_MEGAMOE_W8_ACCUM_STAGES;
+constexpr int W8DispatchStages = MSCCLPP_MEGAMOE_W8_DISPATCH_STAGES;
+
+static_assert(W8LoadStages >= 2 && W8LoadStages <= 6);
+static_assert(W8TransformStages >= 2 && W8TransformStages <= 4);
+static_assert(W8AccumStages >= 2 && W8AccumStages <= 3);
+static_assert(W8AccumStages * 128 + W8TransformStages * 64 <= 512, "W8A16 TMEM budget is 512 columns");
+static_assert(W8DispatchStages == 1 || W8DispatchStages == 2);
 
 constexpr int W4ClusterSize = MSCCLPP_MEGAMOE_W4_CLUSTER_SIZE;
 constexpr int W4TileM = 128 * W4ClusterSize;

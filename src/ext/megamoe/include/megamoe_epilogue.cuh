@@ -392,8 +392,8 @@ MSCCLPP_DEVICE_INLINE void storeOutputChunk(const KernelParams& params, const Ta
     }
     __bfloat16* output;
     size_t offset;
-    if (!params.config.combineRouteWeights && KernelParams::WeightMxfp4 && params.config.worldSize == 1 &&
-        params.config.topK == 1) {
+    if (!params.config.combineRouteWeights && KernelParams::Activation != ActivationDtype::Fp8Static &&
+        params.config.worldSize == 1 && params.config.topK == 1) {
       // Delivered also finalizes a unique local contribution by TMA store; BF16 TMA reduction is only needed
       // when another contribution targets the same token.
       output = finalOutput;

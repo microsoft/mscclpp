@@ -369,11 +369,7 @@ __device__ void waitAtLeast(T* address, T value) {
 }
 
 MSCCLPP_DEVICE_INLINE void signalReadyCounter(int* counter, uint32_t count = 1u) {
-#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
   asm volatile("red.release.gpu.global.add.u32 [%0], %1;" ::"l"(counter), "r"(count) : "memory");
-#else
-  (void)atomicFetchAdd<int, scopeDevice>(counter, int(count), memoryOrderRelease);
-#endif
 }
 
 MSCCLPP_DEVICE_INLINE void waitReadyCounter(int* counter, int expectedCount) {
@@ -381,40 +377,24 @@ MSCCLPP_DEVICE_INLINE void waitReadyCounter(int* counter, int expectedCount) {
 }
 
 MSCCLPP_DEVICE_INLINE int atomicAddShared(int* counter, int value) {
-#if defined(__CUDA_ARCH__)
   int old;
   // An explicit shared address avoids the generic-address atomic instruction.
   uint32_t address = static_cast<uint32_t>(__cvta_generic_to_shared(counter));
   asm volatile("atom.shared.add.u32 %0, [%1], %2;" : "=r"(old) : "r"(address), "r"(value) : "memory");
   return old;
-#else
-  return atomicFetchAdd<int, cuda::thread_scope_block>(counter, value, memoryOrderRelaxed);
-#endif
 }
 
 MSCCLPP_DEVICE_INLINE void addSharedRelease(uint32_t* counter, uint32_t value) {
-#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
   uint32_t sharedAddr = static_cast<uint32_t>(__cvta_generic_to_shared(counter));
   asm volatile("red.release.cta.shared.add.u32 [%0], %1;" ::"r"(sharedAddr), "r"(value) : "memory");
-#else
-  (void)atomicFetchAdd<uint32_t, cuda::thread_scope_block>(counter, value, memoryOrderRelease);
-#endif
 }
 
 MSCCLPP_DEVICE_INLINE void resetSharedRelaxed(uint32_t* counter) {
-#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
   uint32_t sharedAddr = static_cast<uint32_t>(__cvta_generic_to_shared(counter));
   asm volatile("atom.relaxed.cta.shared.exch.b32 _, [%0], 0;" ::"r"(sharedAddr) : "memory");
-#else
-  atomicStore<uint32_t, cuda::thread_scope_block>(counter, 0u, memoryOrderRelaxed);
-#endif
 }
 
-MSCCLPP_DEVICE_INLINE void fenceAsyncProxyGlobal() {
-#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
-  asm volatile("fence.proxy.async.global;" ::: "memory");
-#endif
-}
+MSCCLPP_DEVICE_INLINE void fenceAsyncProxyGlobal() { asm volatile("fence.proxy.async.global;" ::: "memory"); }
 
 // Sense-reversing barrier for a complete resident 1D grid. Every CTA must call each round, CTA0 must participate,
 // and the zero-initialized state cannot be shared by concurrent grids.

@@ -56,8 +56,15 @@ MSCCLPP_DEVICE_INLINE mscclpp::f32x8 dequantizeE4M3x8(uint2 raw) {
   return out;
 }
 
-MSCCLPP_DEVICE_INLINE uint32_t decodeScaledPair(uint16_t weights, uint16_t scales) {
-  uint32_t decoded, expanded, result;
+MSCCLPP_DEVICE_INLINE uint32_t expandE8M0ScalePair(uint8_t scale) {
+  uint16_t packedScale = uint16_t(scale) | (uint16_t(scale) << 8);
+  uint32_t expanded;
+  asm("cvt.rn.bf16x2.ue8m0x2 %0, %1;" : "=r"(expanded) : "h"(packedScale));
+  return expanded;
+}
+
+MSCCLPP_DEVICE_INLINE uint32_t decodeScaledPairWithExpandedScale(uint16_t weights, uint32_t expandedScale) {
+  uint32_t decoded, result;
 #if __CUDACC_VER_MAJOR__ > 13 || (__CUDACC_VER_MAJOR__ == 13 && __CUDACC_VER_MINOR__ >= 3)
   asm("cvt.rn.bf16x2.e4m3x2 %0, %1;" : "=r"(decoded) : "h"(weights));
 #else
@@ -66,9 +73,14 @@ MSCCLPP_DEVICE_INLINE uint32_t decodeScaledPair(uint16_t weights, uint16_t scale
   decoded = cuda::std::bit_cast<uint32_t>(
       cutlass::NumericArrayConverter<cutlass::bfloat16_t, Weight, 2>{}(cuda::std::bit_cast<PackedWeights>(weights)));
 #endif
-  asm("cvt.rn.bf16x2.ue8m0x2 %0, %1;" : "=r"(expanded) : "h"(scales));
-  asm("mul.rn.bf16x2 %0, %1, %2;" : "=r"(result) : "r"(decoded), "r"(expanded));
+  asm("mul.rn.bf16x2 %0, %1, %2;" : "=r"(result) : "r"(decoded), "r"(expandedScale));
   return result;
+}
+
+MSCCLPP_DEVICE_INLINE uint32_t decodeScaledPair(uint16_t weights, uint16_t scales) {
+  uint32_t expanded;
+  asm("cvt.rn.bf16x2.ue8m0x2 %0, %1;" : "=r"(expanded) : "h"(scales));
+  return decodeScaledPairWithExpandedScale(weights, expanded);
 }
 
 }  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail

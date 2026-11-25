@@ -204,22 +204,29 @@ template <bool Local, class Schedule, class KernelParams, class Storage, class L
 MSCCLPP_DEVICE_INLINE void runW8A16MmaRole(const KernelParams& params, int nTokens, Storage& sharedStorage,
                                            LoadB& bPipeline, Transform& tPipeline, Accumulate& cPipeline, Mainloop& fc1,
                                            Accumulators accumulators, int hidden, int intermediate, int warpIdx,
-                                           int ctaIdx, int clusterIdx, int nTasks) {
+                                           int ctaIdx, int clusterIdx, int nTasks, int nTokenTiles, int nLocalExperts) {
   if (warpIdx == Schedule::MmaWarp && ctaIdx == 0) {
     typename LoadB::PipelineState bState;
     typename Transform::PipelineState tState;
     auto cState = cutlass::make_producer_start_state<Accumulate>();
     auto inputs = fc1.mma_init(accumulators, sharedStorage.tensors);
-    for (int i = clusterIdx; i < nTasks; i += gridDim.x / KernelParams::Tiles::ClusterSize) {
-      Task task = taskAt(params, i, hidden, intermediate, nTokens);
-      auto phase = task.fc1 ? KernelTracePhase::MmaFc1 : KernelTracePhase::MmaFc2;
-      traceKernel(phase, true, i);
-      auto result = mmaW8A16Tiles<Local>(bPipeline, bState, tPipeline, tState, cPipeline, cState, accumulators, inputs,
-                                         taskKTiles(params, task, hidden, intermediate), task.tokens.nTokens);
-      traceKernel(phase, false, i);
-      bState = cute::get<0>(result);
-      tState = cute::get<1>(result);
-      cState = cute::get<2>(result);
+    const auto scheduler = makeTaskScheduler<KernelParams>(nTokenTiles, nLocalExperts, hidden, intermediate);
+    const int numClusters = gridDim.x / KernelParams::Tiles::ClusterSize;
+    if (clusterIdx < nTasks) {
+      Task nextTask = scheduler.taskAt(params, clusterIdx, nTokens);
+      for (int i = clusterIdx; i < nTasks; i += numClusters) {
+        Task task = nextTask;
+        const bool hasNext = (i + numClusters) < nTasks;
+        auto phase = task.fc1 ? KernelTracePhase::MmaFc1 : KernelTracePhase::MmaFc2;
+        traceKernel(phase, true, i);
+        auto result = mmaW8A16Tiles<Local>(bPipeline, bState, tPipeline, tState, cPipeline, cState, accumulators,
+                                           inputs, taskKTiles(params, task, hidden, intermediate), task.tokens.nTokens);
+        if (hasNext) nextTask = scheduler.taskAt(params, i + numClusters, nTokens);
+        traceKernel(phase, false, i);
+        bState = cute::get<0>(result);
+        tState = cute::get<1>(result);
+        cState = cute::get<2>(result);
+      }
     }
     cPipeline.producer_tail(cState);
   }

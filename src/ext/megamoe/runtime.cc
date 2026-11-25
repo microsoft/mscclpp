@@ -586,7 +586,7 @@ int MegaMoeContext::kernelDispatchWarps() const {
 }
 int MegaMoeContext::kernelDispatchStages() const {
   if (impl_->module) return impl_->module->api->dispatchStages;
-  return config().weightDtype == WeightDtype::Mxfp4 ? detail::W4DispatchStages : 2;
+  return config().weightDtype == WeightDtype::Mxfp4 ? detail::W4DispatchStages : detail::W8DispatchStages;
 }
 bool MegaMoeContext::kernelFixedTokenCount() const {
   if (impl_->module) return impl_->module->fixedTokenCount;

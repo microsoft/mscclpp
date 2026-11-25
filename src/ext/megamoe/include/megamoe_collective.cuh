@@ -22,6 +22,7 @@ using ProblemShape = cute::Shape<int, int, int, int>;
 }  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail
 
 #include "megamoe_w4a8_collective.cuh"
+#include "megamoe_w8a16_collective.cuh"
 
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 
@@ -32,13 +33,15 @@ struct W8A16CollectiveTypesT {
   static constexpr int NumWarps = Local ? 12 : 16;
   static constexpr int EpilogueWarps = 4;
   static constexpr int EpilogueRegisters = Local ? 232 : 224;
+  static constexpr int TransformRegisters = Local ? 232 : 176;
+  static constexpr int DispatchRegisters = 80;
   static constexpr int TransferRegisters = 32;
   static constexpr int LoadWarps = 2;
   static constexpr bool SplitPipelines = false;
   static constexpr int EpilogueTokens = 32;
   static constexpr int DispatchChunk = W4DispatchChunk;
   static constexpr int DispatchWarps = 4;
-  static constexpr int DispatchStages = 2;
+  static constexpr int DispatchStages = W8DispatchStages;
   static constexpr bool WeightMxfp4 = false;
   static constexpr bool LocalExpert = Local;
   using ClusterShape = cute::Shape<cute::_2, cute::_1, cute::_1>;
@@ -53,15 +56,17 @@ struct W8A16CollectiveTypesT {
       cute::tuple<cutlass::layout::RowMajor, W8ScaleConfig::LayoutScale>, 16, Activation, cutlass::layout::ColumnMajor,
       8, float, KernelTile, ClusterShape, cutlass::gemm::collective::StageCountAutoCarveout<65536>,
       cutlass::gemm::KernelTmaWarpSpecialized2SmMixedInputSm100>::CollectiveOp;
-  using Policy = cutlass::gemm::MainloopSm100TmaUmmaWarpSpecializedMixedInput<W8LoadStages, W8TransformStages, 2, 2,
-                                                                              ClusterShape, cutlass::arch::Sm100>;
-  using Mainloop = cutlass::gemm::collective::CollectiveMma<
+  using Policy =
+      cutlass::gemm::MainloopSm100TmaUmmaWarpSpecializedMixedInput<W8LoadStages, W8TransformStages, 2, W8AccumStages,
+                                                                   ClusterShape, cutlass::arch::Sm100>;
+  using CollectiveBase = cutlass::gemm::collective::CollectiveMma<
       Policy, KernelTile, typename Builder::ElementAOptionalTuple,
       cute::tuple<typename Builder::StrideA, typename Builder::LayoutScale>, typename Builder::ElementBOptionalTuple,
       typename Builder::StrideB, typename Builder::TiledMma, typename Builder::GmemTiledCopyA,
       typename Builder::SmemLayoutAtomsA, typename Builder::CopyAtomsA, typename Builder::TransformA,
       typename Builder::GmemTiledCopyB, typename Builder::SmemLayoutAtomsB, typename Builder::CopyAtomsB,
       typename Builder::TransformB>;
+  using Mainloop = W8A16Mainloop<CollectiveBase, 128, 128, W8LoadStages>;
   using LoadA = typename Mainloop::Load2TransformPipeline;
   using LoadB = typename Mainloop::Load2MmaPipeline;
   using Transform = typename Mainloop::Transform2MmaPipeline;

@@ -62,6 +62,7 @@ install(FILES
     include/megamoe_quantization.cuh
     include/megamoe_w4a8_collective.cuh
     include/megamoe_w4a8_roles.cuh
+    include/megamoe_w8a16_collective.cuh
     include/megamoe_trace.cuh
     include/megamoe_device.cuh
     include/megamoe_epilogue.cuh

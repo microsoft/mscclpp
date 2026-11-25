@@ -450,9 +450,7 @@ __device__ void prepareRoutes(const P& p, int nTokens, const int32_t* ids = null
   for (int counter = threadIdx.x; counter <= nLocalExperts + c.worldSize; counter += P::ThreadCount)
     scratch.nRoutesByExpert[counter] = 0;
   __syncthreads();
-#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
-  if constexpr (P::WeightMxfp4) cudaGridDependencySynchronize();
-#endif
+  cudaGridDependencySynchronize();
   auto cacheOwnedRoute = [&](int expert, uint32_t route, int lane) { cacheRoute(scratch, expert, route, lane); };
   processSourceRouteChunks<true>(p, nTokens, ids, scores, epoch, scratch.nRoutesByOwner, firstChunkExpertId,
                                  cacheOwnedRoute);
