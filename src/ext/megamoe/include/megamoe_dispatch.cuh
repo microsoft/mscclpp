@@ -217,7 +217,7 @@ MSCCLPP_DEVICE_INLINE void resolveDispatchRouteSource(const P& p, const Route& r
 }
 
 template <class P, class Storage>
-  requires (!RequiresLoadScale<P>)
+  requires(!RequiresLoadScale<P>)
 MSCCLPP_DEVICE_INLINE void issueDispatchChunkLoad(Storage& s, int localWarp, int stage, const uint8_t* source,
                                                   const uint8_t*, int byteOffset, int bytes, BulkBarrier& barrier) {
 #if MSCCLPP_BULK_AVAILABLE

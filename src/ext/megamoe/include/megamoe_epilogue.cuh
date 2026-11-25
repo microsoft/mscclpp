@@ -381,8 +381,8 @@ MSCCLPP_DEVICE_INLINE void runOutputStoreOffloadRole(const KernelParams& params,
       if (offloadTask.op() == OutputOffloadOp::Stop) break;
       if (offloadTask.op() == OutputOffloadOp::Store) {
         const int validRows = offloadTask.nTokens();
-        const int feature = offloadTask.mTileIdx() * (CtaTileM * Tiles::ClusterSize) +
-                            (blockIdx.x % Tiles::ClusterSize) * CtaTileM;
+        const int feature =
+            offloadTask.mTileIdx() * (CtaTileM * Tiles::ClusterSize) + (blockIdx.x % Tiles::ClusterSize) * CtaTileM;
         const int baseRow = offloadTask.baseRowIdx();
         const int token = (warp - OffloadBegin) + lane * 4;
         if (feature < hidden && lane < 8 && token < validRows) {
