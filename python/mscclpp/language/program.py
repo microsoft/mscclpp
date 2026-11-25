@@ -5,6 +5,7 @@ from mscclpp.language.collectives import Collective
 from mscclpp.language.internal.globals import set_program
 from mscclpp.language.internal.types import BufferType, RemoteBuffer, ChannelType
 from mscclpp.language.internal.gpu import Gpu
+from mscclpp.language.internal.synchronization import SynchronizationDiagnostic, diagnose_synchronization
 from mscclpp.language.channel import *
 from mscclpp.language.rank import Semaphore
 from mscclpp.language.collectives import *
@@ -112,6 +113,7 @@ class CollectiveProgram:
             )
 
         self.loop_context = None
+        self._operations_processed = False
 
         self._signal_counts = defaultdict(int)
         self._wait_counts = defaultdict(int)
@@ -237,8 +239,42 @@ class CollectiveProgram:
                     f"on the peer rank over a channel of the same type."
                 )
 
+    def diagnose_synchronization(self) -> SynchronizationDiagnostic:
+        """Diagnose memory-channel token dependencies without changing the program.
+
+        Call after authoring operations and before ``to_json()`` or
+        ``post_process_operations()``. This opt-in analysis leaves the existing
+        serialization checks and operation order unchanged.
+
+        Supported plans use Simple protocol, paired MemoryChannel endpoints,
+        default signal/wait block synchronization, and one producer and one
+        consumer thread block per directed semaphore. Normal and relaxed
+        operations share the same token model. Positive instance replication
+        produces independent copies of this graph. The model assumes fresh
+        semaphore state or a previously balanced invocation, without token
+        counter overflow.
+
+        Returns:
+            SynchronizationDiagnostic: ``acyclic`` for a balanced acyclic token
+            graph, ``mismatch`` for unequal per-channel signal/wait counts,
+            ``cycle`` with a dependency cycle, or ``unsupported`` with the
+            unmodeled feature. Locations refer to the authored operations.
+            Pipelines, packet operations, port/switch channels, cross-block
+            barriers, intra-rank semaphores, thread-block groups, resource reuse,
+            nondefault signal/wait synchronization, and post-processed programs
+            are unsupported. An acyclic result does not establish GPU residency,
+            transport progress, data visibility, or freedom from data races.
+
+        Example:
+            >>> diagnostic = program.diagnose_synchronization()
+            >>> print(diagnostic.status, diagnostic.message)
+            >>> plan = program.to_json()
+        """
+        return diagnose_synchronization(self)
+
     def post_process_operations(self):
         self.validate_signal_wait_pairing()
+        self._operations_processed = True
         for gpu in self.gpus:
             if self.instr_fusion:
                 gpu.optimize_operations()
