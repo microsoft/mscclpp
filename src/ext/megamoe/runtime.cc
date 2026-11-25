@@ -97,8 +97,8 @@ bool validW4Metadata(const MegaMoeJitApiV1& api) {
                         api.transferRegisters == 128;
   const bool dispatchChunk = api.dispatchChunk == 512 || api.dispatchChunk == 1024 || api.dispatchChunk == 2048 ||
                              api.dispatchChunk == 3072 || api.dispatchChunk == 4096;
-  const int64_t threads = int64_t(api.numWarps) * 32;
-  const int64_t epilogueThreads = int64_t(api.epilogueWarps) * 32;
+  const int64_t threads = int64_t(api.numWarps) * WARP_SIZE;
+  const int64_t epilogueThreads = int64_t(api.epilogueWarps) * WARP_SIZE;
   const int64_t lowRegisterThreads = threads - epilogueThreads - 128;
   const int64_t registerUse =
       epilogueThreads * api.epilogueRegisters + int64_t(128) * api.transferRegisters + lowRegisterThreads * 32;

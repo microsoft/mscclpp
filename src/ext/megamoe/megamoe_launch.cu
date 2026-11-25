@@ -229,16 +229,15 @@ __global__ __launch_bounds__(Threads,
                                                                                const int32_t* __restrict__ routeIds,
                                                                                __bfloat16* __restrict__ output,
                                                                                int tokens, int hidden) {
-  constexpr int WarpSize = 32;
   constexpr int Elements = mscclpp::bf16x8::Size;
-  constexpr int WarpsPerCta = Threads / WarpSize;
+  constexpr int WarpsPerCta = Threads / WARP_SIZE;
   static_assert((Threads == 512 || Threads == 1024) && Slots == 14 && (Hidden == 0 || Hidden % Elements == 0));
   const int vectors = (Hidden > 0 ? Hidden : hidden) / Elements;
-  const int tokenTasks = (vectors + WarpSize - 1) / WarpSize;
+  const int tokenTasks = (vectors + WARP_SIZE - 1) / WARP_SIZE;
   const int tasks = tokens * tokenTasks;
-  const int lane = threadIdx.x % WarpSize;
+  const int lane = threadIdx.x % WARP_SIZE;
   const int warps = int(gridDim.x) * WarpsPerCta;
-  int task = (int(threadIdx.x) / WarpSize) * int(gridDim.x) + int(blockIdx.x);
+  int task = (int(threadIdx.x) / WARP_SIZE) * int(gridDim.x) + int(blockIdx.x);
   auto loadMask = [&](int t) -> uint32_t {
     int id = (t < tasks && lane < Slots) ? routeIds[(t / tokenTasks) * Slots + lane] : -1;
     return __ballot_sync(0xffffffff, id >= 0);
@@ -254,10 +253,10 @@ __global__ __launch_bounds__(Threads,
   const bool aligned = (reinterpret_cast<uintptr_t>(output) & 15) == 0;
   for (; task < tasks; task += warps) {
     const int token = task / tokenTasks;
-    const int first = (task % tokenTasks) * WarpSize + lane;
+    const int first = (task % tokenTasks) * WARP_SIZE + lane;
     const uint32_t routedMask = nextMask;
     nextMask = loadMask(task + warps);
-    const bool validVec = (Hidden > 0 && (Hidden / Elements) % WarpSize == 0) || first < vectors;
+    const bool validVec = (Hidden > 0 && (Hidden / Elements) % WARP_SIZE == 0) || first < vectors;
     const uint4* source = partial + size_t(token * Slots) * vectors + first;
     mscclpp::f32x8 sum;
 #pragma unroll
@@ -312,16 +311,15 @@ __global__ __launch_bounds__(512, 2) void combineGeneralStandaloneKernel(const u
                                                                          const float* __restrict__ routeWeights,
                                                                          __bfloat16* __restrict__ output, int tokens,
                                                                          int hidden, int topK) {
-  constexpr int WarpSize = 32;
   constexpr int Elements = mscclpp::bf16x8::Size;
-  constexpr int WarpsPerCta = 16;
+  constexpr int WarpsPerCta = 512 / WARP_SIZE;
   constexpr int CombineSlots = 8;
   const int vectors = hidden / Elements;
-  const int tokenTasks = (vectors + WarpSize - 1) / WarpSize;
+  const int tokenTasks = (vectors + WARP_SIZE - 1) / WARP_SIZE;
   const int tasks = tokens * tokenTasks;
-  const int lane = threadIdx.x % WarpSize;
+  const int lane = threadIdx.x % WARP_SIZE;
   const int warps = int(gridDim.x) * WarpsPerCta;
-  int task = (int(threadIdx.x) / WarpSize) * int(gridDim.x) + int(blockIdx.x);
+  int task = (int(threadIdx.x) / WARP_SIZE) * int(gridDim.x) + int(blockIdx.x);
   auto loadMask = [&](int t, int base) -> uint32_t {
     int id = (t < tasks && lane < CombineSlots && base + lane < topK)
                  ? routeIds[size_t(t / tokenTasks) * topK + base + lane]
@@ -339,7 +337,7 @@ __global__ __launch_bounds__(512, 2) void combineGeneralStandaloneKernel(const u
   const bool aligned = (reinterpret_cast<uintptr_t>(output) & 15) == 0;
   for (; task < tasks; task += warps) {
     const int token = task / tokenTasks;
-    const int first = (task % tokenTasks) * WarpSize + lane;
+    const int first = (task % tokenTasks) * WARP_SIZE + lane;
     const uint32_t firstBatchMask = nextMask;
     nextMask = loadMask(task + warps, 0);
     const bool validVec = first < vectors;
@@ -726,7 +724,7 @@ void launchNativeW4A8(const std::shared_ptr<KernelPlan>& plan, const void* input
       params.config.activationDtype == ActivationDtype::Mxfp8 &&
       !(params.config.worldSize == 1 && params.config.topK == 1 && !params.config.combineRouteWeights)) {
     const int vectors = params.config.hidden / mscclpp::bf16x8::Size;
-    const int tokenTasks = (vectors + 31) / 32;
+    const int tokenTasks = (vectors + WARP_SIZE - 1) / WARP_SIZE;
     const auto* partial =
         reinterpret_cast<const uint4*>(detail::at<__bfloat16>(params.local, params.symmetric.partialOutput));
     const int32_t* routeIds = ids ? ids : detail::at<int32_t>(params.local, params.symmetric.topkIds);
@@ -736,7 +734,7 @@ void launchNativeW4A8(const std::shared_ptr<KernelPlan>& plan, const void* input
     combineAttr[0].val.programmaticStreamSerializationAllowed = 1;
     if (!params.config.combineRouteWeights && params.config.topK == 14) {
       auto launchSlots14 = [&]<int Threads, bool TriggerNext>() {
-        constexpr int WarpsPerCta = Threads / 32;
+        constexpr int WarpsPerCta = Threads / WARP_SIZE;
         const int combineCtas =
             std::min(plan->ctas, std::max(1, (tokens * tokenTasks + WarpsPerCta - 1) / WarpsPerCta));
         cudaLaunchConfig_t combineLaunch{};

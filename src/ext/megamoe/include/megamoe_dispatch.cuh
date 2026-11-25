@@ -76,16 +76,15 @@ MSCCLPP_DEVICE_INLINE void publishDispatchChunk(Storage& storage, int localWarp,
   // Every warp arrives, including padded rows; only live rows contribute to readiness.
   constexpr uint32_t Arrival = 1u << 16;
   uint32_t contribution = Arrival + uint32_t(hasRow);
-  uint32_t sharedCounter = static_cast<uint32_t>(__cvta_generic_to_shared(&storage.arrivals));
-  asm volatile("red.release.cta.shared.add.u32 [%0], %1;" ::"r"(sharedCounter), "r"(contribution) : "memory");
+  addSharedRelease(&storage.arrivals, contribution);
   if (localWarp == 0) {
     uint32_t ready;
     POLL_MAYBE_JAILBREAK((ready = atomicLoad<uint32_t, cuda::thread_scope_block>(
                               &storage.arrivals, memoryOrderAcquire)) < Types::DispatchWarps * Arrival,
                          SpinLimit);
     uint32_t rows = ready & (Arrival - 1);
-    if (rows) asm volatile("red.release.gpu.global.add.u32 [%0], %1;" ::"l"(counter), "r"(rows) : "memory");
-    asm volatile("atom.relaxed.cta.shared.exch.b32 _, [%0], 0;" ::"r"(sharedCounter) : "memory");
+    if (rows) signalReadyCounter(counter, rows);
+    resetSharedRelaxed(&storage.arrivals);
     atomicStore<uint32_t, cuda::thread_scope_block>(&storage.publishedPhase, phase, memoryOrderRelease);
   } else {
     // Wait for the leader before reusing the shared counter for the next chunk.
@@ -101,7 +100,7 @@ MSCCLPP_DEVICE_INLINE void storeDispatchChunk(const KernelParams& params, Storag
                                               int chunk, uint8_t* destination, int bytes, uint32_t& phase,
                                               bool issueNext, NextLoad&& loadNext) {
 #if MSCCLPP_BULK_AVAILABLE
-  int lane = threadIdx.x % warpSize;
+  int lane = threadIdx.x % WARP_SIZE;
   int stage = chunk % DispatchStages;
   if (lane == 0) {
     storage.barriers[localWarp][stage].wait(phase, SpinLimit);
@@ -119,7 +118,7 @@ MSCCLPP_DEVICE_INLINE void storeDispatchChunk(const KernelParams& params, Storag
           *reinterpret_cast<const uint32_t*>(storage.scales[localWarp][stage] + k);
     }
   }
-  asm volatile("fence.proxy.async.global;" ::: "memory");
+  fenceAsyncProxyGlobal();
   __syncwarp();
   if (lane == 0) {
     if (issueNext) {
@@ -132,7 +131,7 @@ MSCCLPP_DEVICE_INLINE void storeDispatchChunk(const KernelParams& params, Storag
 #endif
 }
 
-// A warp's window of up to 32 consecutive local experts. Lane i describes expert firstExpert + i. A group is
+// A warp's window of up to WARP_SIZE consecutive local experts. Lane i describes expert firstExpert + i. A group is
 // DispatchWarps consecutive rows of a tile, and only groups with live rows are counted.
 struct ExpertWindow {
   int firstExpert;       // first local expert of the window
@@ -154,13 +153,13 @@ MSCCLPP_DEVICE_INLINE ExpertWindow loadExpertWindow(const Workspace& w, int nLoc
   const int nExpertGroups = nFullTiles * nDispatchGroupsPerTile + (nTailRows + DispatchWarps - 1) / DispatchWarps;
   int scan = nExpertGroups;
 #pragma unroll
-  for (int distance = 1; distance < warpSize; distance *= 2) {
+  for (int distance = 1; distance < WARP_SIZE; distance *= 2) {
     int other = __shfl_up_sync(0xffffffff, scan, distance);
     if (lane >= distance) scan += other;
   }
   ExpertWindow window;
   window.firstExpert = firstExpert;
-  window.endGroup = firstGroup + __shfl_sync(0xffffffff, scan, warpSize - 1);
+  window.endGroup = firstGroup + __shfl_sync(0xffffffff, scan, WARP_SIZE - 1);
   window.expertFirstGroup = firstGroup + scan - nExpertGroups;
   window.expertFirstTile = expert < nLocalExperts ? w.starts[expert] / TileN : 0;
   return window;
@@ -173,7 +172,7 @@ MSCCLPP_DEVICE_INLINE bool mapGroupToTile(const Workspace& w, int nLocalExperts,
                                           int dispatchGroupIdx, int lane, int& tile, int& groupIdxInTile) {
   constexpr int nDispatchGroupsPerTile = (TileN + DispatchWarps - 1) / DispatchWarps;
   while (dispatchGroupIdx >= window.endGroup) {
-    const int nextExpert = window.firstExpert + warpSize;
+    const int nextExpert = window.firstExpert + WARP_SIZE;
     if (nextExpert >= nLocalExperts) return false;
     window = loadExpertWindow<TileN, DispatchWarps>(w, nLocalExperts, nextExpert, window.endGroup, lane);
   }
@@ -197,7 +196,7 @@ MSCCLPP_DEVICE_INLINE void initDispatchStorage(Storage& sharedStorage, int warpI
       sharedStorage.dispatch.publishedPhase = 0;
     }
     constexpr int NumBarriers = std::extent_v<decltype(sharedStorage.dispatch.barriers), 1>;
-    static_assert(NumBarriers >= DispatchStages && NumBarriers <= 32);
+    static_assert(NumBarriers >= DispatchStages && NumBarriers <= WARP_SIZE);
     if (laneIdx < NumBarriers) sharedStorage.dispatch.barriers[localWarp][laneIdx].relaxedInit();
   }
 #endif
@@ -415,7 +414,7 @@ struct StageExpertTokens<DispatchMode::W4A8Coalesced> {
               *reinterpret_cast<uint32_t*>(w.inputScale + offset) =
                   *reinterpret_cast<const uint32_t*>(s.dispatch.scales[localWarp][stage] + k);
             }
-            asm volatile("fence.proxy.async.global;" ::: "memory");
+            fenceAsyncProxyGlobal();
             __syncwarp();
           }
           if (lane == 0) {
@@ -529,7 +528,7 @@ struct StageExpertTokens<DispatchMode::W4A8PerWarp> {
             *reinterpret_cast<uint32_t*>(w.inputScale + offset) =
                 *reinterpret_cast<const uint32_t*>(s.dispatch.scales[localWarp][stage] + k);
           }
-          asm volatile("fence.proxy.async.global;" ::: "memory");
+          fenceAsyncProxyGlobal();
           __syncwarp();
         }
         if (lane == 0) {
@@ -539,8 +538,7 @@ struct StageExpertTokens<DispatchMode::W4A8PerWarp> {
             issueChunk(chunk + NumStages);
           }
           bulkStoreWait();
-          int* counter = w4InputChunkCounter<Types>(w, hidden, tile, chunk);
-          asm volatile("red.release.gpu.global.add.u32 [%0], 1;" ::"l"(counter) : "memory");
+          signalReadyCounter(w4InputChunkCounter<Types>(w, hidden, tile, chunk));
         }
         __syncwarp();
       }
@@ -568,7 +566,7 @@ MSCCLPP_DEVICE_INLINE void stageExpertTokens(const KernelParams& params, Storage
   constexpr int nDispatchGroupsPerTile = (TileN + Types::DispatchWarps - 1) / Types::DispatchWarps;
   static_assert((nDispatchGroupsPerTile & (nDispatchGroupsPerTile - 1)) == 0,
                 "XOR group swizzling needs a power-of-two group count");
-  const int lane = threadIdx.x % warpSize;
+  const int lane = threadIdx.x % WARP_SIZE;
   const int hidden = Hidden > 0 ? Hidden : params.config.hidden;
   const int rowBytes = hidden * ElemBytes;
   const int chunks = (rowBytes + DispatchBytes - 1) / DispatchBytes;

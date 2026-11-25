@@ -12,6 +12,14 @@
 
 #include "megamoe_specialization.hpp"
 
+#ifndef WARP_SIZE
+#if defined(__HIP_PLATFORM_AMD__)
+#define WARP_SIZE 64
+#else
+#define WARP_SIZE 32
+#endif
+#endif
+
 namespace mscclpp::megamoe {
 
 enum class WeightDtype : int32_t {

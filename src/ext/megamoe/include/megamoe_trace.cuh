@@ -8,6 +8,14 @@
 #include <cstdint>
 #include <mscclpp/device.hpp>
 
+#ifndef WARP_SIZE
+#if defined(__HIP_PLATFORM_AMD__)
+#define WARP_SIZE 64
+#else
+#define WARP_SIZE 32
+#endif
+#endif
+
 #include "megamoe_specialization.hpp"
 
 #ifndef MSCCLPP_MEGAMOE_TRACE
@@ -98,9 +106,9 @@ MSCCLPP_DEVICE_INLINE void traceKernel(KernelTracePhase phase, bool begin, int32
 #if defined(MSCCLPP_MEGAMOE_TRACE_ROUTING_ONLY) && MSCCLPP_MEGAMOE_TRACE_ROUTING_ONLY
   if (phase != KernelTracePhase::Routing) return;
 #endif
-  if (blockIdx.x < KernelTraceCtas && threadIdx.x / warpSize < KernelTraceWarpsPerCta && threadIdx.x % warpSize == 0 &&
-      kernelTraceEnabled) {
-    int track = blockIdx.x * KernelTraceWarpsPerCta + threadIdx.x / warpSize;
+  if (blockIdx.x < KernelTraceCtas && threadIdx.x / WARP_SIZE < KernelTraceWarpsPerCta &&
+      threadIdx.x % WARP_SIZE == 0 && kernelTraceEnabled) {
+    int track = blockIdx.x * KernelTraceWarpsPerCta + threadIdx.x / WARP_SIZE;
     uint32_t index = kernelTraceCounts[track]++;
     if (index < KernelTraceCapacity) {
       uint64_t timestamp;
@@ -123,9 +131,9 @@ MSCCLPP_DEVICE_INLINE uint64_t traceKernelClock() {
 
 MSCCLPP_DEVICE_INLINE void traceKernelTotal(KernelTracePhase phase, uint64_t nanoseconds, int count) {
 #if MSCCLPP_MEGAMOE_TRACE == 1 && (!defined(MSCCLPP_MEGAMOE_TRACE_ROUTING_ONLY) || !MSCCLPP_MEGAMOE_TRACE_ROUTING_ONLY)
-  if (blockIdx.x < KernelTraceCtas && threadIdx.x / warpSize < KernelTraceWarpsPerCta && threadIdx.x % warpSize == 0 &&
-      kernelTraceEnabled) {
-    int track = blockIdx.x * KernelTraceWarpsPerCta + threadIdx.x / warpSize;
+  if (blockIdx.x < KernelTraceCtas && threadIdx.x / WARP_SIZE < KernelTraceWarpsPerCta &&
+      threadIdx.x % WARP_SIZE == 0 && kernelTraceEnabled) {
+    int track = blockIdx.x * KernelTraceWarpsPerCta + threadIdx.x / WARP_SIZE;
     uint32_t index = kernelTraceCounts[track]++;
     if (index < KernelTraceCapacity)
       kernelTraceEvents[track * KernelTraceCapacity + index] = {nanoseconds, 0x80000000u | uint32_t(phase), count};
@@ -135,9 +143,9 @@ MSCCLPP_DEVICE_INLINE void traceKernelTotal(KernelTracePhase phase, uint64_t nan
 
 MSCCLPP_DEVICE_INLINE void traceKernelCount(KernelTracePhase phase, uint32_t ready, int attempts) {
 #if MSCCLPP_MEGAMOE_TRACE == 1 && (!defined(MSCCLPP_MEGAMOE_TRACE_ROUTING_ONLY) || !MSCCLPP_MEGAMOE_TRACE_ROUTING_ONLY)
-  if (blockIdx.x < KernelTraceCtas && threadIdx.x / warpSize < KernelTraceWarpsPerCta && threadIdx.x % warpSize == 0 &&
-      kernelTraceEnabled) {
-    int track = blockIdx.x * KernelTraceWarpsPerCta + threadIdx.x / warpSize;
+  if (blockIdx.x < KernelTraceCtas && threadIdx.x / WARP_SIZE < KernelTraceWarpsPerCta &&
+      threadIdx.x % WARP_SIZE == 0 && kernelTraceEnabled) {
+    int track = blockIdx.x * KernelTraceWarpsPerCta + threadIdx.x / WARP_SIZE;
     uint32_t index = kernelTraceCounts[track]++;
     if (index < KernelTraceCapacity)
       kernelTraceEvents[track * KernelTraceCapacity + index] = {ready, 0x20000000u | uint32_t(phase), attempts};

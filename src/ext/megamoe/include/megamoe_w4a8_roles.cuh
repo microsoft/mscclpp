@@ -4,6 +4,7 @@
 #ifndef MSCCLPP_EXT_MEGAMOE_W4A8_ROLES_CUH_
 #define MSCCLPP_EXT_MEGAMOE_W4A8_ROLES_CUH_
 
+#include "megamoe_combine.cuh"
 #include "megamoe_dispatch.cuh"
 #include "megamoe_epilogue.cuh"
 #include "megamoe_mma.cuh"
@@ -81,8 +82,8 @@ MSCCLPP_DEVICE_INLINE void runW4A8LoadRole(const KernelParams& params, Storage& 
       if (!task.fc1 && (Types::LoadWarps == 1 || warpIdx == Schedule::ActivationLoadWarp)) {
         traceKernel(KernelTracePhase::TokenReady, true, int(task.fc1));
         if (laneIdx == 0)
-          waitAtLeast<int, scopeDevice>(params.workspace.hiddenReady + size_t(task.block) * W4ReadyCounterStride,
-                                        fc1CompletionCount<KernelParams>(intermediate));
+          waitReadyCounter(params.workspace.hiddenReady + size_t(task.block) * W4ReadyCounterStride,
+                           fc1CompletionCount<KernelParams>(intermediate));
         __syncwarp();
         traceKernel(KernelTracePhase::TokenReady, false, int(task.fc1));
       }
@@ -119,9 +120,8 @@ MSCCLPP_DEVICE_INLINE void runW4A8LoadRole(const KernelParams& params, Storage& 
         for (int first = 0; first < kTiles; first += TilesPerChunk) {
           traceKernel(KernelTracePhase::TokenReady, true, first / TilesPerChunk);
           if (laneIdx == 0)
-            waitAtLeast<int, scopeDevice>(
-                w4InputChunkCounter<Types>(params.workspace, hidden, task.block, first / TilesPerChunk),
-                task.tokens.nTokens);
+            waitReadyCounter(w4InputChunkCounter<Types>(params.workspace, hidden, task.block, first / TilesPerChunk),
+                             task.tokens.nTokens);
           __syncwarp();
           traceKernel(KernelTracePhase::TokenReady, false, first / TilesPerChunk);
           int count = min(TilesPerChunk, kTiles - first);
@@ -314,9 +314,9 @@ MSCCLPP_DEVICE_INLINE void dispatchW4A8WarpRole(int warpIdx, RoleFn&& runRole) {
   } else {
     // Donate only the registers needed to fund epilogue growth; retain the remaining CTA budget on dispatch/offload
     // warps.
-    constexpr int DispatchThreads = W4Threads - Types::EpilogueWarps * 32 - 128;
+    constexpr int DispatchThreads = W4Threads - Types::EpilogueWarps * WARP_SIZE - 128;
     constexpr int AvailDispatchRegs =
-        ((W4Threads * EntryRegisters - Types::EpilogueWarps * 32 * Types::EpilogueRegisters -
+        ((W4Threads * EntryRegisters - Types::EpilogueWarps * WARP_SIZE * Types::EpilogueRegisters -
           128 * Types::TransferRegisters) /
          DispatchThreads) &
         ~7;
@@ -329,6 +329,23 @@ MSCCLPP_DEVICE_INLINE void dispatchW4A8WarpRole(int warpIdx, RoleFn&& runRole) {
       runRole.template operator()<WarpRole::OutputOffload>();
     }
   }
+}
+
+template <class KernelParams>
+MSCCLPP_DEVICE_INLINE void completeW4A8StandaloneCombineEpoch(const KernelParams& params, int nTokens) {
+  if (!params.config.combineRouteWeights && params.config.worldSize == 1 && params.config.topK == 1) return;
+  traceKernel(KernelTracePhase::OutputJoin, true);
+  syncResidentGrid(&params.workspace.control->residentGridSyncState, gridDim.x);
+  if (blockIdx.x == 0) {
+    if (threadIdx.x == 0) {
+      *at<uint64_t>(params.local, params.symmetric.epoch) = params.workspace.control->epoch;
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
+      if (nTokens > 0) cudaTriggerProgrammaticLaunchCompletion();
+#endif
+    }
+    if (threadIdx.x < params.config.worldSize) signalAndWait(params, threadIdx.x);
+  }
+  traceKernel(KernelTracePhase::OutputJoin, false);
 }
 
 template <int Hidden, class Types, class KernelParams, class Storage, class Allocator>
@@ -346,7 +363,12 @@ MSCCLPP_DEVICE_INLINE void finishW4A8KernelStage(const KernelParams& params, Sto
     allocator.release_allocation_lock();
     allocator.free(sharedStorage.tmem, W4TmemColumns);
   }
-  finishW4A8<Hidden>(params, nTokens, output);
+  if (params.config.computeOnly) return;
+  if constexpr (KernelParams::WeightMxfp4 && KernelParams::Activation == ActivationDtype::Mxfp8) {
+    completeW4A8StandaloneCombineEpoch(params, nTokens);
+    return;
+  }
+  joinAndCombineOutputs<Hidden>(params, nTokens, output);
 }
 
 }  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail

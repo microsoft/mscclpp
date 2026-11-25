@@ -5,6 +5,7 @@
 #define MSCCLPP_EXT_MEGAMOE_W8A16_ROLES_CUH_
 
 #include "megamoe_collective.cuh"
+#include "megamoe_combine.cuh"
 #include "megamoe_dispatch.cuh"
 #include "megamoe_epilogue.cuh"
 #include "megamoe_mma.cuh"
@@ -55,7 +56,7 @@ MSCCLPP_DEVICE_INLINE W8A16Pipelines<Local> initW8A16PipelinesAndStorage(Storage
                      : (threadLoc.warpIdx == Schedule::MmaWarp ? LoadB::ThreadCategory::Consumer
                                                                : LoadB::ThreadCategory::NonParticipant);
   bParams.is_leader = threadLoc.laneIdx == 0 && threadLoc.ctaIdx == 0 && threadLoc.warpIdx == Schedule::LoadBWarp;
-  bParams.num_consumers = 32;
+  bParams.num_consumers = WARP_SIZE;
   bParams.transaction_bytes = Mainloop::TmaTransactionBytes_B;
   bParams.initializing_warp = Schedule::LoadBWarp;
   LoadB bPipeline(sharedStorage.mainloopB, bParams, ClusterShape{}, cutlass::McastDirection::kCol, true_type{},
@@ -131,8 +132,8 @@ MSCCLPP_DEVICE_INLINE void loadW8A16ActivationTiles(const KernelParams& params, 
   using Types = typename KernelParams::Collective;
   if constexpr (Local) {
     if (!task.fc1)
-      waitAtLeast<int, scopeDevice>(params.workspace.hiddenReady + size_t(task.block) * W4ReadyCounterStride,
-                                    fc1CompletionCount<KernelParams>(intermediate));
+      waitReadyCounter(params.workspace.hiddenReady + size_t(task.block) * W4ReadyCounterStride,
+                       fc1CompletionCount<KernelParams>(intermediate));
     loadTiles(0, kTiles);
     return;
   }
@@ -140,15 +141,15 @@ MSCCLPP_DEVICE_INLINE void loadW8A16ActivationTiles(const KernelParams& params, 
     constexpr int TilesPerChunk = Types::DispatchChunk / (KernelParams::Tiles::K * sizeof(__bfloat16));
     for (int first = 0; first < kTiles; first += TilesPerChunk) {
       traceKernel(KernelTracePhase::TokenReady, true, first / TilesPerChunk);
-      waitAtLeast<int, scopeDevice>(
-          w4InputChunkCounter<Types>(params.workspace, hidden, task.block, first / TilesPerChunk), task.tokens.nTokens);
+      waitReadyCounter(w4InputChunkCounter<Types>(params.workspace, hidden, task.block, first / TilesPerChunk),
+                       task.tokens.nTokens);
       traceKernel(KernelTracePhase::TokenReady, false, first / TilesPerChunk);
       loadTiles(first, min(TilesPerChunk, kTiles - first));
     }
   } else {
     traceKernel(KernelTracePhase::TokenReady, true, int(task.fc1));
-    waitAtLeast<int, scopeDevice>(params.workspace.hiddenReady + size_t(task.block) * W4ReadyCounterStride,
-                                  fc1CompletionCount<KernelParams>(intermediate));
+    waitReadyCounter(params.workspace.hiddenReady + size_t(task.block) * W4ReadyCounterStride,
+                     fc1CompletionCount<KernelParams>(intermediate));
     traceKernel(KernelTracePhase::TokenReady, false, int(task.fc1));
     loadTiles(0, kTiles);
   }
@@ -328,7 +329,7 @@ MSCCLPP_DEVICE_INLINE void finishW8A16KernelStage(const KernelParams& params, St
     allocator.release_allocation_lock();
     allocator.free(sharedStorage.tmem, 512);
   }
-  if constexpr (!Local) finishAndCombine<Hidden>(params, nTokens, output);
+  if constexpr (!Local) joinAndCombineOutputs<Hidden>(params, nTokens, output);
 }
 
 }  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail

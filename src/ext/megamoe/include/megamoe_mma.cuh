@@ -18,7 +18,8 @@ MSCCLPP_DEVICE_INLINE Pipeline makeAccumulatorPipeline(typename Pipeline::Shared
                                                  ? Pipeline::ThreadCategory::Consumer
                                                  : Pipeline::ThreadCategory::NonParticipant);
   params.producer_arv_count = 1;
-  params.consumer_arv_count = cute::size(ClusterShape{}) * (Schedule::EpilogueEnd - Schedule::EpilogueBegin) * 32;
+  params.consumer_arv_count =
+      cute::size(ClusterShape{}) * (Schedule::EpilogueEnd - Schedule::EpilogueBegin) * WARP_SIZE;
   params.initializing_warp = Schedule::EpilogueBegin;
   return Pipeline(storage, params, ClusterShape{}, cute::true_type{}, cute::false_type{});
 }

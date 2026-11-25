@@ -22,13 +22,21 @@
 #error "Native MegaMoE requires an SM100-family compilation target"
 #endif
 
+#ifndef WARP_SIZE
+#if defined(__HIP_PLATFORM_AMD__)
+#define WARP_SIZE 64
+#else
+#define WARP_SIZE 32
+#endif
+#endif
+
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 
-constexpr int W4Threads = W4NumWarps * 32;
+constexpr int W4Threads = W4NumWarps * WARP_SIZE;
 constexpr int W4TmemColumns = 512;
 constexpr int EntryRegisters = 128;
 constexpr int TransferRegisters = 32;
-constexpr int LocalThreads = W8A16WarpSchedule<true>::NumWarps * 32;
+constexpr int LocalThreads = W8A16WarpSchedule<true>::NumWarps * WARP_SIZE;
 constexpr int LocalEntryRegisters = 168;
 constexpr int LocalComputeRegisters = 232;
 static_assert(256 * LocalComputeRegisters + (LocalThreads - 256) * TransferRegisters <=
@@ -37,7 +45,7 @@ constexpr int LocalTokenAlignment = 64;
 constexpr int64_t SpinLimit = 1000000000;
 
 constexpr bool validW4RegisterBudget(int epilogueWarps, int epilogueRegisters, int transferRegisters) {
-  int epilogueThreads = epilogueWarps * 32;
+  int epilogueThreads = epilogueWarps * WARP_SIZE;
   constexpr int NonEpilogueComputeThreads = 128;
   int dispatchThreads = W4Threads - epilogueThreads - NonEpilogueComputeThreads;
   return dispatchThreads >= 0 && epilogueThreads * epilogueRegisters + NonEpilogueComputeThreads * transferRegisters +
@@ -262,7 +270,7 @@ struct KernelParameters {
   using Collective = Types;
   using Tiles = typename Types::Tiles;
   using SharedStorage = std::conditional_t<Types::WeightMxfp4, W4A8SharedStorageT<Types>, W8A16SharedStorageT<Types>>;
-  static constexpr int ThreadCount = Types::NumWarps * 32;
+  static constexpr int ThreadCount = Types::NumWarps * WARP_SIZE;
   static constexpr bool WeightMxfp4 = Types::WeightMxfp4;
   static constexpr bool LocalExpert = Types::LocalExpert;
   static constexpr ActivationDtype Activation = ActDtype;
@@ -303,7 +311,7 @@ struct KernelThreadLocation {
 
 template <int ClusterSize>
 MSCCLPP_DEVICE_INLINE KernelThreadLocation makeKernelThreadLocation() {
-  return KernelThreadLocation{int(threadIdx.x / warpSize), int(threadIdx.x % warpSize), int(blockIdx.x % ClusterSize),
+  return KernelThreadLocation{int(threadIdx.x / WARP_SIZE), int(threadIdx.x % WARP_SIZE), int(blockIdx.x % ClusterSize),
                               int(blockIdx.x / ClusterSize)};
 }
 
@@ -344,7 +352,7 @@ W8A16KernelEntry<LocalMode> w8a16KernelEntry(const NativeConfig& config);
 // Routing scratch words ahead of the cached routes: two per-expert arrays, three per-rank arrays, a batch of
 // RouteSegmentBatch segment bounds and bases, and three CTA words, rounded up to an even count so the 8-byte cached
 // routes stay aligned.
-constexpr int RouteSegmentBatch = 32;
+constexpr int RouteSegmentBatch = WARP_SIZE;
 
 __host__ __device__ constexpr size_t routingScratchHeaderInts(int localExperts, int worldSize) {
   return (2 * size_t(localExperts) + 3 * size_t(worldSize) + 2 * RouteSegmentBatch + 3 + 1) / 2 * 2;
@@ -358,6 +366,42 @@ __host__ __device__ T* at(void* base, size_t offset) {
 template <class T, auto Scope>
 __device__ void waitAtLeast(T* address, T value) {
   POLL_MAYBE_JAILBREAK((atomicLoad<T, Scope>(address, memoryOrderAcquire) < value), SpinLimit);
+}
+
+MSCCLPP_DEVICE_INLINE void signalReadyCounter(int* counter, uint32_t count = 1u) {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
+  asm volatile("red.release.gpu.global.add.u32 [%0], %1;" ::"l"(counter), "r"(count) : "memory");
+#else
+  (void)atomicFetchAdd<int, scopeDevice>(counter, int(count), memoryOrderRelease);
+#endif
+}
+
+MSCCLPP_DEVICE_INLINE void waitReadyCounter(int* counter, int expectedCount) {
+  waitAtLeast<int, scopeDevice>(counter, expectedCount);
+}
+
+MSCCLPP_DEVICE_INLINE void addSharedRelease(uint32_t* counter, uint32_t value) {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
+  uint32_t sharedAddr = static_cast<uint32_t>(__cvta_generic_to_shared(counter));
+  asm volatile("red.release.cta.shared.add.u32 [%0], %1;" ::"r"(sharedAddr), "r"(value) : "memory");
+#else
+  (void)atomicFetchAdd<uint32_t, cuda::thread_scope_block>(counter, value, memoryOrderRelease);
+#endif
+}
+
+MSCCLPP_DEVICE_INLINE void resetSharedRelaxed(uint32_t* counter) {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
+  uint32_t sharedAddr = static_cast<uint32_t>(__cvta_generic_to_shared(counter));
+  asm volatile("atom.relaxed.cta.shared.exch.b32 _, [%0], 0;" ::"r"(sharedAddr) : "memory");
+#else
+  atomicStore<uint32_t, cuda::thread_scope_block>(counter, 0u, memoryOrderRelaxed);
+#endif
+}
+
+MSCCLPP_DEVICE_INLINE void fenceAsyncProxyGlobal() {
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
+  asm volatile("fence.proxy.async.global;" ::: "memory");
+#endif
 }
 
 // Sense-reversing barrier for a complete resident 1D grid. Every CTA must call each round, CTA0 must participate,
@@ -387,6 +431,33 @@ MSCCLPP_DEVICE_INLINE void signalAndWait(const KernelParams& params, int peer) {
       at<uint64_t>(params.local, params.symmetric.expectedPeerSignals) + peer}};
   channel.signal();
   channel.wait(SpinLimit);
+}
+
+// Synchronizes the resident grid and waits until all peer ranks have completed their partial-output stores for this
+// epoch. Returns false for follower CTAs without downstream work so they can exit early after the grid barrier.
+template <class KernelParams>
+MSCCLPP_DEVICE_INLINE bool syncPeerPartialOutputs(const KernelParams& params, bool ctaHasDownstreamWork) {
+  traceKernel(KernelTracePhase::OutputJoin, true);
+  syncResidentGrid(&params.workspace.control->residentGridSyncState, gridDim.x);
+  if (blockIdx.x > 0 && !ctaHasDownstreamWork) {
+    traceKernel(KernelTracePhase::OutputJoin, false);
+    return false;
+  }
+  if (blockIdx.x == 0 && threadIdx.x == 0) {
+    *at<uint64_t>(params.local, params.symmetric.epoch) = params.workspace.control->epoch;
+  }
+  if (threadIdx.x < params.config.worldSize) {
+    // Only CTA0 consumes the peer notification; followers observe the same epoch.
+    if (blockIdx.x == 0) {
+      signalAndWait(params, threadIdx.x);
+    } else if (threadIdx.x != params.config.rank) {
+      waitAtLeast<uint64_t, scopeSystem>(at<uint64_t>(params.local, params.symmetric.peerSignals) + threadIdx.x,
+                                         params.workspace.control->epoch);
+    }
+  }
+  __syncthreads();
+  traceKernel(KernelTracePhase::OutputJoin, false);
+  return true;
 }
 
 }  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail
