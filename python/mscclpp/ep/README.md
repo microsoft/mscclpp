@@ -140,9 +140,10 @@ means one per valid route. Routing values are not read or validated on the host.
 RANK_MAJOR and throughput outputs include CUDA int32 `topk_ids` and FP32
 `weights` with shape `tokens.shape[:-1] + (K,)`. Latency IDs are global by
 default, with `invalid_token_expert_id` (default `num_experts`) marking dropped
-or non-local entries. Latency RANK_MAJOR can set `emit_local_expert_ids=True`
-to emit valid IDs in `[0, num_local_experts)` instead; its default invalid ID is
-`-1`. Throughput IDs are local to the destination rank, with `-1` marking
+or non-local entries. Latency RANK_MAJOR, including hierarchical inter-domain dispatch,
+can set `emit_local_expert_ids=True` to emit valid IDs in
+`[0, num_local_experts)` instead; its default invalid ID is `-1`.
+Input routing IDs remain global. Throughput IDs are local to the destination rank, with `-1` marking
 invalid routes in valid rows.
 
 Latency RANK_MAJOR must dispatch into the runtime-owned buffer. It also exposes
@@ -188,9 +189,13 @@ with latency `DIRECT_SEND` (either layout). The default is `True` for
   destination. Neither mode has a block-scale sideband.
 * Latency RANK_MAJOR combine input is BF16 by default. This means MM2 has
   already produced/dequantized BF16 output. Static-FP8 dispatch may instead set
-  `combine_format=DispatchDataType.FP8_E4M3_STATIC`; MM2 writes
-  `q = E4M3(real * S)` to `combine_input_buffer`, and combine computes
-  `FP32(q) * (1 / S)` with the existing dispatch scale. Combine never
+  `combine_format=DispatchDataType.FP8_E4M3_STATIC` and `scale=(S, C)` (or a
+  scalar `scale=S`); MM2 writes `q = E4M3(real * C)` to `combine_input_buffer`,
+  and combine computes `FP32(q) * (1 / C)`. Passing a scalar `scale=S` or
+  `scale=(S, None)` uses `S` for combine as well. An explicit combine scale must
+  be finite and positive with a finite float32 reciprocal, and is accepted only
+  for static-FP8 combine. Both scales are selected at dispatch and retained by
+  its handle. Combine never
   quantizes; it applies FP32 route weights only for `DIRECT_SEND`, accumulates
   in FP32, and writes BF16.
 * Throughput FP8 requires `torch.float8_e4m3fn` input and
@@ -272,9 +277,10 @@ Runtime views are reused by later operations, not independent results.
   input, routing, and weight values may change while their pointers, shapes,
   token count, and active capacity remain fixed. Every rank must replay
   collectives in the same order.
-* CUDA SM90+ and one IPC domain are required; HIP and inter-domain transports
-  are unsupported. The implementation accepts 1-64 ranks, not a claim of
-  hardware qualification of every 64-rank topology. Expert placement is even
+* CUDA SM90+ is required; HIP is unsupported. Within one CUDA IPC domain, both
+  modes accept 1-64 ranks; latency `RANK_MAJOR` additionally supports up to 128
+  ranks across two equal IPC domains via GPUNetIO (not a claim of hardware
+  qualification of every topology). Expert placement is even
   and contiguous; top-k is 1-16; throughput allows at most 128 experts per rank.
 * Latency hidden sizes are `256, 512, 768, 1024, 1280, 1536, 1792, 2048, 2560, 4096, 4352, 5120, 5376, 6656, 7168, 8192, 8704, 9216`.
   Throughput combine always consumes BF16 and requires hidden size to be a
@@ -283,13 +289,117 @@ Runtime views are reused by later operations, not independent results.
   Default dispatch/combine blocks are `(130, 128)` for latency or `(24, 32)` for
   throughput, clipped to SM count. Custom values must satisfy `D <= 130` and
   `1 <= C <= 128`; latency also requires `D >= R+2`, and latency RANK_MAJOR
-  combine requires `C > 1`. Native shared-memory, residency, and occupancy
+  combine requires `C > 1` (`C >= R` across domains). Native shared-memory, residency, and occupancy
   checks still apply. `num_blocks=(D, C)` sets the two grid sizes explicitly. A
   scalar `N` sets the dispatch grid to `N`; latency dispatch reserves two control
   blocks, so combine uses the remaining `N-2` worker blocks, while throughput
   uses `N` for both operations.
 * The API does not automatically overlap communication with expert computation
   or provide PyTorch autograd backward support.
+
+## Cross-domain hierarchical latency `RANK_MAJOR`
+
+Cross-domain EP maps each GPU (`0`–`7`) to `Transport::IB0`–`IB7` using
+`MSCCLPP_HCA_DEVICES` when set, or the default `ibverbs` device order otherwise.
+`qps_per_peer` (`qpsPerPeer`, 1–4, default 4) sets the QPs per peer, and
+`n_tokens_per_chunk` (`nTokensPerChunk`, 1–128, default 8) sets the tokens per
+RDMA chunk. Hierarchical dispatch and combine stripe chunks round-robin across all
+configured QPs.
+
+### Hierarchical dispatch
+
+Latency `RANK_MAJOR` EP automatically uses the hierarchical algorithm when ranks span
+two equal, fully IPC-mapped domains (`topk <= 16`; BF16, `FP8_E4M3_STATIC`, or
+`MXFP8_E4M3`). Rank `r` pairs with gateway rank `(r + domainSize) % worldSize`
+in the other domain:
+
+- **Control block (block 0).** Counts routes, writes a self-validating `LL8Packet`
+  header (`nRemoteTokens` and per-rank counts), publishes local intra-domain counts and
+  completion signals, and posts RDMA transfers. QP 0 sends the header
+  (`Gateway::sendPacket`), all QPs stream ready chunks (`Gateway::send`), and
+  QP 0 signals the peer (`Gateway::signalForwardComplete`) once local forwarding finishes.
+- **Forwarder blocks (`1 .. min((gridBlocks - 1) // 2, 16)`).** Read the peer
+  header (forwarder 0 relays per-rank counts to intra-domain peers), wait for
+  per-QP `qpSignals`, TMA-load incoming tokens, forward payloads and metadata to
+  intra-domain destinations (`Gateway::forward`), cache routes for combine, and
+  publish intra-domain readiness (`Gateway::signalIntraDomain`).
+- **Producer blocks (remaining worker blocks).** Quantize or TMA-load input
+  tokens, enqueue compact remote tokens into the RDMA send buffer
+  (`Gateway::enqueue`), and store intra-domain tokens directly.
+- **Receive.** Each worker block finalizes counts and padding metadata for a
+  subset of source ranks, waiting on intra-domain semaphores for intra-domain sources
+  and `Gateway::waitIntraDomain` for cross-domain sources.
+
+Dispatch returns without draining QPs. The paired rank sends a completion signal
+(`Gateway::signalForwardComplete`) on QP 0 after its forwarders finish, and the next Combine
+control block consumes that completion (`Gateway::waitForwardComplete`) before the next
+Dispatch reuses the buffers.
+
+### Hierarchical combine
+
+Hierarchical combine uses gateway aggregation for both `RANK_LOCAL_REDUCE` and
+`DIRECT_SEND`. Each gateway reduces local-domain expert outputs in FP32 and
+streams compact partial sums back over RDMA in per-QP chunks (FP32 by default, or
+BF16 when `combine_inter_domain_dtype` / `combineInterDomainDtype` is set to
+BF16). Each owner reduces its own intra-domain
+contributions in FP32, adds the returned remote-domain partial sum, and casts to
+BF16 once (**FP32 addition grouping differs** from single-domain combine):
+
+- **Control block (block 0).** Exchanges intra-domain start signals, streams
+  ready reduced chunks over RDMA (`Gateway::send`), resets dispatch
+  send counters, and waits for the peer's Dispatch completion.
+- **Worker blocks.** Split into two 16-warp groups. Gateway reductions run first
+  (`Gateway::reduce`: chunk 0 launches uncontested, later chunks pace
+  behind one grid wave of completed TMA loads); groups then reduce local tokens
+  and fuse remote partial sums directly as chunks arrive (`Gateway::poll`/`wait`).
+
+Combine requires at least `worldSize` blocks and **exactly one fresh Dispatch
+before every Combine**, including CUDA graph replays.
+
+### Cross-round synchronization
+
+Paired gateway ranks (`A`, `B`) and their intra-domain peers (`B'`) alternate
+`Dispatch -> Combine` rounds on their bound CUDA streams using a monotonic
+per-round `flag` (shown below for `A -> B -> B'` dispatch and `B' -> B -> A`
+combine; the reverse direction is symmetric):
+
+```mermaid
+sequenceDiagram
+    participant A as Rank A (Domain 0)
+    participant B as Gateway Rank B (Domain 1)
+    participant B2 as Peer Rank B' (Domain 1)
+
+    loop Each round (monotonic flag)
+        Note over A,B2: Dispatch
+        Note over A: Reset local combine QP counters
+        A->>B: RDMA header (token counts, round flag)
+        A->>B: RDMA token chunks + increment dispatch QP counters
+        B->>B2: Write token count (round flag) + TMA-store tokens
+        Note over B: Last forwarder resets dispatch QP counters
+        B->>B2: Signal intra-domain payload ready (round flag)
+        B->>A: RDMA forward-complete signal
+
+        Note over A,B2: Stream boundary (expert compute)
+
+        Note over A,B2: Combine
+        B->>B2: Intra-domain ready signal
+        B2->>B: Intra-domain ready signal
+        B2-->>B: TMA-load expert outputs and reduce domain partials
+        B->>A: RDMA reduced chunks + increment combine QP counters
+        Note over B: Wait and reset forward-complete signal
+        Note over A: Wait for reduced chunks, wait and reset forward-complete signal
+    end
+```
+
+During `Dispatch`, `A` resets its combine QP counters before sending the
+round-tagged header and token chunks to `B`. Once `B`'s forwarders finish
+relaying tokens to intra-domain peers (`B'`), the last forwarder resets `B`'s
+dispatch QP counters before `B` notifies both `B'` (intra-domain ready) and `A`
+(RDMA forward-complete). During `Combine`, intra-domain peers synchronize before
+`B` gathers and reduces domain partials back to `A`, while each rank waits on
+and resets its peer's forward-complete signal before the stream can enter the
+next `Dispatch`—ensuring receive buffers and counters are never reused while
+prior-round transfers are in flight or before local resets complete.
 
 ## Unified EP benchmark
 
@@ -332,8 +442,37 @@ DeepEP and the NCCL profiling barrier require `MASTER_ADDR` on rank 0. For
 multi-node runs, set it to rank 0's IP or hostname reachable by every rank
 instead of a loopback address. `MASTER_PORT` defaults to `29700`.
 
-The MSCCL++ backend still requires SM90+ and one IPC domain; this benchmark
-does not add inter-domain transport support.
+The MSCCL++ backend requires SM90+. Hierarchical latency `rank_major` also supports
+two equal NVLink/IPC domains connected by GPUNetIO. Set `MSCCLPP_HCA_DEVICES`
+to the GPU-index-ordered HCA list for the hosts; NCCL-EP uses its own
+`NCCL_IB_HCA`/GIN configuration. The benchmark reports the discovered IPC
+domain size for MSCCL++ and the LSA-team count and GIN type for NCCL.
+It does not emulate topology or override the NIC mapping automatically.
+
+For example, on 32 ranks split into two physical NVL16 domains, compare BF16
+rank-local aggregation with 16 experts per rank:
+
+```bash
+mpirun -np 32 python -m mscclpp_benchmark.ep.bench \
+    --backend mscclpp --mode latency --ep-layout rank_major \
+    --combine-mode rank_local_reduce --dispatch-dtype bf16 --combine-dtype bf16 \
+    -t 64 -d 4096 -k 8 -e 512 --qps-per-peer 4 --n-tokens-per-chunk 16 \
+    --cuda-graph --iters-per-graph 50 --validate
+```
+
+Run the same command with `--backend nccl` for NCCL-EP. `--qps-per-peer` also
+sets NCCL-EP's QPs per rank; `--n-tokens-per-chunk` is MSCCL++-specific.
+Omitting these options preserves each backend's defaults. NCCL-EP rank-major
+supports rank-local reduction, not MSCCL++'s per-top-k direct-send input layout.
+MSCCL++ hierarchical `--n-tokens-per-chunk` accepts any integer from 1 through 128,
+including 16, 24, 32, and 48; it need not be a power of two. Partial final
+chunks are supported. All ranks must use the same chunk setting.
+
+`--routing random` preserves the default independent, approximately uniform
+expert selection. For sustained expert-load imbalance, `--routing lognormal
+--routing-sigma 0.85` draws shared expert popularities from
+`LogNormal(0, 0.85**2)` with `--seed` and samples distinct experts per token
+without replacement.
 
 Latency accepts `expert_major` or `rank_major`; MSCCL++ throughput accepts
 `token_major` or `rank_major`, and NCCL-EP throughput accepts `token_major`
@@ -351,13 +490,16 @@ dispatch/combine block configuration or DeepEP's communication SM budget.
 mapped to static FP8 on `rank_major` for MSCCL++ latency and DeepEP),
 `fp8_e4m3_static` (`rank_major` static FP8 for MSCCL++ latency and DeepEP), or
 `mxfp8_e4m3` (`rank_major` MXFP8 for MSCCL++ latency and DeepEP). NCCL-EP
-supports `bf16` and `fp8_e4m3` (latency `expert_major`). For
-static FP8, `--fp8-scale` sets the scalar multiplier (default `1.0`),
+supports `bf16` and `fp8_e4m3` (latency `rank_major` or `expert_major`).
+NCCL-EP rank-major FP8 uses block scales and BF16 combine; MSCCL++ rank-major
+maps `fp8_e4m3` to static scaling, so the quantization formats are not identical.
+For static FP8, `--fp8-scale` sets the scalar multiplier (default `1.0`),
 `--fp8-input-mode` selects MSCCL++ fused BF16 quantization (`quantize`,
-default) or prequantized E4M3 input (`prequantized`), and `--combine-dtype`
+default) or prequantized E4M3 input (`prequantized`), `--combine-dtype`
 selects MSCCL++ latency `rank_major` combine input (`bf16` default or
-`fp8_e4m3_static`). `--validate` checks MSCCL++'s identity-expert combine
-result before timing.
+`fp8_e4m3_static`), and `--combine-inter-domain-dtype` (`fp32` default or
+`bf16`) selects MSCCL++ hierarchical combine's inter-domain wire format.
+`--validate` checks MSCCL++'s identity-expert combine result before timing.
 
 CUDA events measure paired dispatch/combine, excluding input generation and
 synthetic expert-output construction. NCCL-EP uses a prebuilt routing handle;

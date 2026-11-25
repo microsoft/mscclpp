@@ -367,12 +367,10 @@ MSCCLPP_DEVICE_INLINE bool acquireRecvTask(RecvTask& task, WorkspaceView& worksp
   auto* sharedTask = reinterpret_cast<RecvTask*>(sharedMem);
   const int taskIdx = static_cast<int>(blockIdx.x) - 1;
   if (threadIdx.x == 0) {
-    while (mscclpp::atomicLoad<uint32_t, mscclpp::scopeDevice>(workspaceView.dispatchTasksReadyFlag_,
-                                                               mscclpp::memoryOrderAcquire) != flag);
+    waitEqual<mscclpp::scopeDevice>(workspaceView.dispatchTasksReadyFlag_, flag);
     if (taskIdx < *workspaceView.dispatchNumRecvTasks_) {
       task = workspaceView.dispatchRecvTasks_[taskIdx];
-      while (mscclpp::atomicLoad<uint32_t, mscclpp::scopeDevice>(
-                 workspaceView.dispatchRankReadyFlags_ + task.sourceRank_, mscclpp::memoryOrderAcquire) != flag);
+      waitEqual<mscclpp::scopeDevice>(workspaceView.dispatchRankReadyFlags_ + task.sourceRank_, flag);
       *sharedTask = task;
     } else {
       *sharedTask = {-1, 0, 0};

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import torch
 
@@ -110,7 +111,18 @@ def sum_matching_kernel_us(key_averages, substrs):
 # Routing inputs — shared by both backends so the comparison is apples-to-apples.
 # BF16 tokens + top-k routing setup.
 # ----------------------------------------------------------------------------
-def make_inputs(num_tokens, hidden, num_topk, num_experts, rank, seed):
+def lognormal_expert_probabilities(num_experts, sigma, seed):
+    """Normalized LogNormal(0, sigma**2) expert popularity, shared by source ranks."""
+    if not math.isfinite(sigma) or sigma < 0:
+        raise ValueError("routing sigma must be finite and non-negative")
+    generator = torch.Generator(device="cpu").manual_seed(seed)
+    logits = torch.randn(num_experts, dtype=torch.float64, generator=generator) * sigma
+    return torch.softmax(logits, dim=0)
+
+
+def make_inputs(num_tokens, hidden, num_topk, num_experts, rank, seed, *, routing="random", routing_sigma=0.85):
+    if routing not in ("random", "lognormal"):
+        raise ValueError(f"unsupported routing distribution: {routing}")
     torch.manual_seed(seed + rank)
     rank_offset = 128
     x = torch.ones((num_tokens, hidden), dtype=torch.bfloat16, device="cuda") * (rank - rank_offset)
@@ -118,6 +130,15 @@ def make_inputs(num_tokens, hidden, num_topk, num_experts, rank, seed):
     scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device="cuda").abs() + 1
     topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=True)[1].to(torch.int64)
     topk_weights = torch.randn((num_tokens, num_topk), dtype=torch.float32, device="cuda").abs()
+    if routing == "lognormal":
+        # A separate RNG preserves the original payloads and router weights.
+        probabilities = lognormal_expert_probabilities(num_experts, routing_sigma, seed)
+        if int((probabilities > 0).sum()) < num_topk:
+            raise ValueError("routing sigma leaves fewer than top-k nonzero expert probabilities")
+        generator = torch.Generator(device="cpu").manual_seed(seed + rank + 1)
+        topk_idx = torch.multinomial(
+            probabilities.expand(num_tokens, -1), num_topk, replacement=False, generator=generator
+        ).to(x.device)
     # ep_bench byte accounting: num_valid_selections = count(topk_idx >= 0); every
     # selection is valid here (a full LL load), so this equals num_tokens * top_k.
     num_valid_selections = int((topk_idx >= 0).sum().item())
@@ -135,7 +156,8 @@ def simulated_gemm_output(dispatch_out):
     tokens = dispatch_out.tokens.float()
     quant = dispatch_out.quant
     if quant.scale is not None:
-        return (tokens / quant.scale).to(torch.bfloat16)
+        dispatch_scale = quant.scale[0] if isinstance(quant.scale, tuple) else quant.scale
+        return (tokens / dispatch_scale).to(torch.bfloat16)
     block_scales = quant.block_scales
     if block_scales.dtype == torch.uint8:
         scales = torch.ldexp(
@@ -151,7 +173,7 @@ def simulated_gemm_output(dispatch_out):
 def validate_combine_output_mpi(actual, expected, comm, *, exact):
     """MPI analog of the test's validate_combine_output: global max abs diff plus a
     cross-rank finiteness (and, for direct_send, bit-exactness) assertion."""
-    local_diff = float((actual.float() - expected.float()).abs().max().item())
+    local_diff = float((actual.float() - expected.float()).abs().max().item()) if actual.numel() else 0.0
     global_diff = comm.allreduce(local_diff, op=MPI.MAX)
     local_finite = int(torch.isfinite(actual).all().item())
     assert comm.allreduce(local_finite, op=MPI.MIN) == 1, "LL combine output contains NaN or Inf"

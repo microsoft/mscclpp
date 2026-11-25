@@ -167,7 +167,8 @@ struct GpuNetIoDeviceHandle {
     } else {
       const auto index =
           doca_gpu_dev_verbs_reserve_wq_slots<sharing, DOCA_GPUNETIO_VERBS_QP_SQ, DOCA_GPUNETIO_VERBS_CQ_64B>(q, 2);
-      submitPutWithAccumulateDb<sharing>(q, index, dstAddr, dst.key, srcAddr, src.key, size, accAddr, acc.key, value);
+      submitPutWithAccumulateDb<sharing>(q, index, dstAddr, dst.key, srcAddr, src.key, size, accAddr, acc.key,
+                                         atomicFetchAddr, atomicFetchKey, value);
     }
 #else
     MSCCLPP_ASSERT_DEVICE(false, "GPUNetIO is not enabled");
@@ -304,14 +305,17 @@ struct GpuNetIoDeviceHandle {
   }
 
   template <doca_gpu_dev_verbs_resource_sharing_mode Sharing>
-  __device__ __noinline__ void submitPutWithAccumulateDb(doca_gpu_dev_verbs_qp* q, uint64_t index, uint64_t dstAddr,
-                                                         uint32_t dstKey, uint64_t srcAddr, uint32_t srcKey,
-                                                         uint64_t size, uint64_t accAddr, uint32_t accKey,
-                                                         int64_t value) {
+  __device__ __noinline__ static void submitPutWithAccumulateDb(doca_gpu_dev_verbs_qp* q, uint64_t index,
+                                                                uint64_t dstAddr, uint32_t dstKey, uint64_t srcAddr,
+                                                                uint32_t srcKey, uint64_t size, uint64_t accAddr,
+                                                                uint32_t accKey, uint64_t atomicFetchAddr,
+                                                                uint32_t atomicFetchKey, int64_t value) {
     auto* wqe0 = doca_gpu_dev_verbs_get_wqe_ptr(q, index);
-    prepareWriteWqe(q, wqe0, index, dstAddr, dstKey, srcAddr, srcKey, size);
     auto* wqe1 = doca_gpu_dev_verbs_get_wqe_ptr(q, index + 1);
-    prepareAtomicWqe(q, wqe1, index + 1, accAddr, accKey, value);
+    prepareWriteWqe(q, wqe0, index, dstAddr, dstKey, srcAddr, srcKey, size);
+    doca_gpu_dev_verbs_wqe_prepare_atomic(q, wqe1, index + 1, DOCA_GPUNETIO_IB_MLX5_OPCODE_ATOMIC_FA,
+                                          DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE, accAddr, accKey, atomicFetchAddr,
+                                          atomicFetchKey, sizeof(uint64_t), static_cast<uint64_t>(value), 0);
     doca_gpu_dev_verbs_mark_wqes_ready<Sharing>(q, index, index + 1);
     submitDb<Sharing>(q, index + 2);
   }

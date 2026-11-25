@@ -107,7 +107,7 @@ MSCCLPP_DEVICE_INLINE void reduceExpertMajorTokens(void* output, const int64_t* 
   const int nTopk = workload.numTopk_;
   const int nExperts = workload.numExperts_;
   const int maxTokensPerRank = workload.maxTokensPerRank_;
-  const bool useWeights = topkWeights != nullptr;
+  const bool useWeights = workload.applyRouterWeights_ && topkWeights != nullptr;
   const auto* expertTokens = static_cast<const mscclpp::bf16x8*>(combineBuffer);
   auto* outputTokens = static_cast<mscclpp::bf16x8*>(output);
 

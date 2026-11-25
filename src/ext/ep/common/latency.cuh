@@ -9,6 +9,7 @@
 #include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/memory_channel_device.hpp>
 
+#include "common/gateway.cuh"
 #include "config.hpp"
 #include "device_helpers.cuh"
 #include "kernels.hpp"
@@ -150,6 +151,7 @@ struct WorkspaceView {
   }
 };
 
+#if defined(MSCCLPP_DEVICE_COMPILE)
 MSCCLPP_DEVICE_INLINE uint32_t getDispatchFlag(const WorkspaceView& workspaceView) {
   return workspaceView.dispatchFlags_[static_cast<int>(blockIdx.x)];
 }
@@ -168,14 +170,21 @@ MSCCLPP_DEVICE_INLINE void updateDispatchFlag(WorkspaceView& workspaceView, uint
     workspaceView.dispatchFlags_[thread] = flag;
   }
 }
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
 MSCCLPP_HOST_DEVICE_INLINE size_t workspaceBytes(int nRanks, int nExperts, int maxTokensPerRank, int nTopk) {
   return WorkspaceView::numBytes(nRanks, nExperts, maxTokensPerRank, nTopk);
 }
 
-MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSharedControlBytes(int nRanks) {
+MSCCLPP_HOST_DEVICE_INLINE int dispatchSharedSendSlots(int nRanks) {
   constexpr int NSendSlots = DispatchMaxNWarpGroups * WARP_SIZE;
-  const int nSlots = nRanks > NSendSlots ? nRanks : NSendSlots;
+  return nRanks > NSendSlots ? nRanks : NSendSlots;
+}
+
+MSCCLPP_HOST_DEVICE_INLINE constexpr size_t dispatchSharedControlBytes(int nRanks, bool hierarchical = false) {
+  constexpr int NSendSlots = DispatchMaxNWarpGroups * WARP_SIZE;
+  const int counts = nRanks + (hierarchical ? 1 : 0);
+  const int nSlots = counts > NSendSlots ? counts : NSendSlots;
   return configAlign<size_t>(static_cast<size_t>(nSlots) * sizeof(int), BufferAlignmentBytes);
 }
 
@@ -201,11 +210,44 @@ MSCCLPP_HOST_DEVICE_INLINE size_t dispatchRecvTmaBytes() {
   return static_cast<size_t>(NWorkers) * (tileBytes + sizeof(mscclpp::BulkBarrier));
 }
 
-template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
+template <int Hidden, DispatchDataType DataType>
+MSCCLPP_HOST_DEVICE_INLINE constexpr int hierarchicalForwardWarps() {
+  static_assert(Hidden % 128 == 0);
+  constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(DispatchElementType<DataType>);
+  constexpr size_t ScaleBytes = DataType == DispatchDataType::MXFP8_E4M3 ? Hidden / 32 : 0;
+  constexpr size_t StaticSharedHeadroomBytes = 1024;
+  constexpr size_t AvailableBytes = OptimizedDynamicSharedMemoryBytes - StaticSharedHeadroomBytes -
+                                    dispatchSharedControlBytes(MaxNumRanks, /*hierarchical=*/true);
+  constexpr int MaxSlots = static_cast<int>(AvailableBytes / sizeof(WarpForwardWorkspace<HiddenBytes, ScaleBytes>));
+  static_assert(MaxSlots >= 1);
+  return MaxSlots < DispatchNWarps ? MaxSlots : DispatchNWarps;
+}
+
+template <int Hidden, DispatchDataType DataType>
+MSCCLPP_HOST_DEVICE_INLINE constexpr int hierarchicalMaxProduceGroups() {
+  constexpr int NSlots = hierarchicalForwardWarps<Hidden, DataType>();
+  int nGroups = HierarchicalMaxProduceGroups;
+  while (nGroups > 1 && (nGroups > NSlots || DispatchNWarps % nGroups != 0)) {
+    nGroups /= 2;
+  }
+  return nGroups;
+}
+
+template <int Hidden, DispatchDataType DataType>
+MSCCLPP_HOST_DEVICE_INLINE constexpr size_t hierarchicalDispatchTmaBytes() {
+  static_assert(Hidden % 128 == 0);
+  constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(DispatchElementType<DataType>);
+  constexpr size_t ScaleBytes = DataType == DispatchDataType::MXFP8_E4M3 ? Hidden / 32 : 0;
+  return static_cast<size_t>(hierarchicalForwardWarps<Hidden, DataType>()) *
+         sizeof(WarpForwardWorkspace<HiddenBytes, ScaleBytes>);
+}
+
+template <int Hidden, DispatchDataType DataType, int ScaleBlockSize, bool Hierarchical = false>
 MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSharedBytes(int nRanks, int nExperts, int nTopk) {
-  const size_t controlBytes = dispatchSharedControlBytes(nRanks);
-  const size_t sendBytes = dispatchSendTmaBytes<Hidden, DataType, ScaleBlockSize>(nTopk);
-  const size_t recvBytes = dispatchRecvTmaBytes<Hidden, DataType>();
+  const size_t controlBytes = dispatchSharedControlBytes(nRanks, Hierarchical);
+  const size_t sendBytes = Hierarchical ? hierarchicalDispatchTmaBytes<Hidden, DataType>()
+                                        : dispatchSendTmaBytes<Hidden, DataType, ScaleBlockSize>(nTopk);
+  const size_t recvBytes = Hierarchical ? 0 : dispatchRecvTmaBytes<Hidden, DataType>();
   const size_t tmaBytes = controlBytes + (sendBytes > recvBytes ? sendBytes : recvBytes);
   const size_t metadataBytes = static_cast<size_t>(nRanks + nExperts) * sizeof(int);
   return tmaBytes > metadataBytes ? tmaBytes : metadataBytes;

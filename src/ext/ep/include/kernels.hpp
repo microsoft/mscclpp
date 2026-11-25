@@ -50,8 +50,12 @@ struct Workload {
   DispatchDataType combineDataType_ = DispatchDataType::BF16;
   /// FP8_E4M3_STATIC dispatch multiplier; one for other formats.
   float dispatchScale_ = 1.0f;
+  /// FP8_E4M3_STATIC combine multiplier, resolved independently of dispatch.
+  float combineScale_ = 1.0f;
   /// Whether rank-major dispatch emits destination-rank-local expert IDs.
   bool emitLocalExpertIds_ = false;
+  /// Whether direct-send combine scales each route by its router weight.
+  bool applyRouterWeights_ = true;
   /// Input representation for latency rank-major static FP8.
   QuantConfig::InputMode inputMode_ = QuantConfig::InputMode::PREQUANTIZED;
 };
@@ -108,6 +112,15 @@ void throughputReduceCombine(void* output, const Workload& workload, const Throu
                              int numBlocks, cudaStream_t stream);
 
 size_t workspaceSize(int numRanks, int numExperts, int maxTokensPerRank, int numTopk);
+
+void hierarchicalDispatch(void* output, void* outputScales, int* outputTopkIdx, float* outputTopkWeights,
+                          int* outputCount, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                          const Workload& workload, void* recvBuffer, const DeviceContext& context, int numBlocks,
+                          cudaStream_t stream);
+
+void hierarchicalCombine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                         const Workload& workload, CombineMode combineMode, void* recvBuffer, void* dispatchRecvBuffer,
+                         const DeviceContext& context, int numBlocks, cudaStream_t stream);
 
 void expertMajorDispatch(void* output, void* outputScales, int* outputSrcInfo, int* outputTopkIdx,
                          float* outputTopkWeights, int64_t* outputLayout, int* outputCount, const void* input,

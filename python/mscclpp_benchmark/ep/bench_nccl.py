@@ -29,6 +29,8 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
     import nccl.ep as nccl_ep
 
     x, topk_idx, topk_weights, _ = inputs
+    if args.combine_mode == "direct_send" and args.ep_layout == "rank_major":
+        raise ValueError("NCCL-EP rank_major combines pre-reduced rank-local outputs; use rank_local_reduce")
     num_tokens, hidden = args.num_tokens, args.hidden
     num_experts, num_topk = args.num_experts, args.num_topk
     num_local_experts = num_experts // num_ranks
@@ -37,8 +39,8 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
     if use_fp8:
         if raw_disp_dtype != "fp8_e4m3":
             raise ValueError(f"NCCL-EP does not support --dispatch-dtype {raw_disp_dtype}")
-        if args.mode != "latency" or args.ep_layout == "rank_major":
-            raise ValueError("NCCL-EP FP8 dispatch requires latency mode with expert_major layout")
+        if args.mode != "latency":
+            raise ValueError("NCCL-EP FP8 dispatch requires latency mode")
     if args.mode == "latency":
         if args.ep_layout == "token_major":
             raise ValueError("NCCL-EP latency supports expert_major or rank_major layout")
@@ -83,9 +85,19 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
         # HT expert-major counts expanded expert slots; HT flat counts unique received tokens.
         max_recv_tokens_per_rank=max_recv_tokens,
         max_token_bytes=hidden * 2,  # BF16
+        num_qp_per_rank=args.qps_per_peer or 0,
+        max_num_sms=args.num_sms,
         alloc=nccl_ep.AllocConfig(),  # default cudaMalloc/cudaFree
     )
     ep_group = nccl_ep.Group.create(ncomm, config)
+    lsa_teams = ncomm.n_lsa_teams
+    gin_type = ncomm.gin_type
+    if rank == 0:
+        print(
+            f"[cfg] nccl lsa_teams={lsa_teams} gin_type={gin_type} "
+            f"ranks_per_lsa={num_ranks // lsa_teams} qps_per_rank={config.num_qp_per_rank or 'AUTO'}",
+            flush=True,
+        )
 
     stream_ptr = torch.cuda.current_stream().cuda_stream
 
@@ -129,9 +141,7 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
     if use_fp8:
         if hidden % 512 != 0:
             raise ValueError("NCCL-EP latency FP8 requires hidden to be a multiple of 512")
-        recv_scales = torch.empty(
-            (num_local_experts, num_ranks * num_tokens, hidden // 128), dtype=torch.float32, device="cuda"
-        )
+        recv_scales = torch.empty((*recv.shape[:-1], hidden // 128), dtype=torch.float32, device="cuda")
         recv_scales_t = nccl_ep.Tensor(recv_scales)
 
     x_t = nccl_ep.Tensor(dispatch_x)
@@ -163,15 +173,24 @@ def setup_nccl(args, comm, rank, num_ranks, inputs):
         recv_idx = torch.empty((num_ranks, num_tokens, num_topk), dtype=torch.int32, device="cuda")
         recv_idx_t = nccl_ep.Tensor(recv_idx)
         dispatch_inputs = nccl_ep.DispatchInputs(tokens=x_t, topk_weights=topk_weights_t)
-        dispatch_outputs = nccl_ep.DispatchOutputs(tokens=recv_t, topk_weights=recv_weights_t, topk_idx=recv_idx_t)
+        dispatch_outputs = nccl_ep.DispatchOutputs(
+            tokens=recv_t, topk_weights=recv_weights_t, topk_idx=recv_idx_t, scales=recv_scales_t
+        )
         dispatch_layout = nccl_ep.LayoutInfo(src_rank_counters=recv_count_t)
     else:
         dispatch_inputs = nccl_ep.DispatchInputs(tokens=x_t)
         dispatch_outputs = nccl_ep.DispatchOutputs(tokens=recv_t, scales=recv_scales_t)
         dispatch_layout = nccl_ep.LayoutInfo(expert_counters=recv_count_t)
-    dispatch_config = nccl_ep.DispatchConfig()
+    dispatch_config = (
+        nccl_ep.DispatchConfig(quantization_recipe=nccl_ep.DispatchQuantizationRecipe.DS_FP8E3M4)
+        if use_fp8
+        else nccl_ep.DispatchConfig()
+    )
     combine_inputs = nccl_ep.CombineInputs(tokens=combine_in_t)
-    combine_outputs = nccl_ep.CombineOutputs(tokens=out_t, topk_weights=topk_weights_t)
+    combine_outputs = nccl_ep.CombineOutputs(
+        tokens=out_t,
+        topk_weights=topk_weights_t if args.mode == "latency" and nccl_layout == nccl_ep.Layout.EXPERT_MAJOR else None,
+    )
     combine_config = nccl_ep.CombineConfig()
 
     def _dispatch(stream):

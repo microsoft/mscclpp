@@ -3,10 +3,13 @@
 
 #include <cuda.h>
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <future>
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/ext/ep/moe_runtime.hpp>
+#include <string>
 
 #include "exception.hpp"
 #include "kernels.hpp"
@@ -17,7 +20,9 @@ namespace ep {
 
 LatencyRuntimeContext::LatencyRuntimeContext(mscclpp::Communicator& communicator, int rank, int numRanks,
                                              int numRanksPerIpcDomain, int maxTokensPerRank, int hidden, int numExperts,
-                                             int numTopk, DispatchLayout outputLayout, CombineMode combineMode)
+                                             int numTopk, DispatchLayout outputLayout, CombineMode combineMode,
+                                             int qpsPerPeer, int nTokensPerChunk,
+                                             mscclpp::DataType combineInterDomainDtype)
     : rank_(rank),
       numRanks_(numRanks),
       numRanksPerIpcDomain_(numRanksPerIpcDomain),
@@ -27,39 +32,79 @@ LatencyRuntimeContext::LatencyRuntimeContext(mscclpp::Communicator& communicator
       numTopk_(numTopk),
       outputLayout_(outputLayout),
       combineMode_(combineMode),
+      qpsPerPeer_(qpsPerPeer),
+      nTokensPerChunk_(nTokensPerChunk),
+      combineInterDomainDtype_(combineInterDomainDtype),
       symmetricBufferBytes_(0),
       workspaceBytes_(0),
       communicator_(communicator) {
-  if (!isSupportedHidden(hidden)) {
-    EP_THROW("Unsupported latency hidden size: " + std::to_string(hidden));
-  }
   EP_HOST_ASSERT(maxTokensPerRank > 0);
   EP_HOST_ASSERT(numExperts > 0 && numExperts % numRanks_ == 0);
   EP_HOST_ASSERT(numTopk > 0 && numTopk <= MaxNumTopk);
   EP_HOST_ASSERT(outputLayout == DispatchLayout::EXPERT_MAJOR || outputLayout == DispatchLayout::RANK_MAJOR);
   EP_HOST_ASSERT(combineMode == CombineMode::RANK_LOCAL_REDUCE || combineMode == CombineMode::DIRECT_SEND);
+  EP_HOST_ASSERT(numRanks_ % numRanksPerIpcDomain_ == 0);
+  if (combineInterDomainDtype != mscclpp::DataType::FLOAT32 && combineInterDomainDtype != mscclpp::DataType::BFLOAT16) {
+    EP_THROW("Unsupported combineInterDomainDtype: expected FLOAT32 or BFLOAT16");
+  }
+  MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId_));
 
-  symmetricBufferBytes_ = static_cast<int64_t>(
-      latencyStorageSize(maxTokensPerRank, hidden, numRanks_, numExperts, numTopk, outputLayout, combineMode));
+  isHierarchical_ = isHierarchical(numRanks_, numRanksPerIpcDomain_, outputLayout);
+  if (!isSupportedHidden(hidden)) {
+    EP_THROW("Unsupported latency hidden size: " + std::to_string(hidden));
+  }
+  symmetricBufferBytes_ = static_cast<int64_t>(storageLayout().totalBytes_);
   workspaceBytes_ = workspaceSize(numRanks_, numExperts, maxTokensPerRank, numTopk);
   EP_HOST_ASSERT(symmetricBufferBytes_ % BufferAlignmentBytes == 0);
-  MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId_));
-  EP_HOST_ASSERT(numRanks_ % numRanksPerIpcDomain_ == 0);
-  available_ = isSupportedRanks(numRanks_) && numRanksPerIpcDomain_ >= numRanks_;
+  available_ = isSupportedRanks(numRanks_, isHierarchical_) &&
+               (!isHierarchical_ ? numRanksPerIpcDomain_ >= numRanks_
+                                 : (numRanks_ > 1 && numRanks_ == 2 * numRanksPerIpcDomain_ &&
+                                    numRanksPerIpcDomain_ <= MaxSingleDomainRanks));
 }
 
 LatencyRuntimeContext::~LatencyRuntimeContext() noexcept(false) {
   CudaDeviceGuard deviceGuard(deviceId_);
+  portChannelCtx_.reset();
+  portChannelHandles_.reset();
+  portChannels_.clear();
   if (deviceContext_.devicePtr_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(deviceContext_.devicePtr_));
   if (peerMappedBufferBasesGpu_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(peerMappedBufferBasesGpu_));
   if (workspace_ != nullptr) MSCCLPP_CUDATHROW(cudaFree(workspace_));
   symmetricBuffer_.reset();
 }
 
+LatencyStorageLayout LatencyRuntimeContext::storageLayout() const {
+  return LatencyStorageLayout(symmetricBuffer_.get(), maxTokensPerRank_, hidden_, numRanks_, numRanksPerIpcDomain_,
+                              numExperts_, numTopk_, outputLayout_, combineMode_, combineInterDomainDtype_);
+}
+
 void LatencyRuntimeContext::initialize() {
   EP_HOST_ASSERT(available_);
   EP_HOST_ASSERT(symmetricBuffer_ == nullptr);
   AvoidCudaGraphCaptureGuard captureGuard;
+
+  static constexpr std::array<mscclpp::Transport, 8> IbTransports = {
+      mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2, mscclpp::Transport::IB3,
+      mscclpp::Transport::IB4, mscclpp::Transport::IB5, mscclpp::Transport::IB6, mscclpp::Transport::IB7,
+  };
+
+  if (isHierarchical_) {
+    if (numRanks_ <= 1 || numRanks_ > MaxNumRanks || numRanks_ % 2 != 0 || numRanks_ != 2 * numRanksPerIpcDomain_) {
+      EP_THROW("Hierarchical dispatch requires exactly two equal, fully IPC-mapped domains");
+    }
+    if (deviceId_ < 0 || deviceId_ >= static_cast<int>(IbTransports.size())) {
+      EP_THROW("CUDA device ID " + std::to_string(deviceId_) + " exceeds supported IB transports (IB0-IB7)");
+    }
+    if (qpsPerPeer_ < 1 || qpsPerPeer_ > MaxQpsPerPeer) {
+      EP_THROW("Hierarchical dispatch requires qpsPerPeer in [1, 4]");
+    }
+    if (nTokensPerChunk_ < 1 || nTokensPerChunk_ > 128) {
+      EP_THROW("Hierarchical EP requires nTokensPerChunk in [1, 128]");
+    }
+    if (numTopk_ > MaxNumTopk) {
+      EP_THROW("Hierarchical combine requires topk <= 16");
+    }
+  }
 
   workspace_ = mscclpp::detail::gpuCalloc(workspaceBytes_);
 
@@ -74,29 +119,60 @@ void LatencyRuntimeContext::initialize() {
     return peer != rank_ && ipcDomainSize > 1 && rank_ / ipcDomainSize == peer / ipcDomainSize;
   };
 
-  constexpr int IpcTag = 1;
+  constexpr int MemoryTag = 1;
+  constexpr int ConnectTagBase = 2;
   peerBufferMemories_.resize(numRanks_);
   peerBufferMemories_[rank_] =
       communicator_.registerMemory(symmetricBuffer_.get(), symmetricBufferBytes_, ipcTransport);
+  mscclpp::Transport rdmaTransport = mscclpp::Transport::Unknown;
+  if (isHierarchical_) {
+    rdmaTransport = IbTransports[static_cast<size_t>(deviceId_)];
+    rdmaLocalMemory_ = communicator_.registerMemory(symmetricBuffer_.get(), symmetricBufferBytes_, rdmaTransport);
+  }
+  const int gatewayRank = isHierarchical_ ? (rank_ + ipcDomainSize) % numRanks_ : -1;
   std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteFutures(numRanks_);
-  std::vector<std::shared_future<mscclpp::Connection>> connectionFutures(numRanks_);
+  std::vector<std::shared_future<mscclpp::Connection>> ipcConnectionFutures(numRanks_);
+  std::vector<std::vector<std::shared_future<mscclpp::Connection>>> rdmaConnectionFutures(numRanks_);
   for (int r = 0; r < numRanks_; ++r) {
-    if (!isMappedPeer(r)) continue;
-    communicator_.sendMemory(peerBufferMemories_[rank_], r, IpcTag);
-    remoteFutures[r] = communicator_.recvMemory(r, IpcTag);
-    connectionFutures[r] = communicator_.connect(ipcConfig, r, IpcTag);
+    if (r == rank_) continue;
+    if (isMappedPeer(r)) {
+      communicator_.sendMemory(peerBufferMemories_[rank_], r, MemoryTag);
+      remoteFutures[r] = communicator_.recvMemory(r, MemoryTag);
+      ipcConnectionFutures[r] = communicator_.connect(ipcConfig, r, ConnectTagBase);
+    } else if (r == gatewayRank) {
+      communicator_.sendMemory(rdmaLocalMemory_, r, MemoryTag);
+      remoteFutures[r] = communicator_.recvMemory(r, MemoryTag);
+      for (int q = 0; q < qpsPerPeer_; ++q) {
+        mscclpp::EndpointConfig rdmaConfig(rdmaTransport, {mscclpp::DeviceType::GPU, deviceId_});
+        rdmaConfig.ib.mode = mscclpp::EndpointConfig::Ib::Mode::Device;
+        rdmaConnectionFutures[r].push_back(communicator_.connect(rdmaConfig, r, ConnectTagBase + q));
+      }
+    }
   }
 
   peerMappedBufferBases_.assign(numRanks_, nullptr);
   peerMappedBufferBases_[rank_] = symmetricBuffer_.get();
   std::vector<mscclpp::BaseMemoryChannelDeviceHandle> baseMemoryChannelHandles(numRanks_);
+  std::vector<PortChannelDeviceHandle> portChannelHandles(isHierarchical_ ? static_cast<size_t>(numRanks_) * qpsPerPeer_
+                                                                          : 0);
   for (int r = 0; r < numRanks_; ++r) {
-    if (!isMappedPeer(r)) continue;
-    peerBufferMemories_[r] = remoteFutures[r].get();
-    peerMappedBufferBases_[r] = peerBufferMemories_[r].data();
-    auto semaphore = std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(communicator_, connectionFutures[r].get());
-    baseMemoryChannels_.emplace_back(semaphore);
-    baseMemoryChannelHandles[r] = baseMemoryChannels_.back().deviceHandle();
+    if (r == rank_) continue;
+    if (isMappedPeer(r)) {
+      peerBufferMemories_[r] = remoteFutures[r].get();
+      peerMappedBufferBases_[r] = peerBufferMemories_[r].data();
+      auto semaphore =
+          std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(communicator_, ipcConnectionFutures[r].get());
+      baseMemoryChannels_.emplace_back(semaphore);
+      baseMemoryChannelHandles[r] = baseMemoryChannels_.back().deviceHandle();
+    } else if (r == gatewayRank) {
+      peerBufferMemories_[r] = remoteFutures[r].get();
+      for (int q = 0; q < qpsPerPeer_; ++q) {
+        auto semaphore =
+            std::make_shared<mscclpp::PortDevice2DeviceSemaphore>(communicator_, rdmaConnectionFutures[r][q].get());
+        portChannels_.emplace_back(semaphore, peerBufferMemories_[r], rdmaLocalMemory_);
+        portChannelHandles[static_cast<size_t>(r) * qpsPerPeer_ + q] = portChannels_.back().deviceHandle();
+      }
+    }
   }
 
   peerMappedBufferBasesGpu_ =
@@ -121,6 +197,42 @@ void LatencyRuntimeContext::initialize() {
                     .deviceId_ = deviceId_,
                     .rank_ = rank_,
                     .numRanks_ = numRanks_};
+  if (isHierarchical_) {
+    portChannelHandles_ = mscclpp::GpuBuffer<PortChannelDeviceHandle>(portChannelHandles.size()).memory();
+    mscclpp::gpuMemcpy<PortChannelDeviceHandle>(portChannelHandles_.get(), portChannelHandles.data(),
+                                                portChannelHandles.size(), cudaMemcpyHostToDevice);
+    const ChannelCtx portChannelCtx{portChannelHandles_.get(), numRanks_, qpsPerPeer_};
+    portChannelCtx_ = mscclpp::GpuBuffer<ChannelCtx>(1).memory();
+    mscclpp::gpuMemcpy<ChannelCtx>(portChannelCtx_.get(), &portChannelCtx, 1, cudaMemcpyHostToDevice);
+    hierarchicalDispatchScratch_ = mscclpp::detail::gpuCallocShared<int>(
+        HierarchicalDispatchScratch::numInts(maxTokensPerRank_, nTokensPerChunk_));
+    const auto storage = storageLayout();
+    const int maxCombineChunks = configCellDiv(maxTokensPerRank_, nTokensPerChunk_);
+    hierarchicalCombineMetadata_ =
+        mscclpp::detail::gpuCallocShared<int>(1 + static_cast<size_t>(maxTokensPerRank_) * (1 + 3 * numTopk_));
+    hierarchicalCombineLocal_ =
+        mscclpp::detail::gpuCallocShared<float>(static_cast<size_t>(maxTokensPerRank_) * hidden_);
+    hierarchicalCombineChunkReady_ = mscclpp::detail::gpuCallocShared<int>(2 * static_cast<size_t>(maxCombineChunks));
+    deviceContext_.hierarchicalCtx_ = {
+        .portChannelCtx_ = portChannelCtx_.get(),
+        .nTokensPerChunk_ = nTokensPerChunk_,
+        .gatewayRank_ = gatewayRank,
+        .maxTokensPerRank_ = maxTokensPerRank_,
+        .dispatchSendBuffer_ = storage.hierarchicalDispatchSendBuffer_,
+        .dispatchRecvBuffer_ = storage.hierarchicalDispatchRecvBuffer_,
+        .dispatchControl_ = storage.hierarchicalDispatchControl_,
+        .dispatchScratch_ = reinterpret_cast<HierarchicalDispatchScratch*>(hierarchicalDispatchScratch_.get()),
+        .combineRemoteTokenIndices_ = hierarchicalCombineMetadata_.get() + 1,
+        .nIncomingTokens_ = hierarchicalCombineMetadata_.get(),
+        .combineRoutes_ = hierarchicalCombineMetadata_.get() + 1 + maxTokensPerRank_,
+        .combineLocalBuffer_ = hierarchicalCombineLocal_.get(),
+        .combineSendBuffer_ = storage.hierarchicalCombineSendBuffer_,
+        .combineRecvBuffer_ = storage.hierarchicalCombineRecvBuffer_,
+        .combineControl_ = storage.hierarchicalCombineControl_,
+        .combineChunkReady_ = hierarchicalCombineChunkReady_.get(),
+        .combineChunkLoadReady_ = hierarchicalCombineChunkReady_.get() + maxCombineChunks,
+        .combineInterDomainDtype_ = combineInterDomainDtype_};
+  }
   deviceContext_.devicePtr_ = static_cast<DeviceContext*>(mscclpp::detail::gpuCalloc(sizeof(DeviceContext)));
   mscclpp::gpuMemcpy<DeviceContext>(deviceContext_.devicePtr_, &deviceContext_, 1, cudaMemcpyHostToDevice);
 }
@@ -146,9 +258,10 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
   const bool emitLocalExpertIds = request.emitLocalExpertIds;
   const DispatchLayout dispatchLayout = context.outputLayout_;
   const DispatchDataType dispatchDataType = request.quant.dispatchDataType;
-  const float dispatchScale = request.quant.dispatchScale;
+  const float dispatchScale = request.quant.scale.first;
   const QuantConfig::InputMode inputMode = request.quant.inputMode;
   const DispatchDataType combineDataType = request.quant.combineDataType;
+  const float combineScale = request.quant.scale.second.value_or(dispatchScale);
   const int numBlocks = request.numBlocks == 0 ? DefaultLatencyDispatchBlocks : request.numBlocks;
   const cudaStream_t stream = request.stream;
 
@@ -196,20 +309,12 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
   if (combineDataType == DispatchDataType::FP8_E4M3_STATIC && !staticFp8RankMajor) {
     EP_THROW("FP8_E4M3_STATIC combine input requires matching static FP8 dispatch");
   }
-
-  LatencyStorageLayout allocationLayout(context.symmetricBuffer_.get(), context.maxTokensPerRank_, hidden,
-                                        context.numRanks_, numExperts, numTopk, context.outputLayout_,
-                                        context.combineMode_);
-  EP_HOST_ASSERT(allocationLayout.totalBytes_ <= static_cast<size_t>(context.symmetricBufferBytes_));
-  void* dispatchRecvBuffer = allocationLayout.dispatchRecvBuffer_;
-  if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
-    EP_HOST_ASSERT(output == allocationLayout.dispatchOutputBuffer_);
-    EP_HOST_ASSERT(outputTopkIdx == allocationLayout.rankMajorTopkIdsBuffer_);
-    EP_HOST_ASSERT(outputTopkWeights == allocationLayout.rankMajorTopkWeightsBuffer_);
-    if (dispatchDataType == DispatchDataType::MXFP8_E4M3) {
-      EP_HOST_ASSERT(outputScales == allocationLayout.rankMajorScalesBuffer_);
-      EP_HOST_ASSERT(reinterpret_cast<uintptr_t>(input) % alignof(mscclpp::bf16x8) == 0);
+  if (combineDataType == DispatchDataType::FP8_E4M3_STATIC) {
+    if (!std::isfinite(combineScale) || combineScale <= 0.0f || !std::isfinite(1.0f / combineScale)) {
+      EP_THROW("Static FP8 combine requires a finite positive quantization scale with a finite reciprocal");
     }
+  } else if (request.quant.scale.second.has_value()) {
+    EP_THROW("A combine scale is supported only by FP8_E4M3_STATIC combine input");
   }
 
   const Workload workload{.numTokens_ = numTokens,
@@ -222,10 +327,36 @@ DispatchHandle MoERuntime::launchLatencyDispatch(const LatencyDispatchRequest& r
                           .dispatchDataType_ = dispatchDataType,
                           .combineDataType_ = combineDataType,
                           .dispatchScale_ = dispatchScale,
+                          .combineScale_ = combineScale,
                           .emitLocalExpertIds_ = emitLocalExpertIds,
                           .inputMode_ = inputMode};
+  const auto allocationLayout = context.storageLayout();
+  EP_HOST_ASSERT(allocationLayout.totalBytes_ <= static_cast<size_t>(context.symmetricBufferBytes_));
   const size_t workspaceBytes = workspaceSize(context.numRanks_, numExperts, maxTokensPerRank, numTopk);
   EP_HOST_ASSERT(workspaceBytes <= context.workspaceBytes_);
+  if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
+    EP_HOST_ASSERT(output == allocationLayout.dispatchOutputBuffer_);
+    EP_HOST_ASSERT(outputTopkIdx == allocationLayout.rankMajorTopkIdsBuffer_);
+    EP_HOST_ASSERT(outputTopkWeights == allocationLayout.rankMajorTopkWeightsBuffer_);
+    if (dispatchDataType == DispatchDataType::MXFP8_E4M3) {
+      EP_HOST_ASSERT(outputScales == allocationLayout.rankMajorScalesBuffer_);
+      EP_HOST_ASSERT(reinterpret_cast<uintptr_t>(input) % alignof(mscclpp::bf16x8) == 0);
+    }
+  }
+  if (context.isHierarchical_) {
+    if (dispatchDataType != DispatchDataType::BF16 && dispatchDataType != DispatchDataType::FP8_E4M3_STATIC &&
+        dispatchDataType != DispatchDataType::MXFP8_E4M3) {
+      EP_THROW("Hierarchical latency dispatch supports BF16, FP8_E4M3_STATIC, and MXFP8_E4M3 only");
+    }
+    DispatchHandle handle(std::make_shared<const DispatchHandle::Impl>(latencyContext_, context.epoch_, request));
+    hierarchicalDispatch(output, outputScales, outputTopkIdx, outputTopkWeights, outputCount, input, topkIdx,
+                         topkWeights, workload, allocationLayout.dispatchRecvBuffer_, context.deviceContext_, numBlocks,
+                         stream);
+    return handle;
+  }
+
+  void* dispatchRecvBuffer = allocationLayout.dispatchRecvBuffer_;
+
   DispatchHandle handle(std::make_shared<const DispatchHandle::Impl>(latencyContext_, context.epoch_, request));
   if (dispatchLayout == DispatchLayout::RANK_MAJOR) {
     rankMajorDispatch(output, outputScales, outputSrcInfo, outputTopkIdx, outputTopkWeights, outputLayout, outputCount,
@@ -275,7 +406,8 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
   const DispatchLayout dispatchLayout = context.outputLayout_;
   const DispatchDataType dispatchDataType = handle.dispatchDataType_;
   const DispatchDataType combineDataType = handle.combineDataType_;
-  const float dispatchScale = handle.dispatchScale_;
+  const float dispatchScale = handle.scale_.first;
+  const float combineScale = handle.scale_.second;
   const CombineMode mode = context.combineMode_;
   const int numBlocks = request.numBlocks == 0 ? DefaultLatencyCombineBlocks : request.numBlocks;
   const cudaStream_t stream = request.stream;
@@ -292,15 +424,24 @@ void MoERuntime::launchLatencyCombine(const LatencyCombineRequest& request) {
                           .dispatchDataType_ = dispatchDataType,
                           .combineDataType_ = combineDataType,
                           .dispatchScale_ = dispatchScale,
+                          .combineScale_ = combineScale,
                           .emitLocalExpertIds_ = false,
+                          .applyRouterWeights_ = request.applyRouterWeights,
                           .inputMode_ = QuantConfig::InputMode::PREQUANTIZED};
   const int minCombineBlocks = dispatchLayout == DispatchLayout::RANK_MAJOR ? 2 : 1;
   EP_HOST_ASSERT(numBlocks >= minCombineBlocks && numBlocks <= MaxWorkerBlocks);
 
-  LatencyStorageLayout allocationLayout(context.symmetricBuffer_.get(), context.maxTokensPerRank_, hidden,
-                                        context.numRanks_, numExperts, numTopk, context.outputLayout_,
-                                        context.combineMode_);
+  const auto allocationLayout = context.storageLayout();
   EP_HOST_ASSERT(allocationLayout.totalBytes_ <= static_cast<size_t>(context.symmetricBufferBytes_));
+  if (context.isHierarchical_) {
+    EP_HOST_ASSERT(numBlocks >= context.numRanks_);
+    EP_HOST_ASSERT(input == allocationLayout.combineBuffer_);
+    hierarchicalCombine(output, input, topkIdx, topkWeights, workload, mode, allocationLayout.combineBuffer_,
+                        allocationLayout.dispatchRecvBuffer_, context.deviceContext_, numBlocks, stream);
+    ++context.epoch_;
+    return;
+  }
+
   void* combineBuffer = allocationLayout.combineBuffer_;
   void* dispatchRecvBuffer = allocationLayout.dispatchRecvBuffer_;
   if (dispatchLayout == DispatchLayout::RANK_MAJOR) EP_HOST_ASSERT(input == combineBuffer);
