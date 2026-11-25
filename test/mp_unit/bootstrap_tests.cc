@@ -1,12 +1,18 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#include <fcntl.h>
 #include <mpi.h>
+#include <unistd.h>
 
+#include <cerrno>
 #include <cstring>
+#include <future>
+#include <mscclpp/errors.hpp>
 
 #include "mp_unit_tests.hpp"
 #include "socket.h"
+#include "unix_socket.hpp"
 
 void BootstrapTest::bootstrapTestAllGather(std::shared_ptr<mscclpp::Bootstrap> bootstrap) {
   std::vector<int> tmp(bootstrap->getNranks(), 0);
@@ -58,6 +64,42 @@ void BootstrapTest::bootstrapTestAll(std::shared_ptr<mscclpp::Bootstrap> bootstr
   bootstrapTestIpcDomain(bootstrap);
 }
 
+static void checkConcurrentFdRequests() {
+  auto& server = mscclpp::UnixSocketServer::instance();
+  auto& client = mscclpp::UnixSocketClient::instance();
+  const auto path = server.getSocketPath();
+  int ends[2];
+  if (pipe(ends) != 0) throw mscclpp::SysError("pipe() failed", errno);
+  for (int fd : ends) server.registerFd(fd);
+  auto cleanup = [&] {
+    for (int fd : ends) {
+      server.unregisterFd(fd);
+      close(fd);
+    }
+  };
+  try {
+    close(client.requestFd(path, ends[0]));
+    std::vector<std::future<void>> requests;
+    for (int i = 0; i < 4; ++i) {
+      requests.emplace_back(std::async(std::launch::async, [&, end = i % 2] {
+        for (int round = 0; round < 32; ++round) {
+          int fd = client.requestFd(path, ends[end]);
+          int flags = fcntl(fd, F_GETFL);
+          close(fd);
+          if (flags < 0 || (flags & O_ACCMODE) != (end == 0 ? O_RDONLY : O_WRONLY)) {
+            throw std::runtime_error("received the wrong pipe end");
+          }
+        }
+      }));
+    }
+    for (auto& request : requests) request.get();
+  } catch (...) {
+    cleanup();
+    throw;
+  }
+  cleanup();
+}
+
 TEST(BootstrapTest, WithId) {
   auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(gEnv->rank, gEnv->worldSize);
   mscclpp::UniqueId id;
@@ -65,6 +107,7 @@ TEST(BootstrapTest, WithId) {
   MPI_Bcast(&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
   bootstrap->initialize(id);
   bootstrapTestAll(bootstrap);
+  checkConcurrentFdRequests();
 }
 
 TEST(BootstrapTest, WithIpPortPair) {
