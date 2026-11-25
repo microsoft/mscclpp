@@ -126,6 +126,17 @@ struct TilePolicy {
   static constexpr int CtaFc1M = CtaM / 2;
 };
 
+enum class WarpRole {
+  Epilogue,
+  Mma,
+  Load,
+  LoadA,
+  LoadB,
+  Transform,
+  Dispatch,
+  OutputOffload,
+};
+
 template <bool Local = false>
 struct W8A16WarpSchedule {
   static constexpr int NumWarps = Local ? 12 : 16;

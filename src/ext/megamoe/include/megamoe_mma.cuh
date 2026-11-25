@@ -11,7 +11,7 @@
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 
 template <class Pipeline, class Schedule, class ClusterShape = cute::Shape<cute::_2, cute::_1, cute::_1>>
-__device__ __forceinline__ Pipeline makeAccumulatorPipeline(typename Pipeline::SharedStorage& storage, int warp) {
+MSCCLPP_DEVICE_INLINE Pipeline makeAccumulatorPipeline(typename Pipeline::SharedStorage& storage, int warp) {
   typename Pipeline::Params params{};
   params.role = warp == Schedule::MmaWarp ? Pipeline::ThreadCategory::Producer
                                           : (warp >= Schedule::EpilogueBegin && warp < Schedule::EpilogueEnd
@@ -24,15 +24,14 @@ __device__ __forceinline__ Pipeline makeAccumulatorPipeline(typename Pipeline::S
 }
 
 template <bool Local = false, class FrgEngine, class FrgLayout, class TensorA, class TensorB>
-__device__ __forceinline__ auto mmaTiles(
-    typename W8A16CollectiveTypesT<Local>::LoadB loadPipeline,
-    typename W8A16CollectiveTypesT<Local>::LoadB::PipelineState loadState,
-    typename W8A16CollectiveTypesT<Local>::Transform transformPipeline,
-    typename W8A16CollectiveTypesT<Local>::Transform::PipelineState transformState,
-    typename W8A16CollectiveTypesT<Local>::Accumulate accumulatePipeline,
-    typename W8A16CollectiveTypesT<Local>::Accumulate::PipelineState accumulateState,
-    const cute::Tensor<FrgEngine, FrgLayout>& accumulators, const cute::tuple<TensorA, TensorB>& operands, int kTiles,
-    int validRows) {
+MSCCLPP_DEVICE_INLINE auto mmaTiles(typename W8A16CollectiveTypesT<Local>::LoadB loadPipeline,
+                                    typename W8A16CollectiveTypesT<Local>::LoadB::PipelineState loadState,
+                                    typename W8A16CollectiveTypesT<Local>::Transform transformPipeline,
+                                    typename W8A16CollectiveTypesT<Local>::Transform::PipelineState transformState,
+                                    typename W8A16CollectiveTypesT<Local>::Accumulate accumulatePipeline,
+                                    typename W8A16CollectiveTypesT<Local>::Accumulate::PipelineState accumulateState,
+                                    const cute::Tensor<FrgEngine, FrgLayout>& accumulators,
+                                    const cute::tuple<TensorA, TensorB>& operands, int kTiles, int validRows) {
   using namespace cute;
   using TiledMma = typename W8A16CollectiveTypesT<Local>::Mainloop::TiledMma;
   TiledMma tiledMma;
@@ -96,23 +95,23 @@ __device__ __forceinline__ auto mmaTiles(
   return make_tuple(currentLoad, currentTransform, accumulateState);
 }
 
-template <bool Local, class Schedule, class P, class Storage, class LoadB, class Transform, class Accumulate,
+template <bool Local, class Schedule, class KernelParams, class Storage, class LoadB, class Transform, class Accumulate,
           class Mainloop, class Accumulators>
-__device__ __forceinline__ void runW8A16MmaRole(const P& p, int tokens, Storage& s, LoadB& bPipeline,
-                                                Transform& tPipeline, Accumulate& cPipeline, Mainloop& fc1,
-                                                Accumulators accumulators, int hidden, int intermediate, int warp,
-                                                int cta, int cluster, int tasks) {
-  if (warp == Schedule::MmaWarp && cta == 0) {
+MSCCLPP_DEVICE_INLINE void runW8A16MmaRole(const KernelParams& params, int nTokens, Storage& sharedStorage,
+                                           LoadB& bPipeline, Transform& tPipeline, Accumulate& cPipeline, Mainloop& fc1,
+                                           Accumulators accumulators, int hidden, int intermediate, int warpIdx,
+                                           int ctaIdx, int clusterIdx, int nTasks) {
+  if (warpIdx == Schedule::MmaWarp && ctaIdx == 0) {
     typename LoadB::PipelineState bState;
     typename Transform::PipelineState tState;
     auto cState = cutlass::make_producer_start_state<Accumulate>();
-    auto inputs = fc1.mma_init(accumulators, s.tensors);
-    for (int i = cluster; i < tasks; i += gridDim.x / P::Tiles::ClusterSize) {
-      Task task = taskAt(p, i, hidden, intermediate, tokens);
+    auto inputs = fc1.mma_init(accumulators, sharedStorage.tensors);
+    for (int i = clusterIdx; i < nTasks; i += gridDim.x / KernelParams::Tiles::ClusterSize) {
+      Task task = taskAt(params, i, hidden, intermediate, nTokens);
       auto phase = task.fc1 ? KernelTracePhase::MmaFc1 : KernelTracePhase::MmaFc2;
       traceKernel(phase, true, i);
       auto result = mmaTiles<Local>(bPipeline, bState, tPipeline, tState, cPipeline, cState, accumulators, inputs,
-                                    taskKTiles(p, task, hidden, intermediate), task.tokens.nTokens);
+                                    taskKTiles(params, task, hidden, intermediate), task.tokens.nTokens);
       traceKernel(phase, false, i);
       bState = cute::get<0>(result);
       tState = cute::get<1>(result);
@@ -122,42 +121,43 @@ __device__ __forceinline__ void runW8A16MmaRole(const P& p, int tokens, Storage&
   }
 }
 
-template <class P, class Storage, class TmemStorage>
-__device__ __forceinline__ void runMmaRole(const P& p, Storage& s, typename P::Collective::Load& loadPipeline,
-                                           typename P::Collective::Load& activationPipeline,
-                                           typename P::Collective::Accumulate& accumulatePipeline,
-                                           typename P::Collective::Mainloop& fc1, TmemStorage tmemStorage, int hidden,
-                                           int intermediate, int warp, int cta, int cluster, int tasks, int nTokenTiles,
-                                           int localExperts) {
+template <class KernelParams, class Storage, class TmemStorage>
+MSCCLPP_DEVICE_INLINE void runMmaRole(const KernelParams& params, Storage& sharedStorage,
+                                      typename KernelParams::Collective::Load& loadPipeline,
+                                      typename KernelParams::Collective::Load& activationPipeline,
+                                      typename KernelParams::Collective::Accumulate& accumulatePipeline,
+                                      typename KernelParams::Collective::Mainloop& fc1, TmemStorage tmemStorage,
+                                      int hidden, int intermediate, int warpIdx, int ctaIdx, int clusterIdx, int nTasks,
+                                      int nTokenTiles, int nLocalExperts) {
   using namespace cute;
-  using Mainloop = typename P::Collective::Mainloop;
-  using Load = typename P::Collective::Load;
-  using Accumulate = typename P::Collective::Accumulate;
-  using Schedule = typename P::Collective::WarpSchedule;
-  if (warp == Schedule::MmaWarp && cta == 0) {
+  using Mainloop = typename KernelParams::Collective::Mainloop;
+  using Load = typename KernelParams::Collective::Load;
+  using Accumulate = typename KernelParams::Collective::Accumulate;
+  using Schedule = typename KernelParams::Collective::WarpSchedule;
+  if (warpIdx == Schedule::MmaWarp && ctaIdx == 0) {
     typename Load::PipelineState loadState;
     auto accumulateState = cutlass::make_producer_start_state<Accumulate>();
-    auto mmaInputs = fc1.mma_init(tmemStorage, s.tensors);
-    if constexpr (P::Activation == ActivationDtype::Fp8Static) {
+    auto mmaInputs = fc1.mma_init(tmemStorage, sharedStorage.tensors);
+    if constexpr (KernelParams::Activation == ActivationDtype::Fp8Static) {
       if (elect_one_sync()) copy(get<8>(mmaInputs), get<9>(mmaInputs)(_, _, _, _, 0), get<10>(mmaInputs));
     }
-    const int fc1Tiles = fc1TaskTiles<P>(intermediate);
-    const int fc2Tiles = fc2TaskTiles<P>(hidden);
-    const int numClusters = gridDim.x / P::Tiles::ClusterSize;
-    if (cluster < tasks) {
-      Task nextTask = taskAtFast(p, cluster, nTokenTiles, localExperts, fc1Tiles, fc2Tiles);
-      for (int i = cluster; i < tasks; i += numClusters) {
+    const int fc1Tiles = fc1TaskTiles<KernelParams>(intermediate);
+    const int fc2Tiles = fc2TaskTiles<KernelParams>(hidden);
+    const int numClusters = gridDim.x / KernelParams::Tiles::ClusterSize;
+    if (clusterIdx < nTasks) {
+      Task nextTask = taskAtFast(params, clusterIdx, nTokenTiles, nLocalExperts, fc1Tiles, fc2Tiles);
+      for (int i = clusterIdx; i < nTasks; i += numClusters) {
         Task task = nextTask;
-        const bool hasNext = (i + numClusters) < tasks;
-        auto coord = taskCoord(p, task, cta);
-        int kTiles = taskKTiles(p, task, hidden, intermediate);
+        const bool hasNext = (i + numClusters) < nTasks;
+        auto coord = taskCoord(params, task, ctaIdx);
+        int kTiles = taskKTiles(params, task, hidden, intermediate);
         auto accumulator = Mainloop::slice_accumulator(tmemStorage, accumulateState.index());
         auto phase = task.fc1 ? KernelTracePhase::MmaFc1 : KernelTracePhase::MmaFc2;
         traceKernel(phase, true, i);
-        loadState = fc1.template mma<P::Activation>(make_tuple(loadPipeline, activationPipeline, accumulatePipeline),
-                                                    make_tuple(loadState, accumulateState), accumulator, mmaInputs,
-                                                    coord, kTiles, task.tokens.nTokens);
-        if (hasNext) nextTask = taskAtFast(p, i + numClusters, nTokenTiles, localExperts, fc1Tiles, fc2Tiles);
+        loadState = fc1.template mma<KernelParams::Activation>(
+            make_tuple(loadPipeline, activationPipeline, accumulatePipeline), make_tuple(loadState, accumulateState),
+            accumulator, mmaInputs, coord, kTiles, task.tokens.nTokens);
+        if (hasNext) nextTask = taskAtFast(params, i + numClusters, nTokenTiles, nLocalExperts, fc1Tiles, fc2Tiles);
         traceKernel(phase, false, i);
         accumulatePipeline.producer_commit(accumulateState);
         ++accumulateState;

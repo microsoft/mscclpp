@@ -99,13 +99,13 @@ Workspace workspaceLayout(const NativeConfig& c, void* base, size_t& bytes) {
   return isLocalExpert(c) ? localWorkspaceLayout(c, base, bytes) : routedWorkspaceLayout(c, base, bytes);
 }
 
-__device__ __forceinline__ int canonicalFc1Row(int row, int intermediate) {
+MSCCLPP_DEVICE_INLINE int canonicalFc1Row(int row, int intermediate) {
   return row / 32 * 16 + row % 16 + (row % 32 >= 16 ? intermediate : 0);
 }
 
 template <int ValuesPerByte>
-__device__ __forceinline__ void packWeightValues(const NativeConfig& c, const PackedWeights& src,
-                                                 const PackedWeights& dst, size_t idx, size_t stride) {
+MSCCLPP_DEVICE_INLINE void packWeightValues(const NativeConfig& c, const PackedWeights& src, const PackedWeights& dst,
+                                            size_t idx, size_t stride) {
   int experts = c.numExperts / c.worldSize;
   int fc1RowBytes = c.hidden / ValuesPerByte;
   size_t fc1Size = size_t(experts) * 2 * c.intermediate * fc1RowBytes;

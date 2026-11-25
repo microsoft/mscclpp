@@ -24,134 +24,47 @@ extern "C" int mscclpp_megamoe_w4_trace_copy(void* events, size_t bytes, uint32_
 #endif
 
 template <int Hidden, int Intermediate, bool FixedTokenCount = false, ActivationDtype ActDtype = ActivationDtype::Mxfp8>
-__global__ __launch_bounds__(W4Threads, 1) void megaMoeW4A8(__grid_constant__ const W4A8Parameters parameters,
-                                                            int tokens, __bfloat16* output, uint32_t* kernelEntrySignal,
-                                                            const void* input, const uint8_t* inputScales,
-                                                            const int32_t* ids, const float* scores) {
-  using namespace cute;
+__global__ __launch_bounds__(W4Threads,
+                             1) void megaMoeW4A8(__grid_constant__ const W4A8Parameters parameters, int nTokens,
+                                                 __bfloat16* output, uint32_t* kernelEntrySignal, const void* input,
+                                                 const uint8_t* inputScales, const int32_t* ids, const float* scores) {
   using Parameters = W4A8Parameters;
   using Types = typename Parameters::Collective;
-  using Mainloop = Types::Mainloop;
-  using Accumulate = Types::Accumulate;
   using Schedule = typename Types::WarpSchedule;
-  using ClusterShape = typename Types::ClusterShape;
-  constexpr int ClusterSize = Parameters::Tiles::ClusterSize;
   static_assert(validW4RegisterBudget(Types::EpilogueWarps, Types::EpilogueRegisters, Types::TransferRegisters));
-  NativeConfig configuration = parameters.config;
-  configuration.hidden = Hidden;
-  configuration.intermediate = Intermediate;
-  auto p = w4a8ParameterView<ActDtype>(parameters, configuration);
-  extern __shared__ __align__(1024) char storage[];
-  auto& s = *reinterpret_cast<W4A8SharedStorageT<Types>*>(storage);
-  int warp = threadIdx.x / warpSize;
-  int lane = threadIdx.x % warpSize;
-  int cta = blockIdx.x % ClusterSize;
-  int cluster = blockIdx.x / ClusterSize;
-  const int hidden = p.config.hidden;
-  const int intermediate = p.config.intermediate;
-  // Notify a consumer stream of kernel entry, not output readiness.
-  if (blockIdx.x == 0 && threadIdx.x == 0 && kernelEntrySignal)
-    atomicStore<uint32_t, scopeDevice>(kernelEntrySignal, 1, memoryOrderRelease);
-  cute::conditional_t<ClusterSize == 1, cute::TMEM::Allocator1Sm, cute::TMEM::Allocator2Sm> allocator;
-  auto loadPipeline = makeW4A8LoadPipeline<false, Types>(s.mainloop, warp, lane, cta);
-  auto activationPipeline = [&](auto& activationStorage) {
-    if constexpr (Types::SplitPipelines) {
-      return makeW4A8LoadPipeline<true, Types>(activationStorage, warp, lane, cta);
-    } else {
-      return loadPipeline;
-    }
-  }(s.activationLoad);
-  auto accumulatePipeline = makeAccumulatorPipeline<Accumulate, Schedule, ClusterShape>(s.accumulated, warp);
-  if (warp < Schedule::DispatchBegin) {
-    loadPipeline.init_masks(ClusterShape{}, cute::block_id_in_cluster());
-    if constexpr (Types::SplitPipelines) activationPipeline.init_masks(ClusterShape{}, cute::block_id_in_cluster());
-    accumulatePipeline.init_masks(ClusterShape{});
-    if (warp == Schedule::MmaWarp) allocator.allocate(W4TmemColumns, &s.tmem);
-  } else {
-    initDispatchStorage<Types::DispatchStages, Schedule>(s, warp, lane);
-  }
-  cutlass::arch::fence_barrier_init();
-  traceKernel(KernelTracePhase::Routing, true);
-  if (p.config.computeOnly) {
-    prepareLocalRoutes(p, tokens, ids);
-  } else {
-    // Local routes read source inputs directly; remote routes consume current-epoch packets.
-    prepareRoutes<FixedTokenCount>(p, tokens, ids, scores);
-  }
-  traceKernel(KernelTracePhase::Routing, false);
-  if constexpr (ActDtype == ActivationDtype::Fp8Static) {
-    constexpr int SfbWordsPerStage = sizeof(s.tensors.smem_SFB) / (Types::Load::Stages * sizeof(uint32_t));
-    auto* sfbStage0 = reinterpret_cast<uint32_t*>(s.tensors.smem_SFB.begin());
-    for (int i = threadIdx.x; i < SfbWordsPerStage; i += W4Threads) sfbStage0[i] = 0x7f7f7f7fU;
-    if constexpr (ClusterSize > 1) {
-      cute::cluster_sync();
-    } else {
-      __syncthreads();
-    }
-    cutlass::arch::fence_view_async_shared();
-  }
 
-  if (warp < Schedule::DispatchBegin) {
-    Mainloop fc1(p.fc1, ClusterShape{}, cta);
-    Mainloop fc2(p.fc2, ClusterShape{}, cta);
-    int nTokenTiles = p.workspace.control->nTokenTiles;
-    int tasks = nTokenTiles * (fc1TaskTiles<Parameters>(intermediate) + fc2TaskTiles<Parameters>(hidden));
-    int localExperts = p.config.numExperts / p.config.worldSize;
-    ProblemShape shape1{2 * intermediate, w4StorageRow<typename Parameters::Tiles>(p.workspace.poolRows), hidden,
-                        localExperts};
-    ProblemShape shape2{hidden, w4StorageRow<typename Parameters::Tiles>(p.workspace.poolRows), intermediate,
-                        localExperts};
+  extern __shared__ __align__(1024) char rawSharedStorage[];
+  auto& sharedStorage = *reinterpret_cast<W4A8SharedStorageT<Types>*>(rawSharedStorage);
+  auto params = makeW4A8KernelView<Hidden, Intermediate, ActDtype>(parameters);
+  const KernelThreadLocation threadLoc = makeKernelThreadLocation<Parameters::Tiles::ClusterSize>();
 
-    // Reconfigure the complete transfer warpgroup before its load/MMA roles diverge.
-    if (warp >= Schedule::EpilogueEnd) cutlass::arch::warpgroup_reg_dealloc<Types::TransferRegisters>();
-    bool producerWarp = warp == Schedule::LoadWarp || (Types::LoadWarps == 2 && warp == Schedule::ActivationLoadWarp);
-    if (producerWarp) {
-      // Producers need initialized pipeline barriers, not the TMEM allocation.
-      runW4A8LoadRole(p, s, loadPipeline, activationPipeline, fc1, fc2, shape1, shape2, hidden, intermediate, warp,
-                      lane, cta, cluster, tasks, nTokenTiles, localExperts);
-    } else {
-      using EpilogueTile = Shape<Int<Parameters::Tiles::CtaM>, Int<Parameters::Tiles::N>>;
-      auto tmemStorage = Mainloop::template init_tmem_tensors<EpilogueTile, false>(EpilogueTile{});
-      Mainloop::set_tmem_offsets(tmemStorage, s.tmem);
-      if (warp >= Schedule::EpilogueBegin && warp < Schedule::EpilogueEnd) {
-        runEpilogueRole<Schedule>(p, s, accumulatePipeline, tmemStorage.accumulators, hidden, intermediate, cluster,
-                                  tasks, output, tokens);
-      } else {
-        runMmaRole(p, s, loadPipeline, activationPipeline, accumulatePipeline, fc1, tmemStorage, hidden, intermediate,
-                   warp, cta, cluster, tasks, nTokenTiles, localExperts);
-      }
+  // 1. Signal kernel entry and initialize pipelines, TMEM, and dispatch barriers.
+  signalKernelEntry(kernelEntrySignal);
+  auto pipelines = initW4A8PipelinesAndStorage<Types>(sharedStorage, threadLoc);
+
+  // 2. Exchange routes and initialize static FP8 activation scales when required.
+  runW4A8RoutingStage<FixedTokenCount>(params, nTokens, ids, scores);
+  initW4A8StaticScaleStage<ActDtype, Types>(sharedStorage);
+
+  // 3. Execute warp-specialized roles.
+  dispatchW4A8WarpRole<Types>(threadLoc.warpIdx, [&]<WarpRole Role>() {
+    if constexpr (Role == WarpRole::Dispatch) {
+      runDispatchRole<Hidden, Types::DispatchChunk, Types::DispatchStages>(params, sharedStorage, threadLoc.warpIdx,
+                                                                           nTokens, input, inputScales, scores);
+    } else if constexpr (Role == WarpRole::OutputOffload) {
+      runOutputStoreOffloadRole<Schedule>(params, sharedStorage, threadLoc.warpIdx, threadLoc.laneIdx, Hidden, output,
+                                          nTokens);
+    } else if constexpr (Role == WarpRole::Load) {
+      runW4A8LoadStage(params, sharedStorage, pipelines, threadLoc);
+    } else if constexpr (Role == WarpRole::Mma) {
+      runW4A8MmaStage(params, sharedStorage, pipelines, threadLoc);
+    } else if constexpr (Role == WarpRole::Epilogue) {
+      runW4A8EpilogueStage<Schedule>(params, sharedStorage, pipelines, threadLoc, nTokens, output);
     }
-  } else {
-    // Donate only the registers needed to fund epilogue growth; retain the remaining CTA budget on dispatch/offload
-    // warps.
-    constexpr int DispatchThreads = W4Threads - Types::EpilogueWarps * 32 - 128;
-    constexpr int AvailDispatchRegs =
-        ((W4Threads * EntryRegisters - Types::EpilogueWarps * 32 * Types::EpilogueRegisters -
-          128 * Types::TransferRegisters) /
-         DispatchThreads) &
-        ~7;
-    constexpr int DispatchRoleRegisters =
-        AvailDispatchRegs < TransferRegisters ? TransferRegisters : (AvailDispatchRegs > 80 ? 80 : AvailDispatchRegs);
-    if constexpr (DispatchRoleRegisters < EntryRegisters) cutlass::arch::warpgroup_reg_dealloc<DispatchRoleRegisters>();
-    if (warp < Schedule::DispatchEnd) {
-      runDispatchRole<Hidden, Types::DispatchChunk, Types::DispatchStages>(p, s, warp, tokens, input, inputScales,
-                                                                           scores);
-    } else {
-      runOutputStoreOffloadRole<Schedule>(p, s, warp, lane, hidden, output, tokens);
-    }
-  }
-  // Join even idle roles before the next register reconfiguration.
-  __syncthreads();
-  if (warp >= Schedule::EpilogueBegin && warp < Schedule::EpilogueEnd)
-    cutlass::arch::warpgroup_reg_dealloc<EntryRegisters>();
-  else
-    cutlass::arch::warpgroup_reg_alloc<EntryRegisters>();
-  cute::cluster_sync();
-  if (warp == Schedule::MmaWarp) {
-    allocator.release_allocation_lock();
-    allocator.free(s.tmem, W4TmemColumns);
-  }
-  finishW4A8<Hidden>(p, tokens, output);
+  });
+
+  // 4. Restore warpgroup registers, release TMEM, and complete output synchronization.
+  finishW4A8KernelStage<Hidden, Types>(params, sharedStorage, pipelines.allocator, threadLoc.warpIdx, nTokens, output);
 }
 
 struct W4A8KernelRegistration {

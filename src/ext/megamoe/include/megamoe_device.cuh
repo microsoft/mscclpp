@@ -139,11 +139,12 @@ __host__ __device__ constexpr int w4InputChunks(int hidden) {
 constexpr int W4ReadyCounterStride = 32;
 
 template <class Types>
-__device__ __forceinline__ int* w4InputChunkCounter(const Workspace& w, int hidden, int block, int chunk) {
+MSCCLPP_DEVICE_INLINE int* w4InputChunkCounter(const Workspace& workspace, int hidden, int block, int chunk) {
   int chunks = w4InputChunks<Types>(hidden);
   // The last chunk also publishes full-row readiness.
-  return chunk == chunks - 1 ? w.inputReady + size_t(block) * W4ReadyCounterStride
-                             : w.inputChunkReady + (size_t(block) * (chunks - 1) + chunk) * W4ReadyCounterStride;
+  return chunk == chunks - 1
+             ? workspace.inputReady + size_t(block) * W4ReadyCounterStride
+             : workspace.inputChunkReady + (size_t(block) * (chunks - 1) + chunk) * W4ReadyCounterStride;
 }
 
 template <class Types>
@@ -280,15 +281,53 @@ using W4A8Parameters = KernelParameters<W4A8CollectiveTypes>;
 using W8A16Parameters = KernelParameters<W8A16CollectiveTypesT<false>, false, ActivationDtype::Bf16>;
 using W8A16LocalParameters = KernelParameters<W8A16CollectiveTypesT<true>, false, ActivationDtype::Bf16>;
 
-template <ActivationDtype ActDtype = ActivationDtype::Mxfp8, class P>
-__device__ __forceinline__ auto w4a8ParameterView(const P& p, NativeConfig config) {
-  using View = KernelParameters<typename P::Collective, true, ActDtype>;
-  return View{config, p.symmetric, p.workspace, p.local, p.peers, p.fc1TaskDivisor, p.fc2TaskDivisor, p.fc1, p.fc2};
+template <ActivationDtype ActDtype = ActivationDtype::Mxfp8, class KernelParams>
+MSCCLPP_DEVICE_INLINE auto w4a8ParameterView(const KernelParams& params, NativeConfig config) {
+  using View = KernelParameters<typename KernelParams::Collective, true, ActDtype>;
+  return View{config,       params.symmetric,      params.workspace,      params.local,
+              params.peers, params.fc1TaskDivisor, params.fc2TaskDivisor, params.fc1,
+              params.fc2};
 }
 
-template <class P>
-__device__ __forceinline__ auto w8a16ParameterView(const P& p, NativeConfig config) {
-  return w4a8ParameterView<ActivationDtype::Bf16>(p, config);
+template <class KernelParams>
+MSCCLPP_DEVICE_INLINE auto w8a16ParameterView(const KernelParams& params, NativeConfig config) {
+  return w4a8ParameterView<ActivationDtype::Bf16>(params, config);
+}
+
+struct KernelThreadLocation {
+  int warpIdx;
+  int laneIdx;
+  int ctaIdx;
+  int clusterIdx;
+};
+
+template <int ClusterSize>
+MSCCLPP_DEVICE_INLINE KernelThreadLocation makeKernelThreadLocation() {
+  return KernelThreadLocation{int(threadIdx.x / warpSize), int(threadIdx.x % warpSize), int(blockIdx.x % ClusterSize),
+                              int(blockIdx.x / ClusterSize)};
+}
+
+// Notify a consumer stream that CTA 0 has entered the kernel, not that output is ready.
+MSCCLPP_DEVICE_INLINE void signalKernelEntry(uint32_t* kernelEntrySignal) {
+  if (blockIdx.x == 0 && threadIdx.x == 0 && kernelEntrySignal) {
+    atomicStore<uint32_t, scopeDevice>(kernelEntrySignal, 1, memoryOrderRelease);
+  }
+}
+
+template <int Hidden, int Intermediate, ActivationDtype ActDtype, class KernelParams>
+MSCCLPP_DEVICE_INLINE auto makeW4A8KernelView(const KernelParams& parameters) {
+  NativeConfig configuration = parameters.config;
+  configuration.hidden = Hidden;
+  configuration.intermediate = Intermediate;
+  return w4a8ParameterView<ActDtype>(parameters, configuration);
+}
+
+template <int Hidden, int Intermediate, class KernelParams>
+MSCCLPP_DEVICE_INLINE auto makeW8A16KernelView(const KernelParams& parameters) {
+  NativeConfig configuration = parameters.config;
+  configuration.hidden = Hidden;
+  configuration.intermediate = Intermediate;
+  return w8a16ParameterView(parameters, configuration);
 }
 
 using W4A8KernelEntry = void (*)(W4A8Parameters, int, __bfloat16*, uint32_t*, const void*, const uint8_t*,
@@ -335,17 +374,17 @@ MSCCLPP_DEVICE_INLINE void syncResidentGrid(uint32_t* state, int ctas) {
   __syncthreads();
 }
 
-template <class T, class P>
-__device__ T* peerAt(const P& p, int rank, size_t offset) {
-  return at<T>(reinterpret_cast<void*>(p.peers[rank]), offset);
+template <class T, class KernelParams>
+__device__ T* peerAt(const KernelParams& params, int rank, size_t offset) {
+  return at<T>(reinterpret_cast<void*>(params.peers[rank]), offset);
 }
 
-template <class P>
-__device__ __forceinline__ void signalAndWait(const P& p, int peer) {
-  BaseMemoryChannelDeviceHandle channel{
-      MemoryDevice2DeviceSemaphoreDeviceHandle{at<uint64_t>(p.local, p.symmetric.peerSignals) + peer,
-                                               peerAt<uint64_t>(p, peer, p.symmetric.peerSignals) + p.config.rank,
-                                               at<uint64_t>(p.local, p.symmetric.expectedPeerSignals) + peer}};
+template <class KernelParams>
+MSCCLPP_DEVICE_INLINE void signalAndWait(const KernelParams& params, int peer) {
+  BaseMemoryChannelDeviceHandle channel{MemoryDevice2DeviceSemaphoreDeviceHandle{
+      at<uint64_t>(params.local, params.symmetric.peerSignals) + peer,
+      peerAt<uint64_t>(params, peer, params.symmetric.peerSignals) + params.config.rank,
+      at<uint64_t>(params.local, params.symmetric.expectedPeerSignals) + peer}};
   channel.signal();
   channel.wait(SpinLimit);
 }

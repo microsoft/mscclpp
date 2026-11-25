@@ -17,137 +17,55 @@ extern "C" int mscclpp_megamoe_w8_trace_copy(void* events, size_t bytes, uint32_
 }
 #endif
 
-template <bool Local, class Parameters>
-__device__ __forceinline__ int prepareW8A16TokenTiles(const Parameters& p, int tokens, const int32_t* ids,
-                                                      const float* scores) {
-  if constexpr (Local) {
-    return (tokens + Parameters::Tiles::N - 1) / Parameters::Tiles::N;
-  } else {
-    traceKernel(KernelTracePhase::Routing, true);
-    if (p.config.computeOnly) {
-      prepareLocalRoutes(p, tokens, ids);
-    } else {
-      prepareRoutes<false>(p, tokens, ids, scores);
-    }
-    traceKernel(KernelTracePhase::Routing, false);
-    return p.workspace.control->nTokenTiles;
-  }
-}
-
-template <int Hidden, bool Local, class Parameters>
-__device__ __forceinline__ void finalizeW8A16Output(const Parameters& p, int tokens, __bfloat16* output) {
-  if constexpr (!Local) finishAndCombine<Hidden>(p, tokens, output);
-}
-
 template <int Hidden, int Intermediate, int LocalMode = 0,
           class Parameters = std::conditional_t<LocalMode != 0, W8A16LocalParameters, W8A16Parameters>>
 __global__ __launch_bounds__((LocalMode ? LocalThreads : W4Threads),
-                             1) void megaMoeW8A16(__grid_constant__ const Parameters parameters, int tokens,
+                             1) void megaMoeW8A16(__grid_constant__ const Parameters parameters, int nTokens,
                                                   __bfloat16* output, uint32_t* kernelEntrySignal, const void* input,
                                                   const int32_t* ids, const float* scores) {
-  using namespace cute;
   constexpr bool Local = LocalMode != 0;
   using Types = W8A16CollectiveTypesT<Local>;
-  using Mainloop = typename Types::Mainloop;
-  using LoadA = typename Types::LoadA;
-  using LoadB = typename Types::LoadB;
-  using Transform = typename Types::Transform;
-  using Accumulate = typename Types::Accumulate;
-  using ClusterShape = typename Types::ClusterShape;
   using Schedule = typename Types::WarpSchedule;
   using SharedStorage = typename Parameters::SharedStorage;
-  extern __shared__ __align__(1024) char storage[];
-  constexpr int ClusterSize = Parameters::Tiles::ClusterSize;
-  constexpr int RestoreRegisters = Local ? LocalEntryRegisters : EntryRegisters;
-  NativeConfig configuration = parameters.config;
-  configuration.hidden = Hidden;
-  configuration.intermediate = Intermediate;
-  auto p = w8a16ParameterView(parameters, configuration);
-  auto& s = *reinterpret_cast<SharedStorage*>(storage);
-  int warp = threadIdx.x / warpSize;
-  int lane = threadIdx.x % warpSize;
-  int cta = blockIdx.x % ClusterSize;
-  int cluster = blockIdx.x / ClusterSize;
-  const int hidden = p.config.hidden;
-  const int intermediate = p.config.intermediate;
-  if (blockIdx.x == 0 && threadIdx.x == 0 && kernelEntrySignal)
-    atomicStore<uint32_t, scopeDevice>(kernelEntrySignal, 1, memoryOrderRelease);
-  if (Local && tokens == 0) return;
 
-  typename LoadA::Params aParams{};
-  aParams.role = warp == Schedule::LoadAWarp ? LoadA::ThreadCategory::Producer
-                                             : (warp >= Schedule::TransformBegin && warp < Schedule::TransformEnd
-                                                    ? LoadA::ThreadCategory::Consumer
-                                                    : LoadA::ThreadCategory::NonParticipant);
-  aParams.is_leader = lane == 0;
-  aParams.num_consumers = 128;
-  aParams.transaction_bytes = Mainloop::TmaTransactionBytes_A;
-  aParams.initializing_warp = Schedule::LoadAWarp;
-  LoadA aPipeline(s.mainloopA, aParams, ClusterShape{}, cutlass::McastDirection::kRow, true_type{}, false_type{});
-  typename LoadB::Params bParams{};
-  bParams.role = warp == Schedule::LoadBWarp ? LoadB::ThreadCategory::Producer
-                                             : (warp == Schedule::MmaWarp ? LoadB::ThreadCategory::Consumer
-                                                                          : LoadB::ThreadCategory::NonParticipant);
-  bParams.is_leader = lane == 0 && cta == 0 && warp == Schedule::LoadBWarp;
-  bParams.num_consumers = 32;
-  bParams.transaction_bytes = Mainloop::TmaTransactionBytes_B;
-  bParams.initializing_warp = Schedule::LoadBWarp;
-  LoadB bPipeline(s.mainloopB, bParams, ClusterShape{}, cutlass::McastDirection::kCol, true_type{}, false_type{});
-  typename Transform::Params tParams{};
-  tParams.role = warp >= Schedule::TransformBegin && warp < Schedule::TransformEnd
-                     ? Transform::ThreadCategory::Producer
-                     : (warp == Schedule::MmaWarp ? Transform::ThreadCategory::Consumer
-                                                  : Transform::ThreadCategory::NonParticipant);
-  tParams.consumer_arv_count = 1;
-  tParams.producer_arv_count = 256;
-  tParams.initializing_warp = Schedule::TransformBegin;
-  Transform tPipeline(s.transformed, tParams, ClusterShape{}, true_type{}, false_type{});
-  auto cPipeline = makeAccumulatorPipeline<Accumulate, Schedule, ClusterShape>(s.accumulated, warp);
-  aPipeline.init_masks(ClusterShape{}, cute::block_id_in_cluster(), cutlass::McastDirection::kRow);
-  bPipeline.init_masks(ClusterShape{}, cutlass::McastDirection::kCol);
-  tPipeline.init_masks(ClusterShape{});
-  cPipeline.init_masks(ClusterShape{});
-  cute::TMEM::Allocator2Sm allocator;
-  if (warp == Schedule::MmaWarp) allocator.allocate(512, &s.tmem);
-  if constexpr (!Local) initDispatchStorage<Types::DispatchStages, Schedule>(s, warp, lane);
-  cutlass::arch::fence_barrier_init();
-  int nTokenTiles = prepareW8A16TokenTiles<Local>(p, tokens, ids, scores);
-  if constexpr (Local) {
-    __syncthreads();
-    cute::cluster_sync();
-  }
+  // 1. Signal kernel entry and initialize pipelines, TMEM, and dispatch barriers.
+  signalKernelEntry(kernelEntrySignal);
+  if (Local && nTokens == 0) return;
 
-  Mainloop fc1(p.fc1, ClusterShape{}, cta);
-  Mainloop fc2(p.fc2, ClusterShape{}, cta);
-  auto acc = Mainloop::TiledMma::make_fragment_C(append(fc1.partition_accumulator_shape(), _2{}));
-  acc.data() = s.tmem;
-  int tasks = nTokenTiles * (fc1TaskTiles<Parameters>(intermediate) + fc2TaskTiles<Parameters>(hidden));
-  int localExperts = p.config.numExperts / p.config.worldSize;
-  ProblemShape shape1{2 * intermediate, p.workspace.poolRows, hidden, localExperts};
-  ProblemShape shape2{hidden, p.workspace.poolRows, intermediate, localExperts};
+  extern __shared__ __align__(1024) char rawSharedStorage[];
+  auto& sharedStorage = *reinterpret_cast<SharedStorage*>(rawSharedStorage);
+  auto params = makeW8A16KernelView<Hidden, Intermediate>(parameters);
+  const KernelThreadLocation threadLoc = makeKernelThreadLocation<Parameters::Tiles::ClusterSize>();
+  auto pipelines = initW8A16PipelinesAndStorage<Local>(sharedStorage, threadLoc);
 
-  if (warp >= Schedule::EpilogueBegin && warp < Schedule::EpilogueEnd) {
-    runEpilogueRole<Schedule, LocalMode>(p, s, cPipeline, acc, hidden, intermediate, cluster, tasks, output, tokens);
-  } else if (warp >= Schedule::TransformBegin && warp < Schedule::TransformEnd) {
-    runW8A16TransformRole<Local>(p, tokens, s, aPipeline, tPipeline, fc1, shape1, acc, hidden, intermediate, cluster,
-                                 tasks);
-  } else {
-    runW8A16TransferRole<Hidden, Local, Schedule>(p, tokens, s, aPipeline, bPipeline, tPipeline, cPipeline, fc1, fc2,
-                                                  shape1, shape2, acc, hidden, intermediate, warp, lane, cta, cluster,
-                                                  tasks, input, scores);
-  }
-  __syncthreads();
-  if ((warp >= Schedule::EpilogueBegin && warp < Schedule::EpilogueEnd) ||
-      (warp >= Schedule::TransformBegin && warp < Schedule::TransformEnd))
-    cutlass::arch::warpgroup_reg_dealloc<RestoreRegisters>();
-  else
-    cutlass::arch::warpgroup_reg_alloc<RestoreRegisters>();
-  cute::cluster_sync();
-  if (warp == Schedule::MmaWarp) {
-    allocator.release_allocation_lock();
-    allocator.free(s.tmem, 512);
-  }
-  finalizeW8A16Output<Hidden, Local>(p, tokens, output);
+  // 2. Exchange routes (or synchronize local-expert tiles).
+  const int nTokenTiles = runW8A16RoutingStage<Local>(params, nTokens, ids, scores);
+  auto computeCtx = makeW8A16ComputeContext(params, sharedStorage, threadLoc.ctaIdx, nTokenTiles);
+
+  // 3. Execute warp-specialized roles.
+  dispatchW8A16WarpRole<Local, Schedule>(threadLoc.warpIdx, [&]<WarpRole Role>() {
+    if constexpr (Role == WarpRole::Dispatch) {
+      if constexpr (!Local) {
+        runDispatchRole<Hidden, Types::DispatchChunk, Types::DispatchStages>(params, sharedStorage, threadLoc.warpIdx,
+                                                                             nTokens, input, nullptr, scores);
+      }
+    } else if constexpr (Role == WarpRole::LoadA) {
+      runW8A16LoadAStage(params, sharedStorage, pipelines.loadA, computeCtx, threadLoc, nTokens);
+    } else if constexpr (Role == WarpRole::LoadB) {
+      runW8A16LoadBStage<Local>(params, sharedStorage, pipelines.loadB, computeCtx, threadLoc, nTokens);
+    } else if constexpr (Role == WarpRole::Transform) {
+      runW8A16TransformStage<Local>(params, sharedStorage, pipelines.loadA, pipelines.transform, computeCtx, threadLoc,
+                                    nTokens);
+    } else if constexpr (Role == WarpRole::Mma) {
+      runW8A16MmaStage<Local, Schedule>(params, sharedStorage, pipelines, computeCtx, threadLoc, nTokens);
+    } else if constexpr (Role == WarpRole::Epilogue) {
+      runW8A16EpilogueStage<Schedule, LocalMode>(params, sharedStorage, pipelines.accumulate, computeCtx, threadLoc,
+                                                 nTokens, output);
+    }
+  });
+
+  // 4. Restore warpgroup registers, release TMEM, and combine outputs.
+  finishW8A16KernelStage<Hidden, Local>(params, sharedStorage, pipelines.allocator, threadLoc.warpIdx, nTokens, output);
 }
 
 struct W8A16KernelRegistration {

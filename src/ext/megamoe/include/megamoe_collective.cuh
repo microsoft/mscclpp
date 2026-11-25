@@ -12,6 +12,7 @@
 #include <cutlass/gemm/collective/collective_builder.hpp>
 #include <cutlass/gemm/collective/sm100_blockscaled_mma_warpspecialized.hpp>
 #include <cutlass/gemm/collective/sm100_mma_warpspecialized_mixed_input.hpp>
+#include <mscclpp/device.hpp>
 
 #include "megamoe_kernel.hpp"
 #include "megamoe_specialization.hpp"
@@ -122,7 +123,7 @@ using W4A8CollectiveTypes =
 
 static_assert(W4A8CollectiveTypes::Load::Stages == W4LoadStages);
 
-__device__ __forceinline__ uint32_t decodeScaledPair(uint16_t weights, uint16_t scales) {
+MSCCLPP_DEVICE_INLINE uint32_t decodeScaledPair(uint16_t weights, uint16_t scales) {
   uint32_t decoded, expanded, result;
 #if __CUDACC_VER_MAJOR__ > 13 || (__CUDACC_VER_MAJOR__ == 13 && __CUDACC_VER_MINOR__ >= 3)
   asm("cvt.rn.bf16x2.e4m3x2 %0, %1;" : "=r"(decoded) : "h"(weights));
@@ -138,7 +139,7 @@ __device__ __forceinline__ uint32_t decodeScaledPair(uint16_t weights, uint16_t 
 }
 
 template <bool Local = false, class Inputs>
-__device__ __forceinline__ void transformWeights(
+MSCCLPP_DEVICE_INLINE void transformWeights(
     typename W8A16CollectiveTypesT<Local>::LoadA& load,
     typename W8A16CollectiveTypesT<Local>::LoadA::PipelineState& loadState,
     typename W8A16CollectiveTypesT<Local>::Transform& transformed,

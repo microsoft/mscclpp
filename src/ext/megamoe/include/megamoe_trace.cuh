@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <mscclpp/device.hpp>
 
 #include "megamoe_specialization.hpp"
 
@@ -92,7 +93,7 @@ static inline cudaError_t copyKernelTrace(void* events, size_t bytes, uint32_t* 
 #endif
 #endif
 
-__device__ __forceinline__ void traceKernel(KernelTracePhase phase, bool begin, int32_t payload = 0) {
+MSCCLPP_DEVICE_INLINE void traceKernel(KernelTracePhase phase, bool begin, int32_t payload = 0) {
 #if MSCCLPP_MEGAMOE_TRACE
 #if defined(MSCCLPP_MEGAMOE_TRACE_ROUTING_ONLY) && MSCCLPP_MEGAMOE_TRACE_ROUTING_ONLY
   if (phase != KernelTracePhase::Routing) return;
@@ -110,7 +111,7 @@ __device__ __forceinline__ void traceKernel(KernelTracePhase phase, bool begin, 
 #endif
 }
 
-__device__ __forceinline__ uint64_t traceKernelClock() {
+MSCCLPP_DEVICE_INLINE uint64_t traceKernelClock() {
 #if MSCCLPP_MEGAMOE_TRACE == 1
   uint64_t timestamp;
   asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(timestamp) : : "memory");
@@ -120,7 +121,7 @@ __device__ __forceinline__ uint64_t traceKernelClock() {
 #endif
 }
 
-__device__ __forceinline__ void traceKernelTotal(KernelTracePhase phase, uint64_t nanoseconds, int count) {
+MSCCLPP_DEVICE_INLINE void traceKernelTotal(KernelTracePhase phase, uint64_t nanoseconds, int count) {
 #if MSCCLPP_MEGAMOE_TRACE == 1 && (!defined(MSCCLPP_MEGAMOE_TRACE_ROUTING_ONLY) || !MSCCLPP_MEGAMOE_TRACE_ROUTING_ONLY)
   if (blockIdx.x < KernelTraceCtas && threadIdx.x / warpSize < KernelTraceWarpsPerCta && threadIdx.x % warpSize == 0 &&
       kernelTraceEnabled) {
@@ -132,7 +133,7 @@ __device__ __forceinline__ void traceKernelTotal(KernelTracePhase phase, uint64_
 #endif
 }
 
-__device__ __forceinline__ void traceKernelCount(KernelTracePhase phase, uint32_t ready, int attempts) {
+MSCCLPP_DEVICE_INLINE void traceKernelCount(KernelTracePhase phase, uint32_t ready, int attempts) {
 #if MSCCLPP_MEGAMOE_TRACE == 1 && (!defined(MSCCLPP_MEGAMOE_TRACE_ROUTING_ONLY) || !MSCCLPP_MEGAMOE_TRACE_ROUTING_ONLY)
   if (blockIdx.x < KernelTraceCtas && threadIdx.x / warpSize < KernelTraceWarpsPerCta && threadIdx.x % warpSize == 0 &&
       kernelTraceEnabled) {

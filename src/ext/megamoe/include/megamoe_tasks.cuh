@@ -9,28 +9,28 @@
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 
 template <class P>
-__device__ __forceinline__ int fc1TaskTiles(int intermediate) {
+MSCCLPP_DEVICE_INLINE int fc1TaskTiles(int intermediate) {
   return 2 * intermediate / P::Tiles::M;
 }
 
 template <class P>
-__device__ __forceinline__ int fc2TaskTiles(int hidden) {
+MSCCLPP_DEVICE_INLINE int fc2TaskTiles(int hidden) {
   return (hidden + P::Tiles::M - 1) / P::Tiles::M;
 }
 
 template <class P>
-__device__ __forceinline__ int fc1CompletionCount(int intermediate) {
+MSCCLPP_DEVICE_INLINE int fc1CompletionCount(int intermediate) {
   return P::Tiles::ClusterSize * fc1TaskTiles<P>(intermediate);
 }
 
 template <class P>
-__device__ __forceinline__ int taskTokenTiles(const P& p, int tokens) {
+MSCCLPP_DEVICE_INLINE int taskTokenTiles(const P& p, int tokens) {
   if constexpr (P::LocalExpert) return (tokens + P::Tiles::N - 1) / P::Tiles::N;
   return p.workspace.control->nTokenTiles;
 }
 
 template <class P>
-__device__ __forceinline__ TokenTile resolveTokenTile(const P& p, int& block, int& m, int tiles, int tokens) {
+MSCCLPP_DEVICE_INLINE TokenTile resolveTokenTile(const P& p, int& block, int& m, int tiles, int tokens) {
   if constexpr (P::LocalExpert) {
     return TokenTile::make(0, min(int(P::Tiles::N), tokens - block * P::Tiles::N));
   }
@@ -50,13 +50,13 @@ constexpr bool AllowLag = !P::LocalExpert && P::WeightMxfp4 && (P::Collective::D
 constexpr int InterleaveBlockLag = 32;
 
 template <class P>
-__device__ __forceinline__ bool useInterleavedTasks(int nTokenTiles, int localExperts) {
+MSCCLPP_DEVICE_INLINE bool useInterleavedTasks(int nTokenTiles, int localExperts) {
   return AllowLag<P> && (nTokenTiles > max(2 * localExperts, 2 * InterleaveBlockLag));
 }
 
 template <class P>
-__device__ __forceinline__ Task taskAtFast(const P& p, int ordinal, int nTokenTiles, int localExperts, int fc1Tiles,
-                                           int fc2Tiles, int tokens = 0) {
+MSCCLPP_DEVICE_INLINE Task taskAtFast(const P& p, int ordinal, int nTokenTiles, int localExperts, int fc1Tiles,
+                                      int fc2Tiles, int tokens = 0) {
   bool fc1;
   int block, m;
   if constexpr (AllowLag<P>) {
@@ -113,13 +113,13 @@ __device__ Task taskAt(const P& p, int ordinal, int hidden, int intermediate, in
 }
 
 template <class P>
-__device__ __forceinline__ int taskKTiles(const P&, const Task& task, int hidden, int intermediate) {
+MSCCLPP_DEVICE_INLINE int taskKTiles(const P&, const Task& task, int hidden, int intermediate) {
   constexpr int KernelTileK = P::Tiles::K;
   return ((task.fc1 ? hidden : intermediate) + KernelTileK - 1) / KernelTileK;
 }
 
 template <class P>
-__device__ __forceinline__ auto taskCoord(const P&, const Task& task, int cta) {
+MSCCLPP_DEVICE_INLINE auto taskCoord(const P&, const Task& task, int cta) {
   constexpr int BlockStride = P::Tiles::TokenStride / P::Tiles::N;
   return cute::make_coord(task.m * P::Tiles::ClusterSize + cta, task.block * BlockStride, 0, task.tokens.expertIdx);
 }

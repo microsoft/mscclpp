@@ -70,8 +70,8 @@ MSCCLPP_DEVICE_INLINE void resolveLocalGatherSource(const P& p, const Route& rou
 }
 
 template <class Types, class Storage>
-__device__ __forceinline__ void publishDispatchChunk(Storage& storage, int localWarp, int* counter, bool hasRow,
-                                                     uint32_t phase) {
+MSCCLPP_DEVICE_INLINE void publishDispatchChunk(Storage& storage, int localWarp, int* counter, bool hasRow,
+                                                uint32_t phase) {
 #if MSCCLPP_BULK_AVAILABLE
   // Every warp arrives, including padded rows; only live rows contribute to readiness.
   constexpr uint32_t Arrival = 1u << 16;
@@ -96,10 +96,10 @@ __device__ __forceinline__ void publishDispatchChunk(Storage& storage, int local
 #endif
 }
 
-template <int DispatchBytes, int DispatchStages, class P, class Storage, class NextLoad>
-__device__ __forceinline__ void storeDispatchChunk(const P& p, Storage& storage, int localWarp, int row, int chunk,
-                                                   uint8_t* destination, int bytes, uint32_t& phase, bool issueNext,
-                                                   NextLoad&& loadNext) {
+template <int DispatchBytes, int DispatchStages, class KernelParams, class Storage, class NextLoad>
+MSCCLPP_DEVICE_INLINE void storeDispatchChunk(const KernelParams& params, Storage& storage, int localWarp, int row,
+                                              int chunk, uint8_t* destination, int bytes, uint32_t& phase,
+                                              bool issueNext, NextLoad&& loadNext) {
 #if MSCCLPP_BULK_AVAILABLE
   int lane = threadIdx.x % warpSize;
   int stage = chunk % DispatchStages;
@@ -110,12 +110,12 @@ __device__ __forceinline__ void storeDispatchChunk(const P& p, Storage& storage,
     bulkFence();
   }
   __syncwarp();
-  if constexpr (RequiresLoadScale<P>) {
+  if constexpr (RequiresLoadScale<KernelParams>) {
     int k = 4 * lane;
     if (k < bytes / MxfpScaleBlockSize) {
-      size_t offset = p.fc1.layout_SFB(
-          cute::make_coord(w4StorageRow<typename P::Tiles>(row), chunk * DispatchBytes + k * MxfpScaleBlockSize, 0));
-      *reinterpret_cast<uint32_t*>(p.workspace.inputScale + offset) =
+      size_t offset = params.fc1.layout_SFB(cute::make_coord(w4StorageRow<typename KernelParams::Tiles>(row),
+                                                             chunk * DispatchBytes + k * MxfpScaleBlockSize, 0));
+      *reinterpret_cast<uint32_t*>(params.workspace.inputScale + offset) =
           *reinterpret_cast<const uint32_t*>(storage.scales[localWarp][stage] + k);
     }
   }
@@ -188,17 +188,17 @@ MSCCLPP_DEVICE_INLINE bool mapGroupToTile(const Workspace& w, int nLocalExperts,
 }
 
 template <int DispatchStages, class Schedule, class Storage>
-__device__ __forceinline__ void initDispatchStorage(Storage& s, int warp, int lane) {
+MSCCLPP_DEVICE_INLINE void initDispatchStorage(Storage& sharedStorage, int warpIdx, int laneIdx) {
 #if MSCCLPP_BULK_AVAILABLE
-  if (warp >= Schedule::DispatchBegin && warp < Schedule::DispatchEnd) {
-    int localWarp = warp - Schedule::DispatchBegin;
-    if (lane == 0 && localWarp == 0) {
-      s.dispatch.arrivals = 0;
-      s.dispatch.publishedPhase = 0;
+  if (warpIdx >= Schedule::DispatchBegin && warpIdx < Schedule::DispatchEnd) {
+    int localWarp = warpIdx - Schedule::DispatchBegin;
+    if (laneIdx == 0 && localWarp == 0) {
+      sharedStorage.dispatch.arrivals = 0;
+      sharedStorage.dispatch.publishedPhase = 0;
     }
-    constexpr int NumBarriers = std::extent_v<decltype(s.dispatch.barriers), 1>;
+    constexpr int NumBarriers = std::extent_v<decltype(sharedStorage.dispatch.barriers), 1>;
     static_assert(NumBarriers >= DispatchStages && NumBarriers <= 32);
-    if (lane < NumBarriers) s.dispatch.barriers[localWarp][lane].relaxedInit();
+    if (laneIdx < NumBarriers) sharedStorage.dispatch.barriers[localWarp][laneIdx].relaxedInit();
   }
 #endif
 }
@@ -256,10 +256,10 @@ struct StageExpertTokens;
 template <>
 struct StageExpertTokens<DispatchMode::W8A16> {
   template <bool LocalGather, int DispatchBytes, int DispatchStages, class P, class Storage>
-  __device__ __forceinline__ static void run(const P& p, Storage& s, int localWarp, int lane, int hidden, int rowBytes,
-                                             int chunks, int nLocalExperts, ExpertWindow window, int runtimeTokens,
-                                             const uint8_t* directInput, const uint8_t* directInputScale,
-                                             const float* directScores) {
+  MSCCLPP_DEVICE_INLINE static void run(const P& p, Storage& s, int localWarp, int lane, int hidden, int rowBytes,
+                                        int chunks, int nLocalExperts, ExpertWindow window, int runtimeTokens,
+                                        const uint8_t* directInput, const uint8_t* directInputScale,
+                                        const float* directScores) {
 #if MSCCLPP_BULK_AVAILABLE
     using Types = typename P::Collective;
     constexpr int TileN = P::Tiles::N;
@@ -341,10 +341,10 @@ struct StageExpertTokens<DispatchMode::W8A16> {
 template <>
 struct StageExpertTokens<DispatchMode::W4A8Coalesced> {
   template <bool LocalGather, int DispatchBytes, int DispatchStages, class P, class Storage>
-  __device__ __forceinline__ static void run(const P& p, Storage& s, int localWarp, int lane, int hidden, int rowBytes,
-                                             int chunks, int nLocalExperts, ExpertWindow window, int runtimeTokens,
-                                             const uint8_t* directInput, const uint8_t* directInputScale,
-                                             const float* directScores) {
+  MSCCLPP_DEVICE_INLINE static void run(const P& p, Storage& s, int localWarp, int lane, int hidden, int rowBytes,
+                                        int chunks, int nLocalExperts, ExpertWindow window, int runtimeTokens,
+                                        const uint8_t* directInput, const uint8_t* directInputScale,
+                                        const float* directScores) {
 #if MSCCLPP_BULK_AVAILABLE
     using Types = typename P::Collective;
     constexpr int TileN = P::Tiles::N;
@@ -456,10 +456,10 @@ struct StageExpertTokens<DispatchMode::W4A8Coalesced> {
 template <>
 struct StageExpertTokens<DispatchMode::W4A8PerWarp> {
   template <bool LocalGather, int DispatchBytes, int DispatchStages, class P, class Storage>
-  __device__ __forceinline__ static void run(const P& p, Storage& s, int localWarp, int lane, int hidden, int rowBytes,
-                                             int chunks, int nLocalExperts, ExpertWindow window, int runtimeTokens,
-                                             const uint8_t* directInput, const uint8_t* directInputScale,
-                                             const float* directScores) {
+  MSCCLPP_DEVICE_INLINE static void run(const P& p, Storage& s, int localWarp, int lane, int hidden, int rowBytes,
+                                        int chunks, int nLocalExperts, ExpertWindow window, int runtimeTokens,
+                                        const uint8_t* directInput, const uint8_t* directInputScale,
+                                        const float* directScores) {
 #if MSCCLPP_BULK_AVAILABLE
     using Types = typename P::Collective;
     using DispatchStorage = std::remove_reference_t<decltype(s.dispatch)>;
@@ -553,60 +553,60 @@ struct StageExpertTokens<DispatchMode::W4A8PerWarp> {
   }
 };
 
-template <bool LocalGather, int Hidden, int DispatchBytes, int DispatchStages, class P, class Storage>
-__device__ __forceinline__ void stageExpertTokens(const P& p, Storage& s, int localWarp, int runtimeTokens = 0,
-                                                  const uint8_t* directInput = nullptr,
-                                                  const uint8_t* directInputScale = nullptr,
-                                                  const float* directScores = nullptr) {
+template <bool LocalGather, int Hidden, int DispatchBytes, int DispatchStages, class KernelParams, class Storage>
+MSCCLPP_DEVICE_INLINE void stageExpertTokens(const KernelParams& params, Storage& sharedStorage, int localWarp,
+                                             int runtimeTokens = 0, const uint8_t* directInput = nullptr,
+                                             const uint8_t* directInputScale = nullptr,
+                                             const float* directScores = nullptr) {
 #if MSCCLPP_BULK_AVAILABLE
-  using Types = typename P::Collective;
+  using Types = typename KernelParams::Collective;
   static_assert(Hidden >= 0);
-  static_assert(DispatchBytes == sizeof(s.dispatch.tiles[0][0]));
-  static_assert(alignedMxfpScaleBytes(DispatchBytes) <= sizeof(s.dispatch.scales[0][0]));
-  constexpr int ElemBytes = P::Activation == ActivationDtype::Bf16 ? sizeof(__bfloat16) : sizeof(uint8_t);
-  constexpr int TileN = P::Tiles::N;
+  static_assert(DispatchBytes == sizeof(sharedStorage.dispatch.tiles[0][0]));
+  static_assert(alignedMxfpScaleBytes(DispatchBytes) <= sizeof(sharedStorage.dispatch.scales[0][0]));
+  constexpr int ElemBytes = KernelParams::Activation == ActivationDtype::Bf16 ? sizeof(__bfloat16) : sizeof(uint8_t);
+  constexpr int TileN = KernelParams::Tiles::N;
   constexpr int nDispatchGroupsPerTile = (TileN + Types::DispatchWarps - 1) / Types::DispatchWarps;
   static_assert((nDispatchGroupsPerTile & (nDispatchGroupsPerTile - 1)) == 0,
                 "XOR group swizzling needs a power-of-two group count");
   const int lane = threadIdx.x % warpSize;
-  const int hidden = Hidden > 0 ? Hidden : p.config.hidden;
+  const int hidden = Hidden > 0 ? Hidden : params.config.hidden;
   const int rowBytes = hidden * ElemBytes;
   const int chunks = (rowBytes + DispatchBytes - 1) / DispatchBytes;
-  const int nLocalExperts = p.config.numExperts / p.config.worldSize;
-  ExpertWindow window = loadExpertWindow<TileN, Types::DispatchWarps>(p.workspace, nLocalExperts, 0, 0, lane);
-  StageExpertTokens<KernelDispatchMode<P>>::template run<LocalGather, DispatchBytes, DispatchStages>(
-      p, s, localWarp, lane, hidden, rowBytes, chunks, nLocalExperts, window, runtimeTokens, directInput,
-      directInputScale, directScores);
+  const int nLocalExperts = params.config.numExperts / params.config.worldSize;
+  ExpertWindow window = loadExpertWindow<TileN, Types::DispatchWarps>(params.workspace, nLocalExperts, 0, 0, lane);
+  StageExpertTokens<KernelDispatchMode<KernelParams>>::template run<LocalGather, DispatchBytes, DispatchStages>(
+      params, sharedStorage, localWarp, lane, hidden, rowBytes, chunks, nLocalExperts, window, runtimeTokens,
+      directInput, directInputScale, directScores);
 #endif
 }
 
-template <int Hidden, int DispatchBytes, int DispatchStages, class P, class Storage>
-__device__ __forceinline__ void dispatchTokens(const P& p, Storage& s, int localWarp) {
-  stageExpertTokens<false, Hidden, DispatchBytes, DispatchStages>(p, s, localWarp);
+template <int Hidden, int DispatchBytes, int DispatchStages, class KernelParams, class Storage>
+MSCCLPP_DEVICE_INLINE void dispatchTokens(const KernelParams& params, Storage& sharedStorage, int localWarp) {
+  stageExpertTokens<false, Hidden, DispatchBytes, DispatchStages>(params, sharedStorage, localWarp);
 }
 
-template <int Hidden, int DispatchBytes, int DispatchStages, class P, class Storage>
-__device__ __forceinline__ void gatherLocalTokens(const P& p, Storage& s, int localWarp, int runtimeTokens,
-                                                  const uint8_t* directInput, const uint8_t* directInputScale,
-                                                  const float* directScores) {
-  stageExpertTokens<true, Hidden, DispatchBytes, DispatchStages>(p, s, localWarp, runtimeTokens, directInput,
-                                                                 directInputScale, directScores);
+template <int Hidden, int DispatchBytes, int DispatchStages, class KernelParams, class Storage>
+MSCCLPP_DEVICE_INLINE void gatherLocalTokens(const KernelParams& params, Storage& sharedStorage, int localWarp,
+                                             int runtimeTokens, const uint8_t* directInput,
+                                             const uint8_t* directInputScale, const float* directScores) {
+  stageExpertTokens<true, Hidden, DispatchBytes, DispatchStages>(params, sharedStorage, localWarp, runtimeTokens,
+                                                                 directInput, directInputScale, directScores);
 }
 
-template <int Hidden, int DispatchBytes, int DispatchStages, class P, class Storage>
-__device__ __forceinline__ void runDispatchRole(const P& p, Storage& s, int warp, int runtimeTokens = 0,
-                                                const void* directInput = nullptr,
-                                                const uint8_t* directInputScale = nullptr,
-                                                const float* directScores = nullptr) {
-  using Schedule = typename P::Collective::WarpSchedule;
-  if (warp >= Schedule::DispatchBegin && warp < Schedule::DispatchEnd) {
+template <int Hidden, int DispatchBytes, int DispatchStages, class KernelParams, class Storage>
+MSCCLPP_DEVICE_INLINE void runDispatchRole(const KernelParams& params, Storage& sharedStorage, int warpIdx,
+                                           int runtimeTokens = 0, const void* directInput = nullptr,
+                                           const uint8_t* directInputScale = nullptr,
+                                           const float* directScores = nullptr) {
+  using Schedule = typename KernelParams::Collective::WarpSchedule;
+  if (warpIdx >= Schedule::DispatchBegin && warpIdx < Schedule::DispatchEnd) {
     traceKernel(KernelTracePhase::Dispatch, true);
-    if (p.config.computeOnly)
-      gatherLocalTokens<Hidden, DispatchBytes, DispatchStages>(p, s, warp - Schedule::DispatchBegin, runtimeTokens,
-                                                               static_cast<const uint8_t*>(directInput),
+    if (params.config.computeOnly)
+      gatherLocalTokens<Hidden, DispatchBytes, DispatchStages>(params, sharedStorage, warpIdx - Schedule::DispatchBegin,
+                                                               runtimeTokens, static_cast<const uint8_t*>(directInput),
                                                                directInputScale, directScores);
     else
-      dispatchTokens<Hidden, DispatchBytes, DispatchStages>(p, s, warp - Schedule::DispatchBegin);
+      dispatchTokens<Hidden, DispatchBytes, DispatchStages>(params, sharedStorage, warpIdx - Schedule::DispatchBegin);
     traceKernel(KernelTracePhase::Dispatch, false);
   }
 }
