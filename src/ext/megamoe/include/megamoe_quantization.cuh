@@ -4,6 +4,10 @@
 #ifndef MSCCLPP_EXT_MEGAMOE_QUANTIZATION_CUH_
 #define MSCCLPP_EXT_MEGAMOE_QUANTIZATION_CUH_
 
+#if !(__CUDACC_VER_MAJOR__ > 13 || (__CUDACC_VER_MAJOR__ == 13 && __CUDACC_VER_MINOR__ >= 3))
+#include <cutlass/numeric_conversion.h>
+#endif
+
 #include "megamoe_device.cuh"
 
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
@@ -50,6 +54,21 @@ MSCCLPP_DEVICE_INLINE mscclpp::f32x8 dequantizeE4M3x8(uint2 raw) {
   *reinterpret_cast<float2*>(&out.data[6]) =
       mscclpp::to<mscclpp::f32x2>(mscclpp::bit_cast<mscclpp::f8_e4m3x2>(uint16_t(raw.y >> 16)));
   return out;
+}
+
+MSCCLPP_DEVICE_INLINE uint32_t decodeScaledPair(uint16_t weights, uint16_t scales) {
+  uint32_t decoded, expanded, result;
+#if __CUDACC_VER_MAJOR__ > 13 || (__CUDACC_VER_MAJOR__ == 13 && __CUDACC_VER_MINOR__ >= 3)
+  asm("cvt.rn.bf16x2.e4m3x2 %0, %1;" : "=r"(decoded) : "h"(weights));
+#else
+  using Weight = cutlass::float_e4m3_t;
+  using PackedWeights = cutlass::Array<Weight, 2>;
+  decoded = cuda::std::bit_cast<uint32_t>(
+      cutlass::NumericArrayConverter<cutlass::bfloat16_t, Weight, 2>{}(cuda::std::bit_cast<PackedWeights>(weights)));
+#endif
+  asm("cvt.rn.bf16x2.ue8m0x2 %0, %1;" : "=r"(expanded) : "h"(scales));
+  asm("mul.rn.bf16x2 %0, %1, %2;" : "=r"(result) : "r"(decoded), "r"(expanded));
+  return result;
 }
 
 }  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail

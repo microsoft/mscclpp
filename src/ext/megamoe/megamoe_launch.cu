@@ -12,6 +12,7 @@
 
 #include "megamoe_device.cuh"
 #include "megamoe_kernel.hpp"
+#include "megamoe_math.cuh"
 #include "megamoe_quantization.cuh"
 
 namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE {
@@ -192,12 +193,7 @@ __global__ void quantizeInputKernel(const __bfloat16* input, uint8_t* quantizedI
     mscclpp::bf16x8 packedValues = mscclpp::bit_cast<mscclpp::bf16x8>(packed);
     mscclpp::f32x8 decoded = mscclpp::to<mscclpp::f32x8>(packedValues);
 
-    float maximum = 0.0f;
-#pragma unroll
-    for (int i = 0; i < ValuesPerThread; ++i) maximum = fmaxf(maximum, fabsf(decoded[i]));
-#pragma unroll
-    for (int offset = ThreadsPerBlockScale / 2; offset > 0; offset /= 2)
-      maximum = fmaxf(maximum, __shfl_xor_sync(0xffffffff, maximum, offset, ThreadsPerBlockScale));
+    float maximum = warpSubgroupMaxAbs<ThreadsPerBlockScale>(decoded);
     uint8_t scale = quantizeE8M0Scale(maximum);
     auto quantized = quantizeE4M3(decoded, inverseE8M0Scale(scale));
     auto output = quantizedInput + size_t(token) * hidden + block * 32 + lane * ValuesPerThread;

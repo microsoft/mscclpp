@@ -123,66 +123,6 @@ using W4A8CollectiveTypes =
 
 static_assert(W4A8CollectiveTypes::Load::Stages == W4LoadStages);
 
-MSCCLPP_DEVICE_INLINE uint32_t decodeScaledPair(uint16_t weights, uint16_t scales) {
-  uint32_t decoded, expanded, result;
-#if __CUDACC_VER_MAJOR__ > 13 || (__CUDACC_VER_MAJOR__ == 13 && __CUDACC_VER_MINOR__ >= 3)
-  asm("cvt.rn.bf16x2.e4m3x2 %0, %1;" : "=r"(decoded) : "h"(weights));
-#else
-  using Weight = cutlass::float_e4m3_t;
-  using PackedWeights = cutlass::Array<Weight, 2>;
-  decoded = cuda::std::bit_cast<uint32_t>(
-      cutlass::NumericArrayConverter<cutlass::bfloat16_t, Weight, 2>{}(cuda::std::bit_cast<PackedWeights>(weights)));
-#endif
-  asm("cvt.rn.bf16x2.ue8m0x2 %0, %1;" : "=r"(expanded) : "h"(scales));
-  asm("mul.rn.bf16x2 %0, %1, %2;" : "=r"(result) : "r"(decoded), "r"(expanded));
-  return result;
-}
-
-template <bool Local = false, class Inputs>
-MSCCLPP_DEVICE_INLINE void transformWeights(
-    typename W8A16CollectiveTypesT<Local>::LoadA& load,
-    typename W8A16CollectiveTypesT<Local>::LoadA::PipelineState& loadState,
-    typename W8A16CollectiveTypesT<Local>::Transform& transformed,
-    typename W8A16CollectiveTypesT<Local>::Transform::PipelineState& transformState, Inputs& inputs, int kTiles) {
-  using namespace cute;
-  using Types = W8A16CollectiveTypesT<Local>;
-  using Mainloop = typename Types::Mainloop;
-  using Utils = cutlass::gemm::collective::detail::MixedInputUtils<Mainloop>;
-  auto copyOp = get<1>(inputs);
-  auto& raw = get<2>(inputs);
-  auto& converted = get<3>(inputs);
-  auto& scaleInputs = get<4>(inputs);
-  auto rRaw = make_tensor<typename Types::Weight>(shape(raw(_, _, _, _, 0)));
-  auto rConverted = make_tensor<typename Types::Activation>(shape(rRaw));
-  auto packedRaw = recast<uint16_t>(rRaw);
-  auto packedConverted = recast<uint32_t>(rConverted);
-  auto scaleBytes = recast<uint8_t>(get<1>(scaleInputs));
-  static_assert(size(rRaw) == size(scaleBytes));
-  cutlass::arch::NamedBarrier copyBarrier(128, cutlass::arch::ReservedNamedBarriers::TransformBarrier);
-
-  for (int k = 0; k < kTiles; ++k) {
-    load.consumer_wait(loadState);
-    transformed.producer_acquire(transformState);
-    copy(AutoVectorizingCopy{}, raw(_, _, _, _, loadState.index()), rRaw);
-    Utils::copy_scale_zeros_for_transform(scaleInputs, loadState.index());
-    copyBarrier.sync();
-    load.consumer_release(loadState);
-    ++loadState;
-
-    // Keep E8M0 in its byte representation: the stock mixed-input helper only
-    // multiplies scales when their element type already matches the MMA type.
-#pragma unroll
-    for (int i = 0; i < size(packedConverted); ++i) {
-      uint16_t scales = uint16_t(scaleBytes(2 * i)) | (uint16_t(scaleBytes(2 * i + 1)) << 8);
-      packedConverted(i) = decodeScaledPair(packedRaw(i), scales);
-    }
-    copy(copyOp, rConverted, converted(_, _, _, _, transformState.index()));
-    cutlass::arch::fence_view_async_tmem_store();
-    transformed.producer_commit(transformState);
-    ++transformState;
-  }
-}
-
 }  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail
 
 #endif  // MSCCLPP_EXT_MEGAMOE_COLLECTIVE_CUH_

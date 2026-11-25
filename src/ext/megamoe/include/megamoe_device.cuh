@@ -380,6 +380,18 @@ MSCCLPP_DEVICE_INLINE void waitReadyCounter(int* counter, int expectedCount) {
   waitAtLeast<int, scopeDevice>(counter, expectedCount);
 }
 
+MSCCLPP_DEVICE_INLINE int atomicAddShared(int* counter, int value) {
+#if defined(__CUDA_ARCH__)
+  int old;
+  // An explicit shared address avoids the generic-address atomic instruction.
+  uint32_t address = static_cast<uint32_t>(__cvta_generic_to_shared(counter));
+  asm volatile("atom.shared.add.u32 %0, [%1], %2;" : "=r"(old) : "r"(address), "r"(value) : "memory");
+  return old;
+#else
+  return atomicFetchAdd<int, cuda::thread_scope_block>(counter, value, memoryOrderRelaxed);
+#endif
+}
+
 MSCCLPP_DEVICE_INLINE void addSharedRelease(uint32_t* counter, uint32_t value) {
 #if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
   uint32_t sharedAddr = static_cast<uint32_t>(__cvta_generic_to_shared(counter));

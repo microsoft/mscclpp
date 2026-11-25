@@ -33,14 +33,6 @@ MSCCLPP_DEVICE_INLINE Route makeRoute(const P& p, uint32_t route, int nTokens = 
   return Route{rank, index / topK, index % topK, 0.0f};
 }
 
-MSCCLPP_DEVICE_INLINE int atomicAddShared(int* counter, int value) {
-  int old;
-  // An explicit shared address avoids the generic-address atomic instruction.
-  uint32_t address = static_cast<uint32_t>(__cvta_generic_to_shared(counter));
-  asm volatile("atom.shared.add.u32 %0, [%1], %2;" : "=r"(old) : "r"(address), "r"(value) : "memory");
-  return old;
-}
-
 // Reserve consecutive positions from a shared counter per key, one atomic per group of lanes sharing a key.
 // All lanes of the warp must call this; lanes with a negative key receive -1.
 MSCCLPP_DEVICE_INLINE int reserveRouteGroup(int* counters, int key, int lane) {

@@ -9,6 +9,7 @@
 #include "megamoe_dispatch.cuh"
 #include "megamoe_epilogue.cuh"
 #include "megamoe_mma.cuh"
+#include "megamoe_quantization.cuh"
 #include "megamoe_routing.cuh"
 #include "megamoe_tasks.cuh"
 
@@ -102,6 +103,51 @@ MSCCLPP_DEVICE_INLINE int runW8A16RoutingStage(const KernelParams& params, int n
     }
     traceKernel(KernelTracePhase::Routing, false);
     return params.workspace.control->nTokenTiles;
+  }
+}
+
+template <bool Local = false, class Inputs>
+MSCCLPP_DEVICE_INLINE void transformWeights(
+    typename W8A16CollectiveTypesT<Local>::LoadA& load,
+    typename W8A16CollectiveTypesT<Local>::LoadA::PipelineState& loadState,
+    typename W8A16CollectiveTypesT<Local>::Transform& transformed,
+    typename W8A16CollectiveTypesT<Local>::Transform::PipelineState& transformState, Inputs& inputs, int kTiles) {
+  using namespace cute;
+  using Types = W8A16CollectiveTypesT<Local>;
+  using Mainloop = typename Types::Mainloop;
+  using Utils = cutlass::gemm::collective::detail::MixedInputUtils<Mainloop>;
+  auto copyOp = get<1>(inputs);
+  auto& raw = get<2>(inputs);
+  auto& converted = get<3>(inputs);
+  auto& scaleInputs = get<4>(inputs);
+  auto rRaw = make_tensor<typename Types::Weight>(shape(raw(_, _, _, _, 0)));
+  auto rConverted = make_tensor<typename Types::Activation>(shape(rRaw));
+  auto packedRaw = recast<uint16_t>(rRaw);
+  auto packedConverted = recast<uint32_t>(rConverted);
+  auto scaleBytes = recast<uint8_t>(get<1>(scaleInputs));
+  static_assert(size(rRaw) == size(scaleBytes));
+  cutlass::arch::NamedBarrier copyBarrier(128, cutlass::arch::ReservedNamedBarriers::TransformBarrier);
+
+  for (int k = 0; k < kTiles; ++k) {
+    load.consumer_wait(loadState);
+    transformed.producer_acquire(transformState);
+    copy(AutoVectorizingCopy{}, raw(_, _, _, _, loadState.index()), rRaw);
+    Utils::copy_scale_zeros_for_transform(scaleInputs, loadState.index());
+    copyBarrier.sync();
+    load.consumer_release(loadState);
+    ++loadState;
+
+    // Keep E8M0 in its byte representation: the stock mixed-input helper only
+    // multiplies scales when their element type already matches the MMA type.
+#pragma unroll
+    for (int i = 0; i < size(packedConverted); ++i) {
+      uint16_t scales = uint16_t(scaleBytes(2 * i)) | (uint16_t(scaleBytes(2 * i + 1)) << 8);
+      packedConverted(i) = decodeScaledPair(packedRaw(i), scales);
+    }
+    copy(copyOp, rConverted, converted(_, _, _, _, transformState.index()));
+    cutlass::arch::fence_view_async_tmem_store();
+    transformed.producer_commit(transformState);
+    ++transformState;
   }
 }
 
