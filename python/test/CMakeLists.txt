@@ -8,6 +8,11 @@ FetchContent_MakeAvailable(nanobind)
 
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS *.cpp)
 nanobind_add_module(mscclpp_py_test ${SOURCES})
+if(MSCCLPP_HIP_LANGUAGE STREQUAL "HIP")
+    set_source_files_properties(${SOURCES} PROPERTIES LANGUAGE HIP)
+    # nanobind only hides the symbols of C++ sources
+    set_target_properties(mscclpp_py_test PROPERTIES HIP_VISIBILITY_PRESET hidden)
+endif()
 set_target_properties(mscclpp_py_test PROPERTIES OUTPUT_NAME _ext)
 target_link_libraries(mscclpp_py_test PRIVATE mscclpp_static ${GPU_LIBRARIES})
 target_include_directories(mscclpp_py_test SYSTEM PRIVATE ${GPU_INCLUDE_DIRS})

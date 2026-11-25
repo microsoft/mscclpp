@@ -20,6 +20,11 @@ endif()
 
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS *.cpp)
 nanobind_add_module(mscclpp_py ${SOURCES})
+if(MSCCLPP_HIP_LANGUAGE STREQUAL "HIP")
+    set_source_files_properties(${SOURCES} PROPERTIES LANGUAGE HIP)
+    # nanobind only hides the symbols of C++ sources
+    set_target_properties(mscclpp_py PROPERTIES HIP_VISIBILITY_PRESET hidden)
+endif()
 set_target_properties(mscclpp_py PROPERTIES OUTPUT_NAME _mscclpp)
 set_target_properties(mscclpp_py PROPERTIES INSTALL_RPATH "\$ORIGIN/lib")
 target_link_libraries(mscclpp_py PRIVATE dlpack mscclpp mscclpp_collectives ${GPU_LIBRARIES})
