@@ -696,28 +696,28 @@ std::string getHcaDevices(int deviceIndex) {
 MSCCLPP_API_CPP std::string getIBDeviceName(Transport ibTransport) {
   int ibTransportIndex;
   switch (ibTransport) {  // TODO: get rid of this ugly switch
-    case Transport::IB0:
+    case Transport::RDMA0:
       ibTransportIndex = 0;
       break;
-    case Transport::IB1:
+    case Transport::RDMA1:
       ibTransportIndex = 1;
       break;
-    case Transport::IB2:
+    case Transport::RDMA2:
       ibTransportIndex = 2;
       break;
-    case Transport::IB3:
+    case Transport::RDMA3:
       ibTransportIndex = 3;
       break;
-    case Transport::IB4:
+    case Transport::RDMA4:
       ibTransportIndex = 4;
       break;
-    case Transport::IB5:
+    case Transport::RDMA5:
       ibTransportIndex = 5;
       break;
-    case Transport::IB6:
+    case Transport::RDMA6:
       ibTransportIndex = 6;
       break;
-    case Transport::IB7:
+    case Transport::RDMA7:
       ibTransportIndex = 7;
       break;
     default:
@@ -743,21 +743,21 @@ MSCCLPP_API_CPP Transport getIBTransportByDeviceName(const std::string& ibDevice
     if (ibDeviceName == devices[i]->name) {
       switch (i) {  // TODO: get rid of this ugly switch
         case 0:
-          return Transport::IB0;
+          return Transport::RDMA0;
         case 1:
-          return Transport::IB1;
+          return Transport::RDMA1;
         case 2:
-          return Transport::IB2;
+          return Transport::RDMA2;
         case 3:
-          return Transport::IB3;
+          return Transport::RDMA3;
         case 4:
-          return Transport::IB4;
+          return Transport::RDMA4;
         case 5:
-          return Transport::IB5;
+          return Transport::RDMA5;
         case 6:
-          return Transport::IB6;
+          return Transport::RDMA6;
         case 7:
-          return Transport::IB7;
+          return Transport::RDMA7;
         default:
           THROW(NET, Error, ErrorCode::InvalidUsage, "IB device index out of range");
       }
@@ -950,7 +950,7 @@ const IbEndpoint& getIbEndpoint(const RdmaEndpoint& endpoint) {
 }
 
 const IbMemory& getIbMemory(const TransportInfo& info) {
-  if (!AllIBTransports.has(info.transport) || !info.rdmaMemory) {
+  if (!AllRDMATransports.has(info.transport) || !info.rdmaMemory) {
     THROW(NET, Error, ErrorCode::InvalidUsage, "Expected IB memory");
   }
   // Registration/import bind IB transport records to IbMemory.

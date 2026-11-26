@@ -73,8 +73,32 @@ TEST(TransportFlagsTest, OutputStream) {
 
   EXPECT_EQ(toString(mscclpp::NoTransports), std::string("{}"));
   EXPECT_EQ(toString(mscclpp::Transport::CudaIpc), std::string("{IPC}"));
-  EXPECT_EQ(toString(mscclpp::Transport::CudaIpc | mscclpp::Transport::IB0 | mscclpp::Transport::Ethernet),
-            std::string("{IPC, IB0, ETH}"));
+  EXPECT_EQ(toString(mscclpp::Transport::CudaIpc | mscclpp::Transport::RDMA0 | mscclpp::Transport::Ethernet),
+            std::string("{IPC, RDMA0, ETH}"));
+  EXPECT_EQ(toString(mscclpp::Transport::RDMA0 | mscclpp::Transport::RDMA7), std::string("{RDMA0, RDMA7}"));
+}
+
+TEST(TransportFlagsTest, RdmaTransportWireEncoding) {
+  using namespace mscclpp;
+  const std::array rdma = {Transport::RDMA0, Transport::RDMA1, Transport::RDMA2, Transport::RDMA3,
+                           Transport::RDMA4, Transport::RDMA5, Transport::RDMA6, Transport::RDMA7};
+  for (size_t i = 0; i < rdma.size(); ++i) {
+    auto flags = rdma[i] | Transport::Ethernet;
+    // Historical wire tags are 2-9, with Ethernet in bit 10.
+    int32_t tag = static_cast<int32_t>(i + 2);
+    std::bitset<11> bits((uint64_t{1} << (i + 2)) | (uint64_t{1} << 10));
+    std::vector<char> generic, legacy;
+    detail::serialize(generic, rdma[i]);
+    detail::serialize(generic, flags);
+    detail::serialize(legacy, tag);
+    detail::serialize(legacy, bits);
+    EXPECT_TRUE(generic == legacy);
+    TransportFlags restored;
+    detail::deserialize(generic.cbegin() + sizeof(Transport), restored);
+    EXPECT_TRUE(restored.has(rdma[i]));
+    EXPECT_TRUE(restored.has(Transport::Ethernet));
+    EXPECT_EQ(restored.count(), size_t{2});
+  }
 }
 
 TEST(LocalCommunicatorTest, RegisterMemory) {
@@ -110,7 +134,7 @@ TEST(RdmaProviderTest, ImportedEndpointPreservesWireBytes) {
   for (auto mode :
        {EndpointConfig::Ib::Mode::Host, EndpointConfig::Ib::Mode::HostNoAtomic, EndpointConfig::Ib::Mode::Device}) {
     bool noAtomic = mode == EndpointConfig::Ib::Mode::HostNoAtomic;
-    EndpointConfig config(Transport::IB7, DeviceType::CPU, 13);
+    EndpointConfig config(Transport::RDMA7, DeviceType::CPU, 13);
     config.ib.mode = mode;
     if (mode == EndpointConfig::Ib::Mode::Device) config.device = Device(DeviceType::GPU, 0);
     config.ib.gidIndex = 3;
@@ -136,7 +160,7 @@ TEST(RdmaProviderTest, ImportedMemoryPreservesRecordOrderAndBytes) {
   size_t size = sizeof(buffer);
   uint64_t hostHash = getHostHash() ^ 1;
   uint64_t pidHash = getPidHash();
-  TransportFlags transports = Transport::IB0 | Transport::IB1;
+  TransportFlags transports = Transport::RDMA0 | Transport::RDMA1;
   int8_t transportCount = 3;
   std::vector<char> bytes;
   detail::serialize(bytes, ptr);
@@ -146,7 +170,7 @@ TEST(RdmaProviderTest, ImportedMemoryPreservesRecordOrderAndBytes) {
   detail::serialize(bytes, transports);
   detail::serialize(bytes, transportCount);
   uint64_t address = 0x1000;
-  for (auto transport : {Transport::IB1, Transport::IB0, Transport::IB1}) {
+  for (auto transport : {Transport::RDMA1, Transport::RDMA0, Transport::RDMA1}) {
     IbMrInfo info;
     std::memset(&info, 0x5a, sizeof(info));
     info.addr = address;
@@ -159,7 +183,7 @@ TEST(RdmaProviderTest, ImportedMemoryPreservesRecordOrderAndBytes) {
   auto memory = RegisteredMemory::deserialize(bytes);
   EXPECT_TRUE(memory.serialize() == bytes);
   EXPECT_EQ(memory.data(), nullptr);
-  const auto& firstIb1 = getIbMemory(RdmaTestAccess::getImpl(memory).getTransportInfo(Transport::IB1));
+  const auto& firstIb1 = getIbMemory(RdmaTestAccess::getImpl(memory).getTransportInfo(Transport::RDMA1));
   EXPECT_EQ(firstIb1.info().addr, uint64_t{0x1000});
   EXPECT_FALSE(firstIb1.isLocal());
 }
@@ -171,7 +195,7 @@ TEST(RdmaProviderTest, ImportedMemoryPreservesMixedIpcMetadataBytes) {
   size_t size = sizeof(buffer);
   uint64_t hostHash = getHostHash();
   uint64_t pidHash = getPidHash();
-  TransportFlags transports = Transport::CudaIpc | Transport::IB1;
+  TransportFlags transports = Transport::CudaIpc | Transport::RDMA1;
   int8_t transportCount = 3;
   GpuIpcMemHandle ipc;
   std::memset(&ipc, 0xa7, sizeof(ipc));
@@ -189,11 +213,11 @@ TEST(RdmaProviderTest, ImportedMemoryPreservesMixedIpcMetadataBytes) {
   detail::serialize(bytes, pidHash);
   detail::serialize(bytes, transports);
   detail::serialize(bytes, transportCount);
-  detail::serialize(bytes, Transport::IB1);
+  detail::serialize(bytes, Transport::RDMA1);
   detail::serialize(bytes, mr);
   detail::serialize(bytes, Transport::CudaIpc);
   detail::serialize(bytes, ipc);
-  detail::serialize(bytes, Transport::IB1);
+  detail::serialize(bytes, Transport::RDMA1);
   detail::serialize(bytes, mr);
 
   // Same-process runtime IPC metadata requires no GPU import or address query.
@@ -218,15 +242,15 @@ TEST(RdmaProviderTest, RegisteredMemoryKeepsProviderMetadataOpaque) {
   std::vector<std::weak_ptr<RdmaProvider>> providers;
   auto context = Context::create();
   // These test doubles are opaque to generic code and are never used for IB I/O.
-  for (auto transport : {Transport::IB7, Transport::IB1, Transport::IB0}) {
+  for (auto transport : {Transport::RDMA7, Transport::RDMA1, Transport::RDMA0}) {
     auto provider = std::make_shared<OpaqueRdmaProvider>(transport, calls, ptr, size);
     providers.push_back(provider);
     RdmaTestAccess::getImpl(*context).rdmaProviders_.emplace(transport, std::move(provider));
   }
   TransportFlags transports =
-      Transport::IB7 | Transport::IB0 | Transport::IB1 | Transport::Ethernet | Transport::Unknown;
+      Transport::RDMA7 | Transport::RDMA0 | Transport::RDMA1 | Transport::Ethernet | Transport::Unknown;
   auto memory = context->registerMemory(ptr, size, transports);
-  EXPECT_TRUE(calls == (std::vector<Transport>{Transport::IB0, Transport::IB1, Transport::IB7}));
+  EXPECT_TRUE(calls == (std::vector<Transport>{Transport::RDMA0, Transport::RDMA1, Transport::RDMA7}));
   EXPECT_EQ(memory.data(), ptr);
   EXPECT_EQ(memory.size(), size);
   EXPECT_EQ(memory.transports(), transports);
@@ -264,7 +288,7 @@ TEST(RdmaProviderTest, EndpointRoutingPreservesIbDeviceCompatibility) {
     detail::serialize(bytes, config);
     detail::serialize(bytes, hostHash);
     detail::serialize(bytes, pidHash);
-    if (AllIBTransports.has(transport)) {
+    if (AllRDMATransports.has(transport)) {
       detail::serialize(bytes, IbQpInfo{});
       detail::serialize(bytes, false);
     }
@@ -272,8 +296,9 @@ TEST(RdmaProviderTest, EndpointRoutingPreservesIbDeviceCompatibility) {
   };
   auto context = Context::create();
   for (auto mode : {EndpointConfig::Ib::Mode::Host, EndpointConfig::Ib::Mode::Device}) {
-    for (auto pair : {std::pair{Transport::IB0, Transport::IB7}, std::pair{Transport::IB7, Transport::IB0},
-                      std::pair{Transport::IB0, Transport::CudaIpc}, std::pair{Transport::CudaIpc, Transport::IB0}}) {
+    for (auto pair :
+         {std::pair{Transport::RDMA0, Transport::RDMA7}, std::pair{Transport::RDMA7, Transport::RDMA0},
+          std::pair{Transport::RDMA0, Transport::CudaIpc}, std::pair{Transport::CudaIpc, Transport::RDMA0}}) {
       auto local = importEndpoint(pair.first, mode);
       auto remote = importEndpoint(pair.second, mode);
       try {
@@ -282,7 +307,7 @@ TEST(RdmaProviderTest, EndpointRoutingPreservesIbDeviceCompatibility) {
       } catch (const Error& error) {
         EXPECT_TRUE(error.getErrorCode() == ErrorCode::InvalidUsage);
         // Imported local IB endpoints stop at the provider factory, before NIC/GPU access.
-        const char* expected = AllIBTransports.has(pair.first) && AllIBTransports.has(pair.second)
+        const char* expected = AllRDMATransports.has(pair.first) && AllRDMATransports.has(pair.second)
                                    ? "Cannot create a connection from a remote IB endpoint"
                                    : "Transport mismatch";
         EXPECT_TRUE(std::string(error.what()).find(expected) != std::string::npos);
@@ -297,7 +322,7 @@ TEST(RdmaProviderTest, DeviceModeRequiresGpuEndpoint) {
     SKIP_TEST() << "Requires an IB device";
   }
   auto context = Context::create();
-  EndpointConfig config(Transport::IB0, DeviceType::CPU);
+  EndpointConfig config(Transport::RDMA0, DeviceType::CPU);
   config.ib.mode = EndpointConfig::Ib::Mode::Device;
   try {
     context->createEndpoint(config);
@@ -315,7 +340,7 @@ TEST(RdmaProviderTest, DeviceConnectionUsesProviderResources) {
     SKIP_TEST() << "Requires an IB device";
   }
   {
-    IbCtx ibContext(getIBDeviceName(Transport::IB0));
+    IbCtx ibContext(getIBDeviceName(Transport::RDMA0));
     if (!ibContext.supportsRdmaAtomics()) {
       SKIP_TEST() << "Requires an IB device with RDMA atomics";
     }
@@ -327,7 +352,7 @@ TEST(RdmaProviderTest, DeviceConnectionUsesProviderResources) {
     SKIP_TEST() << "Requires Hopper or newer";
   }
   auto context = Context::create();
-  EndpointConfig config(Transport::IB0, Device(DeviceType::GPU, 0));
+  EndpointConfig config(Transport::RDMA0, Device(DeviceType::GPU, 0));
   config.ib.mode = EndpointConfig::Ib::Mode::Device;
   auto endpoint = context->createEndpoint(config);
   ASSERT_TRUE(RdmaTestAccess::getImpl(endpoint).rdmaEndpoint_->isLocal());
@@ -339,9 +364,9 @@ TEST(RdmaProviderTest, DeviceConnectionUsesProviderResources) {
   ASSERT_NE(connImpl->getDeviceBackendInfo().qp, nullptr);
 
   auto buffer = detail::gpuCallocShared<uint64_t>();
-  auto memory = context->registerMemory(buffer.get(), sizeof(uint64_t), Transport::IB0);
+  auto memory = context->registerMemory(buffer.get(), sizeof(uint64_t), Transport::RDMA0);
   auto remoteMemory = RegisteredMemory::deserialize(memory.serialize());
-  const auto& ibMemory = getIbMemory(RdmaTestAccess::getImpl(memory).getTransportInfo(Transport::IB0));
+  const auto& ibMemory = getIbMemory(RdmaTestAccess::getImpl(memory).getTransportInfo(Transport::RDMA0));
   auto localHandle = connImpl->getDeviceMemoryInfo(memory);
   auto remoteHandle = connImpl->getDeviceMemoryInfo(remoteMemory);
   EXPECT_EQ(localHandle.addr, ibMemory.info().addr);
@@ -350,7 +375,7 @@ TEST(RdmaProviderTest, DeviceConnectionUsesProviderResources) {
   EXPECT_EQ(remoteHandle.key, htobe32(ibMemory.info().rkey));
 
   std::weak_ptr<Context> outerContext = context;
-  std::weak_ptr<RdmaProvider> provider = RdmaTestAccess::getImpl(*context).rdmaProviders_.at(Transport::IB0);
+  std::weak_ptr<RdmaProvider> provider = RdmaTestAccess::getImpl(*context).rdmaProviders_.at(Transport::RDMA0);
   context.reset();
   EXPECT_FALSE(outerContext.expired());
   connection = Connection();
@@ -377,10 +402,10 @@ TEST(RdmaProviderTest, LocalResourcesRetainProvider) {
     ib.maxSendWr = 16;
     ib.maxRecvWr = 8;
     ib.maxWrPerSend = 4;
-    auto endpoint = context->createEndpoint({Transport::IB0, DeviceType::CPU, -1, ib});
-    auto memory = context->registerMemory(buffer.data(), sizeof(buffer), Transport::IB0);
+    auto endpoint = context->createEndpoint({Transport::RDMA0, DeviceType::CPU, -1, ib});
+    auto memory = context->registerMemory(buffer.data(), sizeof(buffer), Transport::RDMA0);
     EXPECT_EQ(RdmaTestAccess::getImpl(*context).rdmaProviders_.size(), size_t{1});
-    std::weak_ptr<RdmaProvider> provider = RdmaTestAccess::getImpl(*context).rdmaProviders_.at(Transport::IB0);
+    std::weak_ptr<RdmaProvider> provider = RdmaTestAccess::getImpl(*context).rdmaProviders_.at(Transport::RDMA0);
     std::weak_ptr<Context> outerContext = context;
     auto endpointBytes = endpoint.serialize();
     auto memoryBytes = memory.serialize();

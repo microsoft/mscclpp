@@ -211,14 +211,14 @@ class TcpBootstrap : public Bootstrap {
 enum class Transport {
   Unknown,        // Unknown transport type.
   CudaIpc,        // CUDA IPC transport type.
-  IB0,            // InfiniBand device 0 transport type.
-  IB1,            // InfiniBand device 1 transport type.
-  IB2,            // InfiniBand device 2 transport type.
-  IB3,            // InfiniBand device 3 transport type.
-  IB4,            // InfiniBand device 4 transport type.
-  IB5,            // InfiniBand device 5 transport type.
-  IB6,            // InfiniBand device 6 transport type.
-  IB7,            // InfiniBand device 7 transport type.
+  RDMA0,          ///< RDMA device 0 transport type.
+  RDMA1,          ///< RDMA device 1 transport type.
+  RDMA2,          ///< RDMA device 2 transport type.
+  RDMA3,          ///< RDMA device 3 transport type.
+  RDMA4,          ///< RDMA device 4 transport type.
+  RDMA5,          ///< RDMA device 5 transport type.
+  RDMA6,          ///< RDMA device 6 transport type.
+  RDMA7,          ///< RDMA device 7 transport type.
   Ethernet,       // Ethernet transport type.
   NumTransports,  // The number of transports.
 };
@@ -384,11 +384,11 @@ struct Device {
 
 /// Configuration for creating communication endpoints.
 struct EndpointConfig {
-  /// InfiniBand-specific configuration options that control queue pair behavior and performance characteristics.
-  /// These settings are only used when the transport is an InfiniBand type (IB0-IB7); they are ignored for other
-  /// transports.
+  /// Configuration options that control RDMA queue pair behavior and performance characteristics.
+  /// These settings apply to RDMA0-RDMA7; they are ignored
+  /// for other transports.
   struct Ib {
-    /// IB mode for signaling, used to select between different implementations.
+    /// RDMA mode for signaling, used to select between different implementations.
     enum class Mode {
       Default,       // Use the MSCCLPP_IBV_MODE environment variable (or "host" if unset).
       Host,          // Use the host stack with RDMA atomics.
@@ -404,7 +404,7 @@ struct EndpointConfig {
     static constexpr int DefaultMaxRecvWr = 16;
     static constexpr int DefaultMaxWrPerSend = 64;
 
-    /// Device index. Currently ignored; use transport type (IB0-IB7) to select device.
+    /// Device index. Currently ignored; use transport type (RDMA0-RDMA7) to select device.
     int deviceIndex;
     /// Port number.
     int port;
@@ -420,7 +420,7 @@ struct EndpointConfig {
     int maxRecvWr;
     /// Maximum number of work requests per send operation.
     int maxWrPerSend;
-    /// IB mode for signaling. When set to Default, uses the MSCCLPP_IBV_MODE environment variable.
+    /// Signaling mode. When set to Default, uses the MSCCLPP_IBV_MODE environment variable.
     Mode mode;
 
     /// Constructor.
@@ -432,7 +432,7 @@ struct EndpointConfig {
     /// @param maxSendWr Maximum outstanding send work requests.
     /// @param maxRecvWr Maximum outstanding receive work requests (for HostNoAtomic mode).
     /// @param maxWrPerSend Maximum work requests per send operation.
-    /// @param mode IB mode for signaling (Default uses MSCCLPP_IBV_MODE env variable).
+    /// @param mode Signaling mode (Default uses MSCCLPP_IBV_MODE env variable).
     Ib(int deviceIndex = -1, int port = DefaultPort, int gidIndex = DefaultGidIndex, int maxCqSize = DefaultMaxCqSize,
        int maxCqPollNum = DefaultMaxCqPollNum, int maxSendWr = DefaultMaxSendWr, int maxRecvWr = DefaultMaxRecvWr,
        int maxWrPerSend = DefaultMaxWrPerSend, Mode mode = Mode::Default)
@@ -447,7 +447,7 @@ struct EndpointConfig {
           mode(mode) {}
   };
 
-  /// Communication transport type (e.g., CudaIpc, IB0-IB7, Ethernet).
+  /// Communication transport type (e.g., CudaIpc, RDMA0-RDMA7, Ethernet).
   Transport transport;
   /// Target device for the endpoint (GPU or CPU with optional device ID).
   Device device;
@@ -983,8 +983,8 @@ class Communicator {
 /// A constant TransportFlags object representing no transports.
 extern const TransportFlags NoTransports;
 
-/// A constant TransportFlags object representing all InfiniBand transports.
-extern const TransportFlags AllIBTransports;
+/// A constant TransportFlags object representing all RDMA device slots.
+extern const TransportFlags AllRDMATransports;
 
 /// A constant TransportFlags object representing all transports.
 extern const TransportFlags AllTransports;

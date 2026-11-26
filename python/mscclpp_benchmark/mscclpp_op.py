@@ -9,14 +9,14 @@ from mscclpp import CommGroup, DataType, GpuBuffer
 from mscclpp.utils import KernelBuilder, pack
 
 IB_TRANSPORTS = [
-    Transport.IB0,
-    Transport.IB1,
-    Transport.IB2,
-    Transport.IB3,
-    Transport.IB4,
-    Transport.IB5,
-    Transport.IB6,
-    Transport.IB7,
+    Transport.RDMA0,
+    Transport.RDMA1,
+    Transport.RDMA2,
+    Transport.RDMA3,
+    Transport.RDMA4,
+    Transport.RDMA5,
+    Transport.RDMA6,
+    Transport.RDMA7,
 ]
 
 

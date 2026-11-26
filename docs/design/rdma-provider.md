@@ -32,6 +32,14 @@ own wrappers, avoiding ownership cycles. User backing buffers are not owned.
 
 ## Metadata and dispatch
 
+`RDMA0`-`RDMA7` name the eight RDMA device slots, covered by
+`AllRDMATransports`. These replace the old `IB0`-`IB7` enum names without aliases:
+callers must update their source, while transport count, flag layout, and wire
+tags remain unchanged. Diagnostics print `RDMA0`-`RDMA7`. The slots identify
+devices independently of the provider (IB or native MRC); they do not select
+a backend. Provider selection and compatible peer metadata are defined
+separately, without adding another eight transport values per provider.
+
 Registered-memory records contain a transport tag, IPC metadata and an owning
 `RdmaMemory` pointer, with no IB fields or header dependency. Generic serialization
 delegates to the resource's virtual `serialize()` method; the IB implementation

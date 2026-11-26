@@ -144,8 +144,8 @@ class MyProxyService {
           deviceSemaphores1_[nghr]->signal();
         else
           deviceSemaphores2_[nghr]->signal();
-        if ((flusher % 64) == 0 && mscclpp::AllIBTransports.has(connections_[nghr].transport())) {
-          // if we are using IB transport, we need a flush every once in a while
+        if ((flusher % 64) == 0 && mscclpp::AllRDMATransports.has(connections_[nghr].transport())) {
+          // if we are using RDMA transport, we need a flush every once in a while
           connections_[nghr].flush();
         }
       }

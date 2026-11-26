@@ -99,9 +99,9 @@ auto useIB = [](int rank1, int rank2, int nranksPerIpcDomain) {
   return hasIBDevices() && !inSameIpcDomain;
 };
 
-static const mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2,
-                                         mscclpp::Transport::IB3, mscclpp::Transport::IB4, mscclpp::Transport::IB5,
-                                         mscclpp::Transport::IB6, mscclpp::Transport::IB7};
+static const mscclpp::Transport rdmaTransports[] = {
+    mscclpp::Transport::RDMA0, mscclpp::Transport::RDMA1, mscclpp::Transport::RDMA2, mscclpp::Transport::RDMA3,
+    mscclpp::Transport::RDMA4, mscclpp::Transport::RDMA5, mscclpp::Transport::RDMA6, mscclpp::Transport::RDMA7};
 }  // namespace
 
 namespace mscclpp {
@@ -220,7 +220,7 @@ struct Executor::Impl {
         flags |= Transport::CudaIpc;
       } else if (type == ChannelType::PORT) {
         if (useIB(rank, info.accessRank, this->nranksPerIpcDomain)) {
-          flags |= IBs[rank % this->nranksPerNode];
+          flags |= rdmaTransports[rank % this->nranksPerNode];
         } else
           flags |= Transport::CudaIpc;
       }
@@ -289,7 +289,7 @@ struct Executor::Impl {
     // Use per-peer tag counters so that matched connections between pairs of ranks use
     // the same tag, regardless of the order peers appear in each rank's connected_to list.
     std::unordered_map<int, int> peerTagCounters;
-    Transport ibTransport = IBs[rank % this->nranksPerNode];
+    Transport ibTransport = rdmaTransports[rank % this->nranksPerNode];
     std::vector<std::shared_future<Connection>> connFutures;
     for (ChannelType channelType : {ChannelType::MEMORY, ChannelType::PORT}) {
       std::vector<ChannelInfo> channelInfos = plan.impl_->getChannelInfos(channelType);
@@ -331,7 +331,7 @@ struct Executor::Impl {
     bool registerIb = this->usesIbTransport(rank, plan);
     for (auto& bufferType : {BufferType::INPUT, BufferType::OUTPUT, BufferType::SCRATCH}) {
       TransportFlags flags = Transport::CudaIpc;
-      if (registerIb) flags |= IBs[rank % this->nranksPerNode];
+      if (registerIb) flags |= rdmaTransports[rank % this->nranksPerNode];
       RegisteredMemory localMemory;
       auto bufferInfo = getBufferInfo(bufferType, sendbuff, recvbuff, context.scratchBuffer.get(), sendBufferSize,
                                       recvBufferSize, context.scratchBufferSize);

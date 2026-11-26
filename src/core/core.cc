@@ -84,10 +84,13 @@ TransportFlags::TransportFlags(detail::TransportFlagsBase bitset) : detail::Tran
 
 const TransportFlags NoTransports = TransportFlags();
 
-const TransportFlags AllIBTransports = Transport::IB0 | Transport::IB1 | Transport::IB2 | Transport::IB3 |
-                                       Transport::IB4 | Transport::IB5 | Transport::IB6 | Transport::IB7;
+const TransportFlags AllRDMATransports = Transport::RDMA0 | Transport::RDMA1 | Transport::RDMA2 | Transport::RDMA3 |
+                                         Transport::RDMA4 | Transport::RDMA5 | Transport::RDMA6 | Transport::RDMA7;
 
-const TransportFlags AllTransports = AllIBTransports | Transport::CudaIpc | Transport::Ethernet;
+// Retain the legacy data symbol for binary compatibility, without a public source alias.
+extern const TransportFlags AllIBTransports = AllRDMATransports;
+
+const TransportFlags AllTransports = AllRDMATransports | Transport::CudaIpc | Transport::Ethernet;
 
 std::ostream& operator<<(std::ostream& os, const TransportFlags& transportFlags) {
   os << '{';
@@ -103,8 +106,8 @@ std::ostream& operator<<(std::ostream& os, const TransportFlags& transportFlags)
 }
 
 std::ostream& operator<<(std::ostream& os, const Transport& transport) {
-  static const std::string TransportNames[] = {"UNK", "IPC", "IB0", "IB1", "IB2", "IB3",
-                                               "IB4", "IB5", "IB6", "IB7", "ETH", "NUM"};
+  static const std::string TransportNames[] = {"UNK",   "IPC",   "RDMA0", "RDMA1", "RDMA2", "RDMA3",
+                                               "RDMA4", "RDMA5", "RDMA6", "RDMA7", "ETH",   "NUM"};
   os << TransportNames[static_cast<size_t>(transport)];
   return os;
 }

@@ -140,6 +140,6 @@ class BaseTestEngine {
 
 extern std::shared_ptr<BaseTestEngine> getTestEngine(const TestArgs& args);
 extern std::shared_ptr<BaseTestColl> getTestColl();
-extern mscclpp::Transport IBs[];
+extern mscclpp::Transport rdmaTransports[];
 
 #endif  // MSCCLPP_TESTS_COMMON_H_

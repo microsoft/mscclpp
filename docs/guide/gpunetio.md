@@ -35,11 +35,11 @@ constructor; no `ProxyService` is needed):
 
 ```cpp
 mscclpp::EndpointConfig cfg;
-cfg.transport = mscclpp::Transport::IB0;
+cfg.transport = mscclpp::Transport::RDMA0;
 cfg.ib.mode = mscclpp::EndpointConfig::Ib::Mode::Device;
 auto connection = communicator->connect(cfg, remoteRank).get();
 
-auto localMem = communicator->registerMemory(buff, bytes, mscclpp::Transport::IB0);
+auto localMem = communicator->registerMemory(buff, bytes, mscclpp::Transport::RDMA0);
 communicator->sendMemory(localMem, remoteRank);
 auto remoteMem = communicator->recvMemory(remoteRank).get();
 

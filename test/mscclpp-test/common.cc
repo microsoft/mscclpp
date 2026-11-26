@@ -26,9 +26,9 @@
 
 int isMainProc = 0;
 
-mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2,
-                            mscclpp::Transport::IB3, mscclpp::Transport::IB4, mscclpp::Transport::IB5,
-                            mscclpp::Transport::IB6, mscclpp::Transport::IB7};
+mscclpp::Transport rdmaTransports[] = {mscclpp::Transport::RDMA0, mscclpp::Transport::RDMA1, mscclpp::Transport::RDMA2,
+                                       mscclpp::Transport::RDMA3, mscclpp::Transport::RDMA4, mscclpp::Transport::RDMA5,
+                                       mscclpp::Transport::RDMA6, mscclpp::Transport::RDMA7};
 
 #define PRINT(__message)                    \
   do {                                      \
@@ -370,7 +370,7 @@ void BaseTestEngine::setupMeshConnectionsInternal(
   const int rank = args_.rank;
   const int nRanksPerNode = args_.nRanksPerNode;
   const int thisNode = rank / nRanksPerNode;
-  const mscclpp::Transport ibTransport = IBs[args_.gpuNum];
+  const mscclpp::Transport ibTransport = rdmaTransports[args_.gpuNum];
   std::vector<std::shared_future<mscclpp::Connection>> connectionFutures;
 
   auto rankToNode = [&](int rank) { return rank / nRanksPerNode; };
@@ -402,7 +402,7 @@ void BaseTestEngine::setupMeshConnections(std::vector<DeviceHandle<mscclpp::Port
                                           void* inputBuff, size_t inputBuffBytes, void* outputBuff,
                                           size_t outputBuffBytes, SetupChannelFunc setupChannel) {
   mscclpp::TransportFlags allTransports = mscclpp::Transport::CudaIpc;
-  if (mscclpp::getIBDeviceCount() > 0) allTransports |= IBs[args_.gpuNum];
+  if (mscclpp::getIBDeviceCount() > 0) allTransports |= rdmaTransports[args_.gpuNum];
   mscclpp::RegisteredMemory inputBufRegMem = comm_->registerMemory(inputBuff, inputBuffBytes, allTransports);
   mscclpp::RegisteredMemory outputBufRegMem;
   if (outputBuff) {
@@ -434,7 +434,7 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::MemoryChannel>& m
                                           size_t inputBuffBytes, void* outputBuff, size_t outputBuffBytes,
                                           ChannelSemantic semantic, size_t nChannelPerConnection) {
   mscclpp::TransportFlags allTransports = mscclpp::Transport::CudaIpc;
-  if (mscclpp::getIBDeviceCount() > 0) allTransports |= IBs[args_.gpuNum];
+  if (mscclpp::getIBDeviceCount() > 0) allTransports |= rdmaTransports[args_.gpuNum];
   mscclpp::RegisteredMemory inputBufRegMem = comm_->registerMemory(inputBuff, inputBuffBytes, allTransports);
   mscclpp::RegisteredMemory outputBufRegMem;
   if (outputBuff) {
@@ -477,7 +477,7 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::MemoryChannel>& m
                                           size_t putPacketBuffBytes, void* getPacketBuff, size_t getPacketBuffBytes,
                                           void* outputBuff, size_t outputBuffBytes) {
   mscclpp::TransportFlags allTransports = mscclpp::Transport::CudaIpc;
-  if (mscclpp::getIBDeviceCount() > 0) allTransports |= IBs[args_.gpuNum];
+  if (mscclpp::getIBDeviceCount() > 0) allTransports |= rdmaTransports[args_.gpuNum];
   mscclpp::RegisteredMemory inputBufRegMem = comm_->registerMemory(inputBuff, inputBuffBytes, allTransports);
   mscclpp::RegisteredMemory putPacketBufRegMem;
   mscclpp::RegisteredMemory getPacketBufRegMem;

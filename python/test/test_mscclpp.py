@@ -26,6 +26,7 @@ from mscclpp import (
     MemoryDevice2DeviceSemaphore,
     TcpBootstrap,
     Transport,
+    TransportFlags,
     is_nvls_supported,
     npkit,
     env,
@@ -47,6 +48,16 @@ from ._cpp import _ext
 from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups, mpi_group
 
 ethernet_interface_name = "eth0"
+
+
+def test_rdma_transports():
+    for index in range(8):
+        transport = getattr(Transport, f"RDMA{index}")
+        flags = TransportFlags(transport)
+        assert flags.count() == 1
+        assert flags.has(transport)
+        assert transport.__name__ == f"RDMA{index}"
+        assert not hasattr(Transport, f"IB{index}")
 
 
 @parametrize_mpi_groups(1)

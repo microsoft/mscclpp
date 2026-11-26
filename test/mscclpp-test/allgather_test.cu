@@ -565,7 +565,7 @@ mscclpp::ProxyHandlerResult AllGatherProxyService::handleTrigger(mscclpp::ProxyT
       conn.flush();
       flushIpc = true;
     }
-    if (mscclpp::AllIBTransports.has(conn.transport())) {
+    if (mscclpp::AllRDMATransports.has(conn.transport())) {
       conn.flush();
     }
   }
