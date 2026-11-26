@@ -146,7 +146,7 @@ void SendRecvTestEngine::allocateBuffer() {
 }
 
 void SendRecvTestEngine::setupConnections() {
-  auto ibDevice = IBs[args_.localRank];
+  auto ibDevice = rdmaTransports[args_.localRank];
   int worldSize = args_.totalRanks;
   int sendToRank = (args_.rank + 1) % worldSize;
   int recvFromRank = (args_.rank - 1 + worldSize) % worldSize;

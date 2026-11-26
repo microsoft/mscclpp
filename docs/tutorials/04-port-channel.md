@@ -121,16 +121,16 @@ Run the program on two nodes with command line arguments:
 ./bidir_port_channel [<ip_port> <rank> <gpu_id> <transport>]
 ```
 
-For example, assume we use `192.168.0.1:50000` as the bootstrap IP address and port, and both nodes use GPU 0 with the InfiniBand device index 0 (`IB0`).
+For example, assume we use `192.168.0.1:50000` as the bootstrap IP address and port, and both nodes use GPU 0 with RDMA device index 0 (`RDMA0`).
 
 On Node 0 (Rank 0):
 ```bash
-$ ./bidir_port_channel 192.168.0.1:50000 0 0 IB0
+$ ./bidir_port_channel 192.168.0.1:50000 0 0 RDMA0
 ```
 
 On Node 1 (Rank 1):
 ```bash
-$ ./bidir_port_channel 192.168.0.1:50000 1 0 IB0
+$ ./bidir_port_channel 192.168.0.1:50000 1 0 RDMA0
 ```
 
 You should see output indicating successful data transfer.
@@ -138,9 +138,9 @@ You should see output indicating successful data transfer.
 ```{tip}
 The example code also supports running two instances on the same node. For example:
 
-Terminal 1: `./bidir_port_channel 127.0.0.1:50000 0 0 IB0`
+Terminal 1: `./bidir_port_channel 127.0.0.1:50000 0 0 RDMA0`
 
-Terminal 2: `./bidir_port_channel 127.0.0.1:50000 1 1 IB1`
+Terminal 2: `./bidir_port_channel 127.0.0.1:50000 1 1 RDMA1`
 ```
 
 ```{tip}
@@ -162,7 +162,7 @@ The example code does not pass InfiniBand-specific parameters in the endpoint co
 
 ```cpp
 mscclpp::EndpointConfig epConfig;
-epConfig.transport = mscclpp::Transport::IB0;
+epConfig.transport = mscclpp::Transport::RDMA0;
 epConfig.device = {mscclpp::DeviceType::GPU, 0}; // GPU 0
 // InfiniBand-specific parameters
 epConfig.ib.maxCqSize = 8192;

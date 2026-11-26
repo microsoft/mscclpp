@@ -18,8 +18,7 @@
 #include "communicator.hpp"
 #include "context.hpp"
 #include "endpoint.hpp"
-#include "gdr.hpp"
-#include "ib.hpp"
+#include "logger.hpp"
 #include "registered_memory.hpp"
 #include "socket.h"
 
@@ -103,6 +102,30 @@ class BaseConnection {
   static const RegisteredMemory::Impl& getImpl(const RegisteredMemory& memory);
   static Context::Impl& getImpl(Context& context);
 
+  static void validateTransport(RegisteredMemory mem, Transport transport, uint64_t offset = 0, uint64_t size = 0) {
+    if (!mem.transports().has(transport)) {
+      THROW(CONN, Error, ErrorCode::InvalidUsage, "RegisteredMemory does not support this transport");
+    }
+    if (offset + size > mem.size()) {
+      THROW(CONN, Error, ErrorCode::InvalidUsage, "RegisteredMemory out of bounds");
+    }
+  }
+
+  static void validateAccumulateBounds(RegisteredMemory mem, uint64_t offset) {
+    constexpr uint64_t wordSize = sizeof(uint64_t);
+    if (offset > mem.size() || wordSize > mem.size() - offset) {
+      THROW(CONN, Error, ErrorCode::InvalidUsage, "RegisteredMemory out of bounds for 64-bit accumulate");
+    }
+  }
+
+  static void validateAccumulateAlignment(uintptr_t base, uint64_t offset) {
+    constexpr uintptr_t alignment = alignof(uint64_t);
+    uintptr_t targetAlignment = (base % alignment + offset % alignment) % alignment;
+    if (targetAlignment != 0) {
+      THROW(CONN, Error, ErrorCode::InvalidUsage, "accumulate destination must be naturally 8-byte aligned");
+    }
+  }
+
   std::shared_ptr<Context> context_;
   Endpoint localEndpoint_;
   int maxWriteQueueSize_;
@@ -130,66 +153,6 @@ class CudaIpcConnection : public BaseConnection {
   void accumulate(RegisteredMemory dst, uint64_t dstOffset, int64_t value) override;
 
   void flush(int64_t timeoutUsec) override;
-};
-
-class IBConnection : public BaseConnection {
- private:
-  Transport transport_;
-  Transport remoteTransport_;
-  std::weak_ptr<IbQp> qp_;
-  std::unique_ptr<uint64_t> atomicSrc_;
-  RegisteredMemory atomicSrcMem_;
-  mscclpp::TransportInfo atomicSrcTransportInfo_;
-
-  // For write-with-imm mode (HostNoAtomic): uses RDMA write-with-imm to signal
-  // instead of atomic operations, with a host thread forwarding to GPU for memory consistency.
-  bool ibNoAtomic_;
-  bool gdrSignalForwarding_;  // ibNoAtomic_ && gdrEnabled() — decided once at construction
-  std::thread recvThread_;
-  std::atomic<bool> stopRecvThread_;
-  std::atomic<bool> recvThreadError_;  // Set by recv thread on fatal error
-  std::string recvThreadErrorMsg_;     // Error message from recv thread (written before recvThreadError_ is set)
-  int localGpuDeviceId_;               // Local GPU device ID for CUDA context and GDR mapping
-
-  // Signal forwarding design (HostNoAtomic mode):
-  // - Sender: 0-byte RDMA WRITE_WITH_IMM carrying the lower 32 bits of the token in imm_data.
-  // - Receiver: CPU recv thread polls recv CQ for WRITE_WITH_IMM completions (CQE), reads
-  //   the lower 32 bits from imm_data, reconstructs the full 64-bit token using wrap-around
-  //   detection (monotonically increasing tokens: if lower 32 bits decrease, the upper half
-  //   incremented), then writes it to signalAddr_ via atomicStore through GDRCopy BAR1.
-  uint64_t signalAddr_;
-
-  std::unique_ptr<GdrMap> signalGdrMap_;
-
-  void recvThreadFunc();
-
- public:
-  IBConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint, const Endpoint& remoteEndpoint);
-  ~IBConnection();
-
-  /// Start signal forwarding to the given memory address.
-  /// Must be called before the remote sends any updateAndSync in HostNoAtomic mode.
-  /// @param mem Shared pointer to the GPU memory for the signal token.
-  void startSignalForwarding(std::shared_ptr<uint64_t> mem) override;
-
-  /// Stop signal forwarding and release associated resources.
-  void stopSignalForwarding() override;
-
-  bool isSignalForwarding() const override;
-
-  Transport transport() const override;
-
-  Transport remoteTransport() const override;
-
-  void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
-             uint64_t size) override;
-  void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) override;
-  void accumulate(RegisteredMemory dst, uint64_t dstOffset, int64_t value) override;
-
-  void flush(int64_t timeoutUsec) override;
-
-  void requestFlush() override;
-  bool progressFlush() override;
 };
 
 class EthernetConnection : public BaseConnection {

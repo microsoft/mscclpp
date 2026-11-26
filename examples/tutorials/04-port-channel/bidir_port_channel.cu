@@ -168,14 +168,14 @@ void worker(int rank, int gpuId, const std::string& ipPort, mscclpp::Transport t
 
 mscclpp::Transport parseTransport(const std::string& transportStr) {
   if (transportStr == "CudaIpc") return mscclpp::Transport::CudaIpc;
-  if (transportStr == "IB0") return mscclpp::Transport::IB0;
-  if (transportStr == "IB1") return mscclpp::Transport::IB1;
-  if (transportStr == "IB2") return mscclpp::Transport::IB2;
-  if (transportStr == "IB3") return mscclpp::Transport::IB3;
-  if (transportStr == "IB4") return mscclpp::Transport::IB4;
-  if (transportStr == "IB5") return mscclpp::Transport::IB5;
-  if (transportStr == "IB6") return mscclpp::Transport::IB6;
-  if (transportStr == "IB7") return mscclpp::Transport::IB7;
+  if (transportStr == "RDMA0") return mscclpp::Transport::RDMA0;
+  if (transportStr == "RDMA1") return mscclpp::Transport::RDMA1;
+  if (transportStr == "RDMA2") return mscclpp::Transport::RDMA2;
+  if (transportStr == "RDMA3") return mscclpp::Transport::RDMA3;
+  if (transportStr == "RDMA4") return mscclpp::Transport::RDMA4;
+  if (transportStr == "RDMA5") return mscclpp::Transport::RDMA5;
+  if (transportStr == "RDMA6") return mscclpp::Transport::RDMA6;
+  if (transportStr == "RDMA7") return mscclpp::Transport::RDMA7;
   if (transportStr == "Ethernet") return mscclpp::Transport::Ethernet;
   throw std::runtime_error("Unknown transport: " + transportStr);
 }

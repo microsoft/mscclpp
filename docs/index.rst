@@ -27,3 +27,10 @@ You can find the followings from this documentation.
    programming_guide
    cpp_api
    py_api
+
+.. toctree::
+   :maxdepth: 1
+   :caption: Design notes
+   :hidden:
+
+   design/rdma-provider

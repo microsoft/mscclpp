@@ -24,10 +24,10 @@ int rankToNode(int rank) {
 }
 
 mscclpp::Transport ibIdToTransport(int id) {
-  mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2,
-                              mscclpp::Transport::IB3, mscclpp::Transport::IB4, mscclpp::Transport::IB5,
-                              mscclpp::Transport::IB6, mscclpp::Transport::IB7};
-  return IBs[id];
+  mscclpp::Transport rdmaTransports[] = {
+      mscclpp::Transport::RDMA0, mscclpp::Transport::RDMA1, mscclpp::Transport::RDMA2, mscclpp::Transport::RDMA3,
+      mscclpp::Transport::RDMA4, mscclpp::Transport::RDMA5, mscclpp::Transport::RDMA6, mscclpp::Transport::RDMA7};
+  return rdmaTransports[id];
 }
 
 MultiProcessTestEnv::MultiProcessTestEnv(int argc, const char** argv) : argc(argc), argv(argv) {}

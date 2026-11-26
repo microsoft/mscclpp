@@ -80,23 +80,23 @@ class CommGroup:
 
     def my_ib_device(self, local_rank: int) -> CppTransport:
         if local_rank == 0:
-            return CppTransport.IB0
+            return CppTransport.RDMA0
         if local_rank == 1:
-            return CppTransport.IB1
+            return CppTransport.RDMA1
         if local_rank == 2:
-            return CppTransport.IB2
+            return CppTransport.RDMA2
         if local_rank == 3:
-            return CppTransport.IB3
+            return CppTransport.RDMA3
         if local_rank == 4:
-            return CppTransport.IB4
+            return CppTransport.RDMA4
         if local_rank == 5:
-            return CppTransport.IB5
+            return CppTransport.RDMA5
         if local_rank == 6:
-            return CppTransport.IB6
+            return CppTransport.RDMA6
         if local_rank == 7:
-            return CppTransport.IB7
+            return CppTransport.RDMA7
         else:
-            assert False  # only 8 IBs are supported
+            assert False  # only 8 RDMA devices are supported
 
     def make_connection(
         self,

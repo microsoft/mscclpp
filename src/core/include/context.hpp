@@ -9,7 +9,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "ib.hpp"
+#include "rdma_provider.hpp"
 
 namespace mscclpp {
 
@@ -43,12 +43,12 @@ class CudaIpcStream {
 
 class TokenPool;
 struct Context::Impl {
-  std::unordered_map<Transport, std::unique_ptr<IbCtx>> ibContexts_;
+  std::unordered_map<Transport, std::shared_ptr<RdmaProvider>> rdmaProviders_;
   std::vector<std::shared_ptr<CudaIpcStream>> ipcStreams_;
   std::shared_ptr<TokenPool> tokenPool_;
   const size_t maxNumTokens_ = 1 << 15;  // 32K tokens
 
-  IbCtx* getIbContext(Transport ibTransport);
+  std::shared_ptr<RdmaProvider> getRdmaProvider(Transport transport);
   std::shared_ptr<uint64_t> getToken();
 };
 

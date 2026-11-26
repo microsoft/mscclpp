@@ -45,9 +45,8 @@ class Env {
   /// Env name: `MSCCLPP_LOG_FILE`. A file path to write log messages to. Unset by default.
   const std::string logFile;
 
-  /// Env name: `MSCCLPP_HCA_DEVICES`. A comma-separated list of HCA devices to use for IB transport. i-th device
-  /// in the list will be used for the i-th GPU in the system. If unset, it will use ibverbs APIs to find the
-  /// devices automatically.
+  /// Env name: `MSCCLPP_HCA_DEVICES`. A comma-separated list of RDMA devices. The i-th entry selects the
+  /// device for RDMAi. If unset, devices are discovered through verbs APIs.
   const std::string hcaDevices;
 
   /// Env name: `MSCCLPP_IBV_SO`. The path to the libibverbs shared library to use. If unset, it will use the

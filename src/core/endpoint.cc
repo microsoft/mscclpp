@@ -3,15 +3,9 @@
 
 #include "endpoint.hpp"
 
-#include <algorithm>
-#include <mscclpp/env.hpp>
-
 #include "api.h"
 #include "context.hpp"
-#include "gpunetio.hpp"
-#include "ib.hpp"
 #include "logger.hpp"
-#include "registered_memory.hpp"
 #include "serialization.hpp"
 #include "socket.h"
 #include "utils_internal.hpp"
@@ -23,56 +17,8 @@ Endpoint::Impl::Impl(const EndpointConfig& config, Context::Impl& contextImpl)
   if (config_.device.type == DeviceType::GPU && config_.device.id < 0) {
     MSCCLPP_CUDATHROW(cudaGetDevice(&(config_.device.id)));
   }
-  if (AllIBTransports.has(config_.transport)) {
-    ibLocal_ = true;
-    if (config_.maxWriteQueueSize <= 0) {
-      config_.maxWriteQueueSize = config_.ib.maxCqSize;
-    }
-
-    if (config_.ib.mode == EndpointConfig::Ib::Mode::Device) {
-      ibNoAtomic_ = false;
-      if (config_.device.type != DeviceType::GPU) {
-        THROW(NET, Error, ErrorCode::InvalidUsage, "IB Device mode requires a GPU endpoint");
-      }
-      if (config_.ib.gidIndex < 0) {
-        config_.ib.gidIndex = env()->ibGidIndex;
-      }
-      gpuNetIoQp_ = std::make_shared<GpuNetIoQp>(*contextImpl.getIbContext(config_.transport), config_.device.id,
-                                                 config_.ib.port, config_.ib.gidIndex);
-      ibQpInfo_ = gpuNetIoQp_->info();
-      return;
-    }
-
-    // Determine if we should use no-atomics mode
-    ibNoAtomic_ = false;
-    if (config_.ib.mode == EndpointConfig::Ib::Mode::HostNoAtomic) {
-      ibNoAtomic_ = true;
-    } else if (config_.ib.mode == EndpointConfig::Ib::Mode::Default) {
-      // Use environment variable when mode is Default
-      ibNoAtomic_ = (env()->ibvMode == "host-no-atomic");
-    }
-
-    // If mode is Host (or Default resolved to host), check if atomics are supported
-    if (!ibNoAtomic_) {
-      IbCtx* ibCtx = contextImpl.getIbContext(config_.transport);
-      if (!ibCtx->supportsRdmaAtomics()) {
-        WARN(NET, "IB device ", ibCtx->getDevName(),
-             " does not support RDMA atomics. Falling back to write-with-immediate mode (HostNoAtomic).");
-        ibNoAtomic_ = true;
-      }
-    }
-
-    // Resolve GID index: explicit value (>= 0) takes priority, otherwise use env
-    if (config_.ib.gidIndex < 0) {
-      config_.ib.gidIndex = env()->ibGidIndex;
-    }
-
-    int maxRecvWr = ibNoAtomic_ ? config_.ib.maxRecvWr : 0;
-
-    ibQp_ = contextImpl.getIbContext(config_.transport)
-                ->createQp(config_.ib.port, config_.ib.gidIndex, config_.ib.maxCqSize, config_.ib.maxCqPollNum,
-                           config_.ib.maxSendWr, maxRecvWr, config_.ib.maxWrPerSend, ibNoAtomic_);
-    ibQpInfo_ = ibQp_->getInfo();
+  if (getRdmaTransports().has(config_.transport)) {
+    rdmaEndpoint_ = contextImpl.getRdmaProvider(config_.transport)->createEndpoint(config_);
   } else if (config_.transport == Transport::Ethernet) {
     // Configuring Ethernet Interfaces
     abortFlag_ = 0;
@@ -91,10 +37,8 @@ Endpoint::Impl::Impl(const std::vector<char>& serialization) {
   it = detail::deserialize(it, config_);
   it = detail::deserialize(it, hostHash_);
   it = detail::deserialize(it, pidHash_);
-  if (AllIBTransports.has(config_.transport)) {
-    ibLocal_ = false;
-    it = detail::deserialize(it, ibQpInfo_);
-    it = detail::deserialize(it, ibNoAtomic_);
+  if (getRdmaTransports().has(config_.transport)) {
+    rdmaEndpoint_ = deserializeRdmaEndpoint(config_, it);
   } else if (config_.transport == Transport::Ethernet) {
     it = detail::deserialize(it, socketAddress_);
   }
@@ -122,9 +66,8 @@ MSCCLPP_API_CPP std::vector<char> Endpoint::serialize() const {
   detail::serialize(data, pimpl_->config_);
   detail::serialize(data, pimpl_->hostHash_);
   detail::serialize(data, pimpl_->pidHash_);
-  if (AllIBTransports.has(pimpl_->config_.transport)) {
-    detail::serialize(data, pimpl_->ibQpInfo_);
-    detail::serialize(data, pimpl_->ibNoAtomic_);
+  if (getRdmaTransports().has(pimpl_->config_.transport)) {
+    pimpl_->rdmaEndpoint_->serialize(data);
   } else if (pimpl_->config_.transport == Transport::Ethernet) {
     detail::serialize(data, pimpl_->socketAddress_);
   }
