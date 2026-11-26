@@ -8,7 +8,9 @@ FetchContent_Declare(json
 FetchContent_MakeAvailable(json)
 
 function(add_mscclpp_test_executable name sources)
-    if(MSCCLPP_USE_ROCM)
+    if(MSCCLPP_HIP_LANGUAGE STREQUAL "HIP")
+        set_source_files_properties(${sources} common.cc PROPERTIES LANGUAGE HIP)
+    elseif(MSCCLPP_USE_ROCM)
         set_source_files_properties(${sources} PROPERTIES LANGUAGE CXX)
     endif()
     add_executable(${name} ${sources} common.cc)

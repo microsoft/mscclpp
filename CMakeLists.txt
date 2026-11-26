@@ -237,7 +237,19 @@ else()
 
     set(CMAKE_HIP_ARCHITECTURES ${MSCCLPP_GPU_ARCHS})
 
-    set(GPU_LIBRARIES hip::device)
+    # Compiling HIP sources as C++ requires a HIP capable C++ compiler (hipcc or Clang).
+    # With any other C++ compiler, compile them with CMake's HIP language support.
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        set(MSCCLPP_HIP_LANGUAGE CXX)
+        set(GPU_LIBRARIES hip::device)
+    else()
+        if(MSCCLPP_ENABLE_COVERAGE)
+            message(FATAL_ERROR "Code coverage on ROCm requires hipcc or Clang as C++ compiler")
+        endif()
+        set(MSCCLPP_HIP_LANGUAGE HIP)
+        enable_language(HIP)
+        set(GPU_LIBRARIES hip::host)
+    endif()
     set(GPU_INCLUDE_DIRS ${hip_INCLUDE_DIRS})
 endif()
 
@@ -247,6 +259,7 @@ if(MSCCLPP_USE_CUDA)
     message(STATUS "CUDA language standard: C++${CMAKE_CUDA_STANDARD}")
 else()
     message(STATUS "HIP language standard: C++${CMAKE_HIP_STANDARD}")
+    message(STATUS "HIP sources compiled as: ${MSCCLPP_HIP_LANGUAGE}")
 endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
