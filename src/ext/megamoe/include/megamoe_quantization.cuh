@@ -1,0 +1,88 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+#ifndef MSCCLPP_EXT_MEGAMOE_QUANTIZATION_CUH_
+#define MSCCLPP_EXT_MEGAMOE_QUANTIZATION_CUH_
+
+#if !(__CUDACC_VER_MAJOR__ > 13 || (__CUDACC_VER_MAJOR__ == 13 && __CUDACC_VER_MINOR__ >= 3))
+#include <cutlass/numeric_conversion.h>
+#endif
+
+#include "megamoe_device.cuh"
+
+namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
+
+MSCCLPP_DEVICE_INLINE uint8_t quantizeE8M0Scale(float maximum) {
+  if (maximum == 0.0f) return 127;
+  uint32_t bits = mscclpp::bit_cast<uint32_t>(maximum);
+  uint32_t exponent = (bits >> 23) & 0xff;
+  if (exponent == 0xff) return 254;
+  // 448 = 1.75 * 2^8; compare the significand directly instead of dividing.
+  int scale = int(exponent) - 8 + int((bits & 0x7fffff) > 0x600000);
+  return uint8_t(max(1, min(scale, 254)));
+}
+
+MSCCLPP_DEVICE_INLINE float inverseE8M0Scale(uint8_t scale) {
+  // The reciprocal of 2^127 is a representable FP32 subnormal, not zero.
+  return __uint_as_float(scale == 254 ? 0x00400000u : uint32_t(254 - scale) << 23);
+}
+
+template <class Values>
+MSCCLPP_DEVICE_INLINE auto quantizeE4M3(const Values& values, float inverse) {
+  constexpr int N = Values::Size;
+  static_assert(std::is_same_v<typename Values::ElementType, float> && N % 4 == 0);
+  mscclpp::VectorType<__fp8_e4m3, N> quantized;
+#pragma unroll
+  for (int i = 0; i < N; i += 4) {
+    // Assemble whole words; byte-wise vector assembly costs extra permutes per pair.
+    mscclpp::f32x2 low = __fmul2_rn(make_float2(values[i], values[i + 1]), make_float2(inverse, inverse));
+    mscclpp::f32x2 high = __fmul2_rn(make_float2(values[i + 2], values[i + 3]), make_float2(inverse, inverse));
+    quantized.words[i / 4] = uint32_t(mscclpp::bit_cast<uint16_t>(mscclpp::to<mscclpp::f8_e4m3x2>(low))) |
+                             uint32_t(mscclpp::bit_cast<uint16_t>(mscclpp::to<mscclpp::f8_e4m3x2>(high))) << 16;
+  }
+  return quantized;
+}
+
+MSCCLPP_DEVICE_INLINE mscclpp::f32x8 dequantizeE4M3x8(uint2 raw) {
+  mscclpp::f32x8 out;
+  *reinterpret_cast<float2*>(&out.data[0]) =
+      mscclpp::to<mscclpp::f32x2>(mscclpp::bit_cast<mscclpp::f8_e4m3x2>(uint16_t(raw.x & 0xffffu)));
+  *reinterpret_cast<float2*>(&out.data[2]) =
+      mscclpp::to<mscclpp::f32x2>(mscclpp::bit_cast<mscclpp::f8_e4m3x2>(uint16_t(raw.x >> 16)));
+  *reinterpret_cast<float2*>(&out.data[4]) =
+      mscclpp::to<mscclpp::f32x2>(mscclpp::bit_cast<mscclpp::f8_e4m3x2>(uint16_t(raw.y & 0xffffu)));
+  *reinterpret_cast<float2*>(&out.data[6]) =
+      mscclpp::to<mscclpp::f32x2>(mscclpp::bit_cast<mscclpp::f8_e4m3x2>(uint16_t(raw.y >> 16)));
+  return out;
+}
+
+MSCCLPP_DEVICE_INLINE uint32_t expandE8M0ScalePair(uint8_t scale) {
+  uint16_t packedScale = uint16_t(scale) | (uint16_t(scale) << 8);
+  uint32_t expanded;
+  asm("cvt.rn.bf16x2.ue8m0x2 %0, %1;" : "=r"(expanded) : "h"(packedScale));
+  return expanded;
+}
+
+MSCCLPP_DEVICE_INLINE uint32_t decodeScaledPairWithExpandedScale(uint16_t weights, uint32_t expandedScale) {
+  uint32_t decoded, result;
+#if __CUDACC_VER_MAJOR__ > 13 || (__CUDACC_VER_MAJOR__ == 13 && __CUDACC_VER_MINOR__ >= 3)
+  asm("cvt.rn.bf16x2.e4m3x2 %0, %1;" : "=r"(decoded) : "h"(weights));
+#else
+  using Weight = cutlass::float_e4m3_t;
+  using PackedWeights = cutlass::Array<Weight, 2>;
+  decoded = cuda::std::bit_cast<uint32_t>(
+      cutlass::NumericArrayConverter<cutlass::bfloat16_t, Weight, 2>{}(cuda::std::bit_cast<PackedWeights>(weights)));
+#endif
+  asm("mul.rn.bf16x2 %0, %1, %2;" : "=r"(result) : "r"(decoded), "r"(expandedScale));
+  return result;
+}
+
+MSCCLPP_DEVICE_INLINE uint32_t decodeScaledPair(uint16_t weights, uint16_t scales) {
+  uint32_t expanded;
+  asm("cvt.rn.bf16x2.ue8m0x2 %0, %1;" : "=r"(expanded) : "h"(scales));
+  return decodeScaledPairWithExpandedScale(weights, expanded);
+}
+
+}  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail
+
+#endif  // MSCCLPP_EXT_MEGAMOE_QUANTIZATION_CUH_
