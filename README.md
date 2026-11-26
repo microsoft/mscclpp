@@ -58,7 +58,7 @@ MSCCL++ provides peer-to-peer communication methods between GPUs. A peer-to-peer
 
 ```cpp
 // `PortChannel` will be explained in the following section.
-__device__ mscclpp::DeviceHandle<mscclpp::PortChannel<>> channel;
+__device__ mscclpp::PortChannelDeviceHandle<mscclpp::PortChannelBackend::Host> channel;
 __global__ void gpuKernel() {
   ...
   // Only one thread is needed for this method.

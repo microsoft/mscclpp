@@ -12,6 +12,7 @@
 #include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/version.hpp>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace mscclpp {
@@ -989,14 +990,41 @@ extern const TransportFlags AllIBTransports;
 /// A constant TransportFlags object representing all transports.
 extern const TransportFlags AllTransports;
 
-/// A type which could be safely used on the device side.
+namespace detail {
+// Keep member-expression deduction in class scope: HIP rejects host-only calls in a kernel's type aliases.
+template <class T, auto... Backend>
+struct DeviceHandleResult {};
+
 template <class T>
-using DeviceHandle = typename T::DeviceHandle;
+  requires requires(T& t) { t.deviceHandle(); }
+struct DeviceHandleResult<T> {
+  using type = decltype(std::declval<T&>().deviceHandle());
+};
+
+template <class T, auto Backend>
+  requires requires(T& t) { t.template deviceHandle<Backend>(); }
+struct DeviceHandleResult<T, Backend> {
+  using type = decltype(std::declval<T&>().template deviceHandle<Backend>());
+};
+}  // namespace detail
+
+/// Result type of the owner's fixed or backend-selected member extractor.
+/// @tparam T Owner type, preserving const and reference qualifiers.
+/// @tparam Backend Optional member selector; Port requires Host or Device.
+template <class T, auto... Backend>
+using DeviceHandle = typename detail::DeviceHandleResult<T, Backend...>::type;
 
 /// Retrieve the deviceHandle instance from a host object.
 template <typename T>
-DeviceHandle<std::remove_reference_t<T>> deviceHandle(T&& t) {
+DeviceHandle<T> deviceHandle(T&& t) {
   return t.deviceHandle();
+}
+
+/// Retrieve the deviceHandle instance using the owner's templated member extractor.
+/// @tparam Backend The member's backend selector (no default).
+template <auto Backend, typename T>
+DeviceHandle<T, Backend> deviceHandle(T&& t) {
+  return t.template deviceHandle<Backend>();
 }
 
 /// Packet value type.

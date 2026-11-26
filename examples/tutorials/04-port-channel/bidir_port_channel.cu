@@ -88,7 +88,7 @@ void worker(int rank, int gpuId, const std::string& ipPort, mscclpp::Transport t
   mscclpp::MemoryId remoteMemId = proxyService.addMemory(remoteRegMem);
   mscclpp::PortChannel portChan = proxyService.portChannel(semaId, remoteMemId, localMemId);
 
-  auto portChanHandle = portChan.deviceHandle();
+  auto portChanHandle = portChan.deviceHandle<mscclpp::PortChannelBackend::Host>();
 
   void* devHandle;
   MSCCLPP_CUDATHROW(cudaMalloc(&devHandle, sizeof(portChanHandle)));

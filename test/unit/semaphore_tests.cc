@@ -13,27 +13,40 @@
 
 namespace {
 using Backend = mscclpp::PortChannelBackend;
-using Host = mscclpp::PortChannel<Backend::Host>;
-using Device = mscclpp::PortChannel<Backend::Device>;
+using Channel = mscclpp::PortChannel;
+using Base = mscclpp::BasePortChannel;
 using PortSemaphore = mscclpp::PortDevice2DeviceSemaphore;
-static_assert(std::is_same_v<mscclpp::BasePortChannel<>::DeviceHandle, mscclpp::BasePortChannelDeviceHandle<>>);
-static_assert(std::is_same_v<mscclpp::BasePortChannel<Backend::Device>::DeviceHandle,
-                             mscclpp::BasePortChannelDeviceHandle<Backend::Device>>);
 static_assert(std::is_same_v<mscclpp::BaseMemoryChannel::DeviceHandle, mscclpp::BaseMemoryChannelDeviceHandle>);
 static_assert(std::is_same_v<mscclpp::MemoryChannel::DeviceHandle, mscclpp::MemoryChannelDeviceHandle>);
 static_assert(std::is_same_v<mscclpp::SwitchChannel::DeviceHandle, mscclpp::SwitchChannelDeviceHandle>);
-static_assert(std::is_same_v<mscclpp::DeviceHandle<Host>, mscclpp::PortChannelDeviceHandle<>>);
-static_assert(std::is_same_v<mscclpp::DeviceHandle<Device>, mscclpp::PortChannelDeviceHandle<Backend::Device>>);
-static_assert(std::is_same_v<decltype(mscclpp::deviceHandle(std::declval<Device&>())), Device::DeviceHandle>);
-static_assert(std::is_same_v<decltype(mscclpp::PortChannel(std::declval<std::shared_ptr<PortSemaphore>>(),
-                                                           std::declval<mscclpp::RegisteredMemory>(),
-                                                           std::declval<mscclpp::RegisteredMemory>())),
-                             Device>);
-static_assert(!std::is_constructible_v<Host, std::shared_ptr<PortSemaphore>, mscclpp::RegisteredMemory,
-                                       mscclpp::RegisteredMemory>);
+static_assert(std::is_same_v<Base::DeviceHandle<Backend::Host>, mscclpp::BasePortChannelDeviceHandle<Backend::Host>>);
 static_assert(
-    !std::is_constructible_v<Device, const mscclpp::Semaphore&, mscclpp::RegisteredMemory, mscclpp::RegisteredMemory>);
-static_assert(!std::is_assignable_v<Host&, Device>);
+    std::is_same_v<Channel::DeviceHandle<Backend::Device>, mscclpp::PortChannelDeviceHandle<Backend::Device>>);
+static_assert(std::is_same_v<decltype(std::declval<const Channel&>().deviceHandle<Backend::Host>()),
+                             mscclpp::PortChannelDeviceHandle<Backend::Host>>);
+static_assert(std::is_same_v<decltype(std::declval<const Channel&>().deviceHandle<Backend::Device>()),
+                             mscclpp::PortChannelDeviceHandle<Backend::Device>>);
+static_assert(std::is_constructible_v<Channel, mscclpp::SemaphoreId, std::shared_ptr<mscclpp::Host2DeviceSemaphore>,
+                                      std::shared_ptr<mscclpp::Proxy>, mscclpp::MemoryId, mscclpp::MemoryId>);
+static_assert(std::is_constructible_v<Channel, std::shared_ptr<PortSemaphore>, mscclpp::RegisteredMemory,
+                                      mscclpp::RegisteredMemory>);
+static_assert(
+    !std::is_constructible_v<Channel, const mscclpp::Semaphore&, mscclpp::RegisteredMemory, mscclpp::RegisteredMemory>);
+static_assert(std::is_copy_assignable_v<Channel>);
+static_assert(std::is_nothrow_move_constructible_v<Base> && std::is_nothrow_move_assignable_v<Base>);
+static_assert(std::is_nothrow_move_constructible_v<Channel> && std::is_nothrow_move_assignable_v<Channel>);
+static_assert(!std::is_assignable_v<mscclpp::PortChannelDeviceHandle<Backend::Host>&,
+                                    mscclpp::PortChannelDeviceHandle<Backend::Device>>);
+template <class T>
+concept NoArgumentMember = requires(const T& owner) { owner.deviceHandle(); };
+template <class T>
+concept GenericExtraction = requires(const T& owner) { mscclpp::deviceHandle(owner); };
+template <class T>
+concept GenericAssociatedHandle = requires { typename mscclpp::DeviceHandle<T>; };
+static_assert(!NoArgumentMember<Channel> && !NoArgumentMember<Base>);
+static_assert(!GenericExtraction<Channel> && !GenericExtraction<Base>);
+static_assert(!GenericAssociatedHandle<Channel> && !GenericAssociatedHandle<Base>);
+static_assert(GenericExtraction<mscclpp::MemoryChannel> && GenericExtraction<mscclpp::SwitchChannel>);
 static_assert(!std::is_copy_constructible_v<PortSemaphore> && std::is_move_constructible_v<PortSemaphore>);
 
 static_assert(std::is_trivially_copyable_v<mscclpp::BaseMemoryChannelDeviceHandle> &&
@@ -58,6 +71,35 @@ bool rejectsInvalidUsage(Func&& func) {
     return error.getErrorCode() == mscclpp::ErrorCode::InvalidUsage;
   }
   return false;
+}
+
+template <Backend B, class Owner>
+Owner exerciseOwnerMoves(Owner source) {
+  const auto expected = source.template deviceHandle<B>();
+  Owner copy = source;
+  Owner moved(std::move(source));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { source.template deviceHandle<Backend::Host>(); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { source.template deviceHandle<Backend::Device>(); }));
+  EXPECT_EQ(copy.template deviceHandle<B>().semaphore_.expectedInboundToken, expected.semaphore_.expectedInboundToken);
+  Owner assigned = copy;
+  assigned = std::move(moved);
+  EXPECT_TRUE(rejectsInvalidUsage([&] { moved.template deviceHandle<Backend::Host>(); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { moved.template deviceHandle<Backend::Device>(); }));
+  copy = {};
+  const auto actual = assigned.template deviceHandle<B>();
+  EXPECT_EQ(actual.semaphore_.expectedInboundToken, expected.semaphore_.expectedInboundToken);
+  if constexpr (std::is_same_v<Owner, Channel>) {
+    if constexpr (B == Backend::Host) {
+      EXPECT_EQ(actual.dst_, expected.dst_);
+      EXPECT_EQ(actual.src_, expected.src_);
+    } else {
+      EXPECT_EQ(actual.dstMemory_.addr, expected.dstMemory_.addr);
+      EXPECT_EQ(actual.dstMemory_.key, expected.dstMemory_.key);
+      EXPECT_EQ(actual.srcMemory_.addr, expected.srcMemory_.addr);
+      EXPECT_EQ(actual.srcMemory_.key, expected.srcMemory_.key);
+    }
+  }
+  return assigned;
 }
 
 // Metadata-only connection. Counters use real GPU allocations; no transport success is simulated.
@@ -115,17 +157,20 @@ TEST(SemaphoreValidationTest, DeviceChannelOwnershipAndRegistrations) {
   auto raw = makeSemaphore({mscclpp::DeviceType::GPU, 0}, true);
   auto owner = std::make_shared<PortSemaphore>(raw);
   const auto expected = owner->deviceHandle().expectedInboundToken;
-  EXPECT_TRUE(rejectsInvalidUsage([&] { Device invalid(owner, {}, raw.localMemory()); }));
-  EXPECT_TRUE(rejectsInvalidUsage([&] { Device invalid(owner, raw.remoteMemory(), {}); }));
-  Device channel(owner, raw.remoteMemory(), raw.localMemory());
+  EXPECT_TRUE(rejectsInvalidUsage([&] { Channel invalid(owner, {}, raw.localMemory()); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { Channel invalid(owner, raw.remoteMemory(), {}); }));
+  auto buffer = mscclpp::GpuBuffer(64).memory();
+  auto region = context->registerMemory(buffer.get(), 64, mscclpp::Transport::Ethernet);
+  Channel channel(owner, region, region);
+  region = {};  // The Device binding retains its own registration metadata.
   auto copy = channel;
-  mscclpp::BasePortChannel<Backend::Device> baseCopy = channel;
+  Base baseCopy = channel;
   std::weak_ptr<PortSemaphore> weak = owner;
   owner.reset();
   channel = {};
   EXPECT_TRUE(!weak.expired());
-  EXPECT_EQ(mscclpp::deviceHandle(copy).semaphore_.expectedInboundToken, expected);
-  EXPECT_EQ(mscclpp::deviceHandle(baseCopy).semaphore_.expectedInboundToken, expected);
+  EXPECT_EQ(copy.deviceHandle<Backend::Device>().semaphore_.expectedInboundToken, expected);
+  EXPECT_EQ(baseCopy.deviceHandle<Backend::Device>().semaphore_.expectedInboundToken, expected);
   copy = {};
   EXPECT_TRUE(!weak.expired());
   baseCopy = {};
@@ -138,15 +183,106 @@ TEST(SemaphoreValidationTest, DeviceChannelOwnershipAndRegistrations) {
   EXPECT_TRUE(moved.deviceHandle().expectedInboundToken != nullptr);
 
   auto liveOwner = std::make_shared<PortSemaphore>(raw);
-  Device liveChannel(liveOwner, raw.remoteMemory(), raw.localMemory());
-  mscclpp::BasePortChannel<Backend::Device> liveBase = liveChannel;
+  Channel liveChannel(liveOwner, raw.remoteMemory(), raw.localMemory());
+  Base liveBase = liveChannel;
   const auto liveExpected = liveOwner->deviceHandle().expectedInboundToken;
   auto movedOwner = std::move(*liveOwner);
   EXPECT_EQ(movedOwner.deviceHandle().expectedInboundToken, liveExpected);
   // Extraction must reject before accessing the moved-from raw semaphore's connection.
-  EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::deviceHandle(liveBase); }));
-  EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::deviceHandle(liveChannel); }));
-  EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::BasePortChannel<Backend::Device> invalid(liveOwner); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { liveBase.deviceHandle<Backend::Device>(); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { liveChannel.deviceHandle<Backend::Device>(); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { Base invalid(liveOwner); }));
+}
+
+TEST(SemaphoreValidationTest, ExplicitBackendAndIndependentBindingState) {
+  auto rawHost = makeSemaphore({mscclpp::DeviceType::GPU, 0}, false);
+  mscclpp::ProxyService service;
+  auto hostSemaphore = std::make_shared<mscclpp::Host2DeviceSemaphore>(rawHost);
+  auto sid = service.addSemaphore(hostSemaphore);
+  EXPECT_EQ(service.addMemory(rawHost.localMemory()), 0u);
+  Channel host = service.portChannel(sid, 0, 0);
+  Base hostBase = service.basePortChannel(sid);
+  EXPECT_EQ(host.deviceHandle<Backend::Host>().dst_, 0u);
+  EXPECT_EQ(mscclpp::deviceHandle<Backend::Host>(host).dst_, 0u);
+  EXPECT_EQ(mscclpp::deviceHandle<Backend::Host>(hostBase).semaphoreId_, sid);
+  EXPECT_TRUE(rejectsInvalidUsage([&] { host.deviceHandle<Backend::Device>(); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { hostBase.deviceHandle<Backend::Device>(); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::deviceHandle<Backend::Device>(host); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::deviceHandle<Backend::Device>(hostBase); }));
+  auto rawDevice = makeSemaphore({mscclpp::DeviceType::GPU, 0}, true);
+  auto deviceSemaphore = std::make_shared<PortSemaphore>(rawDevice);
+  Channel device(deviceSemaphore, rawDevice.remoteMemory(), rawDevice.localMemory());
+  Base deviceBase = device;
+  EXPECT_TRUE(rejectsInvalidUsage([&] { device.deviceHandle<Backend::Host>(); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { deviceBase.deviceHandle<Backend::Host>(); }));
+  EXPECT_EQ(mscclpp::deviceHandle<Backend::Device>(device).semaphore_.expectedInboundToken,
+            deviceSemaphore->deviceHandle().expectedInboundToken);
+  EXPECT_EQ(mscclpp::deviceHandle<Backend::Device>(deviceBase).semaphore_.expectedInboundToken,
+            deviceSemaphore->deviceHandle().expectedInboundToken);
+  EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::deviceHandle<Backend::Host>(device); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::deviceHandle<Backend::Host>(deviceBase); }));
+  Channel unassigned;
+  Base unassignedBase;
+  EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::deviceHandle<Backend::Host>(unassigned); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::deviceHandle<Backend::Device>(unassigned); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::deviceHandle<Backend::Host>(unassignedBase); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::deviceHandle<Backend::Device>(unassignedBase); }));
+  Channel unboundHost, unboundDevice;
+  static_cast<Base&>(unboundHost) = hostBase;
+  static_cast<Base&>(unboundDevice) = deviceBase;
+  EXPECT_TRUE(rejectsInvalidUsage([&] { unboundHost.deviceHandle<Backend::Host>(); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { unboundDevice.deviceHandle<Backend::Device>(); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::deviceHandle<Backend::Host>(unboundHost); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::deviceHandle<Backend::Device>(unboundDevice); }));
+  Channel hostWithDeviceBase = host, deviceWithHostBase = device;
+  static_cast<Base&>(hostWithDeviceBase) = deviceBase;
+  static_cast<Base&>(deviceWithHostBase) = hostBase;
+  EXPECT_TRUE(rejectsInvalidUsage([&] { hostWithDeviceBase.deviceHandle<Backend::Device>(); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { deviceWithHostBase.deviceHandle<Backend::Host>(); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::deviceHandle<Backend::Device>(hostWithDeviceBase); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { mscclpp::deviceHandle<Backend::Host>(deviceWithHostBase); }));
+  Channel selected = host;
+  selected = device;
+  EXPECT_EQ(selected.deviceHandle<Backend::Device>().semaphore_.expectedInboundToken,
+            deviceSemaphore->deviceHandle().expectedInboundToken);
+  EXPECT_TRUE(rejectsInvalidUsage([&] { selected.deviceHandle<Backend::Host>(); }));
+  selected = host;
+  auto movedOwner = std::move(selected);
+  EXPECT_EQ(movedOwner.deviceHandle<Backend::Host>().src_, 0u);
+  EXPECT_TRUE(rejectsInvalidUsage([&] { selected.deviceHandle<Backend::Host>(); }));
+}
+
+TEST(SemaphoreValidationTest, HostOwnerMoves) {
+  auto raw = makeSemaphore({mscclpp::DeviceType::GPU, 0}, false);
+  mscclpp::ProxyService service;
+  const auto sid = service.addSemaphore(std::make_shared<mscclpp::Host2DeviceSemaphore>(raw));
+  auto base = exerciseOwnerMoves<Backend::Host>(service.basePortChannel(sid));
+  auto bound = exerciseOwnerMoves<Backend::Host>(service.portChannel(sid, 0, 0));
+  EXPECT_EQ(base.deviceHandle<Backend::Host>().semaphoreId_, sid);
+  EXPECT_EQ(bound.deviceHandle<Backend::Host>().dst_, 0u);
+  EXPECT_EQ(bound.deviceHandle<Backend::Host>().src_, 0u);
+}
+
+TEST(SemaphoreValidationTest, DeviceOwnerMoves) {
+  auto raw = makeSemaphore({mscclpp::DeviceType::GPU, 0}, true);
+  auto semaphore = std::make_shared<PortSemaphore>(raw);
+  std::weak_ptr<PortSemaphore> weak = semaphore;
+  auto buffer = mscclpp::GpuBuffer(64).memory();
+  auto region = context->registerMemory(buffer.get(), 64, mscclpp::Transport::Ethernet);
+  Channel bound(semaphore, region, region);
+  Base base = bound;
+  region = {};
+  semaphore.reset();
+  auto movedBase = exerciseOwnerMoves<Backend::Device>(std::move(base));
+  auto movedBound = exerciseOwnerMoves<Backend::Device>(std::move(bound));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { base.deviceHandle<Backend::Device>(); }));
+  EXPECT_TRUE(rejectsInvalidUsage([&] { bound.deviceHandle<Backend::Device>(); }));
+  EXPECT_TRUE(!weak.expired());
+  movedBase = {};
+  EXPECT_TRUE(!weak.expired());
+  EXPECT_TRUE(movedBound.deviceHandle<Backend::Device>().semaphore_.expectedInboundToken != nullptr);
+  movedBound = {};
+  EXPECT_TRUE(weak.expired());
 }
 
 TEST(SemaphoreValidationTest, EndpointAllocationRestoresCaller) {

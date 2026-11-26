@@ -25,6 +25,18 @@ void register_semaphore(nb::module_& m) {
         return nb::bytes(reinterpret_cast<const char*>(&self), sizeof(self));
       });
 
+  nb::class_<PortDevice2DeviceSemaphore> portDevice2DeviceSemaphore(m, "CppPortDevice2DeviceSemaphore");
+  portDevice2DeviceSemaphore.def(nb::init<const Semaphore&>(), nb::arg("semaphore"))
+      .def(nb::init<Communicator&, const Connection&>(), nb::arg("communicator"), nb::arg("connection"))
+      .def("connection", &PortDevice2DeviceSemaphore::connection, nb::rv_policy::reference_internal)
+      .def("device_handle", &PortDevice2DeviceSemaphore::deviceHandle);
+
+  nb::class_<PortDevice2DeviceSemaphore::DeviceHandle>(portDevice2DeviceSemaphore, "DeviceHandle")
+      .def(nb::init<>())
+      .def_prop_ro("raw", [](const PortDevice2DeviceSemaphore::DeviceHandle& self) -> nb::bytes {
+        return nb::bytes(reinterpret_cast<const char*>(&self), sizeof(self));
+      });
+
   nb::class_<Host2HostSemaphore>(m, "CppHost2HostSemaphore")
       .def(nb::init<const Semaphore&>(), nb::arg("semaphore"))
       .def(nb::init<Communicator&, const Connection&>(), nb::arg("communicator"), nb::arg("connection"))

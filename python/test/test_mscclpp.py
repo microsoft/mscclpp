@@ -24,9 +24,13 @@ from mscclpp import (
     Host2HostSemaphore,
     ProxyService,
     MemoryDevice2DeviceSemaphore,
+    PortDevice2DeviceSemaphore,
+    PortChannel,
+    IbMode,
     TcpBootstrap,
     Transport,
     is_nvls_supported,
+    is_bulk_supported,
     npkit,
     env,
     Device,
@@ -495,6 +499,108 @@ def test_connection_write_and_signal(mpi_group: MpiGroup, connection_type: str, 
     group.barrier()
     all_correct = mpi_group.comm.bcast(all_correct, 0)
     assert all_correct
+
+
+def test_port_channel_binding_defaults():
+    from mscclpp import _mscclpp as native
+
+    host_base = native.CppBasePortChannelDeviceHandle()
+    host_bound = native.CppPortChannelDeviceHandle()
+    for handle in (host_base, host_bound):
+        for name in ("semaphore_id_", "semaphore_", "fifo_", "raw"):
+            assert hasattr(handle, name)
+        assert isinstance(handle.raw, bytes)
+        assert handle.semaphore_id_ == 0
+    assert host_bound.src_ == host_bound.dst_ == 0
+    for host_type, device_type in (
+        (native.CppBasePortChannelDeviceHandle, native.CppBasePortChannelDeviceBackendHandle),
+        (native.CppPortChannelDeviceHandle, native.CppPortChannelDeviceBackendHandle),
+    ):
+        assert host_type is not device_type
+        handle = device_type()
+        assert isinstance(handle.raw, bytes) and len(handle.raw) > 0
+        assert not hasattr(handle, "semaphore_id_")
+    assert isinstance(PortDevice2DeviceSemaphore.DeviceHandle().raw, bytes)
+    for owner_type in (native.CppBasePortChannel, PortChannel):
+        owner = owner_type()
+        for method in (owner.device_handle, owner.device_backend_handle):
+            with pytest.raises(native.Error) as caught:
+                method()
+            assert caught.value.args[0] == int(ErrorCode.InvalidUsage)
+            del caught
+    with pytest.raises(TypeError):
+        PortDevice2DeviceSemaphore()
+
+
+@parametrize_mpi_groups(2)
+def test_port_channel_host_backend_api(mpi_group: MpiGroup):
+    from mscclpp import _mscclpp as native
+
+    group, connections = create_group_and_connection(mpi_group, "NVLink")
+    memory = GpuBuffer(8, dtype=np.int32)
+    service = ProxyService()
+    channels = group.make_port_channels(service, memory, connections)
+    raw = group.make_semaphores(connections)[1 - group.my_rank]
+    group.barrier()
+    with pytest.raises(native.Error) as caught:
+        PortDevice2DeviceSemaphore(raw)
+    assert caught.value.args[0] == int(ErrorCode.InvalidUsage)
+    del caught
+    base = service.base_port_channel(service.add_semaphore(raw))
+    assert isinstance(base.device_handle(), native.CppBasePortChannelDeviceHandle)
+    with pytest.raises(native.Error) as caught:
+        base.device_backend_handle()
+    assert caught.value.args[0] == int(ErrorCode.InvalidUsage)
+    del caught
+    for channel in channels.values():
+        handle = channel.device_handle()
+        assert isinstance(handle, native.CppPortChannelDeviceHandle)
+        assert isinstance(handle.raw, bytes)
+        with pytest.raises(native.Error) as caught:
+            channel.device_backend_handle()
+        assert caught.value.args[0] == int(ErrorCode.InvalidUsage)
+        del caught
+
+
+@parametrize_mpi_groups(2)
+def test_port_channel_device_backend_api(mpi_group: MpiGroup):
+    from mscclpp import _mscclpp as native
+
+    local_support = not is_hip and os.environ.get("MSCCLPP_DISABLE_IB_TESTS", "0") == "0" and is_bulk_supported()
+    if not all(mpi_group.comm.allgather(local_support)):
+        pytest.skip("Requires CUDA GPUNetIO, enabled IB tests and SM90+ on every participating rank")
+    group = CommGroup(mpi_group.comm)
+    config = EndpointConfig(group.my_ib_device(group.my_rank % group.nranks_per_node))
+    config.ib_mode = IbMode.Device
+    peer = 1 - group.my_rank
+    connections = group.make_connection([peer], config)
+    raw = group.make_semaphores(connections)[peer]
+    semaphore = PortDevice2DeviceSemaphore(raw)
+    memory = GpuBuffer(8, dtype=np.int32)
+    regions = group.register_tensor_with_connections(memory, connections)
+    base = native.CppBasePortChannel(semaphore)
+    bound = PortChannel(semaphore, regions[peer], regions[group.my_rank])
+    with pytest.raises(native.Error) as caught:
+        PortChannel(semaphore, native.CppRegisteredMemory(), regions[group.my_rank])
+    assert caught.value.args[0] == int(ErrorCode.InvalidUsage)
+    del caught
+    semaphore_from_connection = PortDevice2DeviceSemaphore(group.communicator, connections[peer])
+    assert isinstance(semaphore_from_connection.device_handle().raw, bytes)
+    assert semaphore_from_connection.connection().transport() == connections[peer].transport()
+    del semaphore, raw, regions
+    for owner, handle_type in (
+        (base, native.CppBasePortChannelDeviceBackendHandle),
+        (bound, native.CppPortChannelDeviceBackendHandle),
+    ):
+        handle = owner.device_backend_handle()
+        assert isinstance(handle, handle_type)
+        assert isinstance(handle.raw, bytes)
+        assert len(handle.raw) == len(handle_type().raw)
+        with pytest.raises(native.Error) as caught:
+            owner.device_handle()
+        assert caught.value.args[0] == int(ErrorCode.InvalidUsage)
+        del caught
+    group.barrier()
 
 
 @parametrize_mpi_groups(2, 4, 8, 16)

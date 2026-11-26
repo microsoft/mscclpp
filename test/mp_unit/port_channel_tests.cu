@@ -243,12 +243,13 @@ __constant__ ConstPortChannelStorage gChannelOneToOneTestConstPortChans;
 
 inline void copyChannelToSymbol(const TestPortChannel& ch, [[maybe_unused]] IbMode ibMode,
                                 const ConstPortChannelStorage& symbol = gChannelOneToOneTestConstPortChans) {
-  std::visit(
-      [&](const auto& channel) {
-        auto handle = channel.deviceHandle();
-        MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(symbol, &handle, sizeof(handle)));
-      },
-      ch);
+  if (ibMode == IbMode::Device) {
+    auto handle = ch.deviceHandle<mscclpp::PortChannelBackend::Device>();
+    MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(symbol, &handle, sizeof(handle)));
+  } else {
+    auto handle = ch.deviceHandle<mscclpp::PortChannelBackend::Host>();
+    MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(symbol, &handle, sizeof(handle)));
+  }
 }
 
 template <mscclpp::PortChannelBackend Backend = mscclpp::PortChannelBackend::Host,
@@ -1033,7 +1034,7 @@ TEST(PortChannelOneToOneTest, AccumulateIbHostNoAtomicRejected) {
 }
 
 static constexpr int kMaxQps = 4;
-__constant__ DeviceHandle<mscclpp::PortChannel<>> gMultiQpPortChans[kMaxQps];
+__constant__ mscclpp::PortChannelDeviceHandle<mscclpp::PortChannelBackend::Host> gMultiQpPortChans[kMaxQps];
 __constant__ mscclpp::PortChannelDeviceHandle<mscclpp::PortChannelBackend::Device> gMultiQpDevicePortChans[kMaxQps];
 
 inline void copyMultiQpChannelsToSymbol(const std::vector<TestPortChannel>& portChannels, IbMode ibMode) {
@@ -1042,12 +1043,12 @@ inline void copyMultiQpChannelsToSymbol(const std::vector<TestPortChannel>& port
   if (ibMode == IbMode::Device) {
     std::vector<mscclpp::PortChannelDeviceHandle<mscclpp::PortChannelBackend::Device>> handles;
     for (const auto& ch : portChannels) {
-      handles.push_back(std::get<mscclpp::PortChannel<mscclpp::PortChannelBackend::Device>>(ch).deviceHandle());
+      handles.push_back(ch.deviceHandle<mscclpp::PortChannelBackend::Device>());
     }
     MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gMultiQpDevicePortChans, handles.data(), numQps * sizeof(handles[0])));
   } else {
-    std::vector<DeviceHandle<mscclpp::PortChannel<>>> handles;
-    for (const auto& ch : portChannels) handles.push_back(std::get<mscclpp::PortChannel<>>(ch).deviceHandle());
+    std::vector<mscclpp::PortChannelDeviceHandle<mscclpp::PortChannelBackend::Host>> handles;
+    for (const auto& ch : portChannels) handles.push_back(ch.deviceHandle<mscclpp::PortChannelBackend::Host>());
     MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gMultiQpPortChans, handles.data(), numQps * sizeof(handles[0])));
   }
 }

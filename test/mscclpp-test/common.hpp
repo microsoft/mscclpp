@@ -113,17 +113,19 @@ class BaseTestEngine {
                          const mscclpp::RegisteredMemory&)>;
   template <class T>
   using DeviceHandle = mscclpp::DeviceHandle<T>;
-  void setupMeshConnections(std::vector<DeviceHandle<mscclpp::PortChannel<>>>& portChannels, void* inputBuff,
-                            size_t inputBuffBytes, void* outputBuff = nullptr, size_t outputBuffBytes = 0,
-                            SetupChannelFunc setupChannel = nullptr);
+  void setupMeshConnections(
+      std::vector<mscclpp::PortChannelDeviceHandle<mscclpp::PortChannelBackend::Host>>& portChannels, void* inputBuff,
+      size_t inputBuffBytes, void* outputBuff = nullptr, size_t outputBuffBytes = 0,
+      SetupChannelFunc setupChannel = nullptr);
   void setupMeshConnections(std::vector<mscclpp::MemoryChannel>& memoryChannels, void* inputBuff, size_t inputBuffBytes,
                             void* outputBuff = nullptr, size_t outputBuffBytes = 0,
                             ChannelSemantic semantic = ChannelSemantic::PUT, size_t nChannelPerConnection = 1);
-  void setupMeshConnections(std::vector<mscclpp::MemoryChannel>& memoryChannels,
-                            std::vector<DeviceHandle<mscclpp::PortChannel<>>>& portChannels, void* inputBuff,
-                            size_t inputBuffBytes, void* putPacketBuff = nullptr, size_t putPacketBuffBytes = 0,
-                            void* getPacketBuff = nullptr, size_t getPacketBuffBytes = 0, void* outputBuff = nullptr,
-                            size_t outputBuffBytes = 0);
+  void setupMeshConnections(
+      std::vector<mscclpp::MemoryChannel>& memoryChannels,
+      std::vector<mscclpp::PortChannelDeviceHandle<mscclpp::PortChannelBackend::Host>>& portChannels, void* inputBuff,
+      size_t inputBuffBytes, void* putPacketBuff = nullptr, size_t putPacketBuffBytes = 0,
+      void* getPacketBuff = nullptr, size_t getPacketBuffBytes = 0, void* outputBuff = nullptr,
+      size_t outputBuffBytes = 0);
 
   const TestArgs args_;
   const std::string name_;
