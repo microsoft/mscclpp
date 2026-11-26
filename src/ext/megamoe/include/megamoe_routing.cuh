@@ -17,17 +17,17 @@ namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail {
 // A rank's own routingPackets slice instead holds the LL8 weights of its remote routes, which owners read in dispatch.
 
 // Pack a route entry: the owner's local expert and the route's offset in its source chunk.
-MSCCLPP_DEVICE_INLINE uint32_t packRouteEntry(int expert, int offset) {
-  return uint32_t(expert) << 16 | uint32_t(offset);
+MSCCLPP_DEVICE_INLINE uint32_t packRouteEntry(int expertIdx, int offset) {
+  return uint32_t(expertIdx) << 16 | uint32_t(offset);
 }
 
 // Decode a global route index, source * tokensPerRank * topK + the source's route index.
-template <class P>
-MSCCLPP_DEVICE_INLINE Route makeRoute(const P& p, uint32_t route, int nTokens = 0) {
-  const int topK = p.config.topK;
-  const int tokensPerRank = (p.config.computeOnly && nTokens > 0) ? nTokens : p.config.maxTokens;
+template <class KernelParams>
+MSCCLPP_DEVICE_INLINE Route makeRoute(const KernelParams& params, uint32_t route, int nTokens = 0) {
+  const int topK = params.config.topK;
+  const int tokensPerRank = (params.config.computeOnly && nTokens > 0) ? nTokens : params.config.maxTokens;
   const uint32_t nRoutesPerRank = uint32_t(tokensPerRank) * topK;
-  int rank = p.config.worldSize > 1 ? int(route / nRoutesPerRank) : 0;
+  int rank = params.config.worldSize > 1 ? int(route / nRoutesPerRank) : 0;
   int index = int(route - uint32_t(rank) * nRoutesPerRank);
   if ((topK & (topK - 1)) == 0) return Route{rank, index >> (__ffs(topK) - 1), index & (topK - 1), 0.0f};
   return Route{rank, index / topK, index % topK, 0.0f};
@@ -35,22 +35,22 @@ MSCCLPP_DEVICE_INLINE Route makeRoute(const P& p, uint32_t route, int nTokens = 
 
 // Reserve consecutive positions from a shared counter per key, one atomic per group of lanes sharing a key.
 // All lanes of the warp must call this; lanes with a negative key receive -1.
-MSCCLPP_DEVICE_INLINE int reserveRouteGroup(int* counters, int key, int lane) {
+MSCCLPP_DEVICE_INLINE int reserveRouteGroup(int* counters, int key, int laneIdx) {
   unsigned int group = __match_any_sync(0xffffffff, key);
   if (key < 0) return -1;
   int leader = __ffs(group) - 1;
   int base = 0;
-  if (lane == leader) base = atomicAddShared(counters + key, __popc(group));
+  if (laneIdx == leader) base = atomicAddShared(counters + key, __popc(group));
   base = __shfl_sync(group, base, leader);
-  return base + __popc(group & ((1u << lane) - 1));
+  return base + __popc(group & ((1u << laneIdx) - 1));
 }
 
 // Reserve one shared slot per lane in `lanes`, with one atomic per warp. All lanes of the warp must call this.
-MSCCLPP_DEVICE_INLINE int reserveWarpSlots(int* counter, unsigned int lanes, int lane) {
+MSCCLPP_DEVICE_INLINE int reserveWarpSlots(int* counter, unsigned int lanes, int laneIdx) {
   int base = 0;
-  if (lane == 0) base = atomicAddShared(counter, __popc(lanes));
+  if (laneIdx == 0) base = atomicAddShared(counter, __popc(lanes));
   base = __shfl_sync(0xffffffff, base, 0);
-  return base + __popc(lanes & ((1u << lane) - 1));
+  return base + __popc(lanes & ((1u << laneIdx) - 1));
 }
 
 // A local-expert route cached in shared memory: its global route index, its local expert, and its position among
@@ -81,12 +81,13 @@ struct RoutingScratch {
 };
 
 template <class SharedStorage>
-MSCCLPP_DEVICE_INLINE RoutingScratch makeRoutingScratch(SharedStorage& shared, int nLocalExperts, int worldSize) {
+MSCCLPP_DEVICE_INLINE RoutingScratch makeRoutingScratch(SharedStorage& sharedStorage, int nLocalExperts,
+                                                        int worldSize) {
   constexpr size_t NumScratchInts = sizeof(SharedStorage::routing) / sizeof(int);
   size_t nHeaderInts = routingScratchHeaderInts(nLocalExperts, worldSize);
   assert(nLocalExperts <= 0xffff && nHeaderInts <= NumScratchInts);
   RoutingScratch scratch;
-  scratch.nRoutesByExpert = shared.routing;
+  scratch.nRoutesByExpert = sharedStorage.routing;
   scratch.nRoutesByOwner = scratch.nRoutesByExpert + nLocalExperts;
   scratch.nRoutes = scratch.nRoutesByOwner + worldSize;
   scratch.routeOffsets = scratch.nRoutes + 1;
@@ -96,87 +97,96 @@ MSCCLPP_DEVICE_INLINE RoutingScratch makeRoutingScratch(SharedStorage& shared, i
   scratch.segmentFirsts = reinterpret_cast<uint32_t*>(scratch.segmentEnds + RouteSegmentBatch);
   scratch.nTokenTiles = reinterpret_cast<int*>(scratch.segmentFirsts + RouteSegmentBatch);
   scratch.maxNLiveChunks = scratch.nTokenTiles + 1;
-  scratch.cachedRoutes = reinterpret_cast<CachedRoute*>(shared.routing + nHeaderInts);
+  scratch.cachedRoutes = reinterpret_cast<CachedRoute*>(sharedStorage.routing + nHeaderInts);
   scratch.capacity = int(min((NumScratchInts - nHeaderInts) / 2, size_t(1) << 16));
   return scratch;
 }
 
 // Cache one route per lane. All lanes of the warp must call this; lanes without a local route pass expert -1.
-MSCCLPP_DEVICE_INLINE void cacheRoute(const RoutingScratch& scratch, int expert, uint32_t route, int lane) {
-  unsigned int localLanes = __ballot_sync(0xffffffff, expert >= 0);
+MSCCLPP_DEVICE_INLINE void cacheRoute(const RoutingScratch& scratch, int expertIdx, uint32_t route, int laneIdx) {
+  unsigned int localLanes = __ballot_sync(0xffffffff, expertIdx >= 0);
   if (!localLanes) return;
-  int position = reserveRouteGroup(scratch.nRoutesByExpert, expert, lane);
-  int slot = reserveWarpSlots(scratch.nRoutes, localLanes, lane);
-  if (expert >= 0 && slot < scratch.capacity)
-    scratch.cachedRoutes[slot] = CachedRoute{route, uint16_t(expert), uint16_t(position)};
+  int position = reserveRouteGroup(scratch.nRoutesByExpert, expertIdx, laneIdx);
+  int slot = reserveWarpSlots(scratch.nRoutes, localLanes, laneIdx);
+  if (expertIdx >= 0 && slot < scratch.capacity)
+    scratch.cachedRoutes[slot] = CachedRoute{route, uint16_t(expertIdx), uint16_t(position)};
 }
 
 // Load the expert ID of the rank's own route `routeIndex`, or -1 past its live routes.
-template <class P>
-MSCCLPP_DEVICE_INLINE int loadRouteId(const P& p, const int32_t* ids, int routeIndex, int nRoutes) {
+template <class KernelParams>
+MSCCLPP_DEVICE_INLINE int loadRouteId(const KernelParams& params, const int32_t* ids, int routeIndex, int nRoutes) {
   if (routeIndex >= nRoutes) return -1;
-  return ids ? ids[routeIndex] : at<int>(p.local, p.symmetric.topkIds)[routeIndex];
+  return ids ? ids[routeIndex] : at<int>(params.local, params.symmetric.topkIds)[routeIndex];
+}
+
+// Issue this CTA's first route load ahead of routing setup to hide global-memory latency.
+template <class KernelParams>
+MSCCLPP_DEVICE_INLINE int prefetchFirstChunkRouteId(const KernelParams& params, const int32_t* ids, int nRoutes) {
+  return loadRouteId(params, ids, blockIdx.x * RouteChunk + threadIdx.x, nRoutes);
 }
 
 // Process this rank's source-route chunks and pass each lane to
-// `handleOwnedRoute(localExpert, globalRoute, lane)`. A lane whose route belongs to another rank passes -1 so every
+// `handleOwnedRoute(localExpert, globalRoute, laneIdx)`. A lane whose route belongs to another rank passes -1 so every
 // lane still participates in the handler's warp collectives. With Publish, the processing also stages direct inputs,
 // sends remote-expert routes and their weights, and ends every chunk with the peer headers. `firstChunkExpertId` is
 // this thread's expert ID in the CTA's first chunk, prefetched by the caller.
-template <bool Publish, class P, class OwnedRouteHandler>
-__device__ void processSourceRouteChunks(const P& p, int nTokens, const int32_t* ids, const float* scores,
-                                         uint64_t epoch, int* nRoutesByOwner, int firstChunkExpertId,
-                                         OwnedRouteHandler&& handleOwnedRoute) {
-  static_assert(P::ThreadCount == RouteChunk);
-  const auto& c = p.config;
-  const int lane = threadIdx.x % WARP_SIZE;
-  const int nRoutes = nTokens * c.topK;
-  const int nLocalExperts = c.numExperts / c.worldSize;
-  const size_t nRoutesPerRank = size_t(c.maxTokens) * c.topK;
-  auto* localIds = at<int>(p.local, p.symmetric.topkIds);
-  auto* localScores = at<float>(p.local, p.symmetric.topkWeights);
-  auto* weightPackets = at<mscclpp::LL8Packet>(p.local, p.symmetric.routingPackets) + c.rank * nRoutesPerRank;
+template <bool Publish, class KernelParams, class OwnedRouteHandler>
+__device__ void processSourceRouteChunks(const KernelParams& params, int nTokens, const int32_t* ids,
+                                         const float* scores, uint64_t epoch, int* nRoutesByOwner,
+                                         int firstChunkExpertId, OwnedRouteHandler&& handleOwnedRoute) {
+  static_assert(KernelParams::ThreadCount == RouteChunk);
+  const auto& config = params.config;
+  const int laneIdx = threadIdx.x % WARP_SIZE;
+  const int nRoutes = nTokens * config.topK;
+  const int nLocalExperts = config.numExperts / config.worldSize;
+  const size_t nRoutesPerRank = size_t(config.maxTokens) * config.topK;
+  auto* localIds = at<int>(params.local, params.symmetric.topkIds);
+  auto* localScores = at<float>(params.local, params.symmetric.topkWeights);
+  auto* weightPackets =
+      at<mscclpp::LL8Packet>(params.local, params.symmetric.routingPackets) + config.rank * nRoutesPerRank;
   const bool shouldStageIds = Publish && ids && ids != localIds;
   const bool shouldStageScores = Publish && scores && scores != localScores;
-  const bool shouldSendHeaders = Publish && c.worldSize > 1;
+  const bool shouldSendHeaders = Publish && config.worldSize > 1;
   const int nLiveChunks = nRoutes ? routeChunks(nRoutes) : 0;
   // Thread `peer` sends that peer the headers of this rank's chunks.
   mscclpp::LL8Packet* peerHeaders = nullptr;
-  if (shouldSendHeaders && threadIdx.x < c.worldSize && threadIdx.x != c.rank)
-    peerHeaders = peerAt<mscclpp::LL8Packet>(p, threadIdx.x, p.symmetric.routingHeaders) +
-                  size_t(c.rank) * routeChunks(c.maxTokens * c.topK);
+  if (shouldSendHeaders && threadIdx.x < config.worldSize && threadIdx.x != config.rank)
+    peerHeaders = peerAt<mscclpp::LL8Packet>(params, threadIdx.x, params.symmetric.routingHeaders) +
+                  size_t(config.rank) * routeChunks(config.maxTokens * config.topK);
   for (int chunkIdx = blockIdx.x; chunkIdx < nLiveChunks; chunkIdx += gridDim.x) {
     // The previous chunk's header writers reset their owner counts before this chunk reserves entries.
     if (shouldSendHeaders && chunkIdx != blockIdx.x) __syncthreads();
     int routeIndex = chunkIdx * RouteChunk + threadIdx.x;
-    int expertId = chunkIdx == blockIdx.x ? firstChunkExpertId : loadRouteId(p, ids, routeIndex, nRoutes);
+    int expertId = chunkIdx == blockIdx.x ? firstChunkExpertId : loadRouteId(params, ids, routeIndex, nRoutes);
     if (routeIndex < nRoutes) {
-      assert(expertId >= -1 && expertId < c.numExperts);
+      assert(expertId >= -1 && expertId < config.numExperts);
       if (shouldStageIds) localIds[routeIndex] = expertId;
     }
     int ownerRank = -1;
     int localExpert = -1;
     if (expertId >= 0) {
-      ownerRank = c.worldSize > 1 ? expertId / nLocalExperts : 0;
+      ownerRank = config.worldSize > 1 ? expertId / nLocalExperts : 0;
       localExpert = expertId - ownerRank * nLocalExperts;
     }
     if constexpr (Publish) {
-      const bool isRemote = ownerRank >= 0 && ownerRank != c.rank;
-      const bool sendRemoteWeights = isRemote && !c.combineRouteWeights;
+      const bool isRemote = ownerRank >= 0 && ownerRank != config.rank;
+      const bool sendRemoteWeights = isRemote && !config.combineRouteWeights;
       if (routeIndex < nRoutes && (shouldStageScores || sendRemoteWeights)) {
         float weight = scores ? scores[routeIndex] : localScores[routeIndex];
         if (shouldStageScores) localScores[routeIndex] = weight;
         if (sendRemoteWeights) weightPackets[routeIndex].write(mscclpp::bit_cast<uint32_t>(weight), uint32_t(epoch));
       }
       if (shouldSendHeaders) {
-        auto* ownerPackets = isRemote ? peerAt<mscclpp::LL8Packet>(p, ownerRank, p.symmetric.routingPackets) : nullptr;
-        int packetEntry = reserveRouteGroup(nRoutesByOwner, isRemote ? ownerRank : -1, lane);
+        auto* ownerPackets =
+            isRemote ? peerAt<mscclpp::LL8Packet>(params, ownerRank, params.symmetric.routingPackets) : nullptr;
+        int packetEntry = reserveRouteGroup(nRoutesByOwner, isRemote ? ownerRank : -1, laneIdx);
         if (isRemote)
-          ownerPackets[c.rank * nRoutesPerRank + chunkIdx * RouteChunk + packetEntry].write(
+          ownerPackets[config.rank * nRoutesPerRank + chunkIdx * RouteChunk + packetEntry].write(
               packRouteEntry(localExpert, threadIdx.x), uint32_t(epoch));
       }
     }
-    handleOwnedRoute(ownerRank == c.rank ? localExpert : -1, uint32_t(c.rank * nRoutesPerRank + routeIndex), lane);
+    handleOwnedRoute(ownerRank == config.rank ? localExpert : -1, uint32_t(config.rank * nRoutesPerRank + routeIndex),
+                     laneIdx);
     if (shouldSendHeaders) {
       __syncthreads();
       if (peerHeaders) {
@@ -188,17 +198,18 @@ __device__ void processSourceRouteChunks(const P& p, int nTokens, const int32_t*
 }
 
 // Warp 0 reads every source's early token-count packet, which bounds that source's live chunks.
-template <class P>
-MSCCLPP_DEVICE_INLINE void tabulateSourceChunks(const P& p, uint64_t epoch, const RoutingScratch& scratch) {
-  const auto& c = p.config;
+template <class KernelParams>
+MSCCLPP_DEVICE_INLINE void tabulateSourceChunks(const KernelParams& params, uint64_t epoch,
+                                                const RoutingScratch& scratch) {
+  const auto& config = params.config;
   if (threadIdx.x >= WARP_SIZE) return;
-  auto* tokenCounts = at<mscclpp::LL8Packet>(p.local, p.symmetric.tokenCount);
+  auto* tokenCounts = at<mscclpp::LL8Packet>(params.local, params.symmetric.tokenCount);
   int maxNLiveChunks = 0;
-  for (int source = threadIdx.x; source < c.worldSize; source += WARP_SIZE) {
+  for (int source = threadIdx.x; source < config.worldSize; source += WARP_SIZE) {
     int nLiveChunks = 0;
-    if (source != c.rank) {
+    if (source != config.rank) {
       int nSourceTokens = int(tokenCounts[source].read(uint32_t(epoch), SpinLimit));
-      nLiveChunks = nSourceTokens ? routeChunks(nSourceTokens * c.topK) : 0;
+      nLiveChunks = nSourceTokens ? routeChunks(nSourceTokens * config.topK) : 0;
     }
     scratch.nChunksBySource[source] = nLiveChunks;
     maxNLiveChunks = max(maxNLiveChunks, nLiveChunks);
@@ -208,31 +219,32 @@ MSCCLPP_DEVICE_INLINE void tabulateSourceChunks(const P& p, uint64_t epoch, cons
 }
 
 // Process route chunks received from other ranks and pass their entries to
-// `handleOwnedRoute(localExpert, globalRoute, lane)`. Invalid lanes pass -1 so every lane still participates in the
+// `handleOwnedRoute(localExpert, globalRoute, laneIdx)`. Invalid lanes pass -1 so every lane still participates in the
 // handler's warp collectives. CTAs take (source, chunk) segments round-robin in reverse CTA order so CTAs without
 // local source chunks take the first received segments. Warp 0 reads the counts of up to RouteSegmentBatch segments,
 // and then every warp of the CTA takes an even share of their entries.
-template <bool FixedTokenCount, class P, class OwnedRouteHandler>
-__device__ void processReceivedRouteChunks(const P& p, int nTokens, uint64_t epoch, const RoutingScratch& scratch,
-                                           OwnedRouteHandler&& handleOwnedRoute) {
+template <bool FixedTokenCount, class KernelParams, class OwnedRouteHandler>
+__device__ void processReceivedRouteChunks(const KernelParams& params, int nTokens, uint64_t epoch,
+                                           const RoutingScratch& scratch, OwnedRouteHandler&& handleOwnedRoute) {
   static_assert(RouteSegmentBatch == WARP_SIZE);
-  const auto& c = p.config;
-  const int lane = threadIdx.x % WARP_SIZE;
+  const auto& config = params.config;
+  const int laneIdx = threadIdx.x % WARP_SIZE;
   const int recvBlock = gridDim.x - 1 - blockIdx.x;
-  const size_t nRoutesPerRank = size_t(c.maxTokens) * c.topK;
-  const size_t nChunksPerRank = routeChunks(c.maxTokens * c.topK);
+  const size_t nRoutesPerRank = size_t(config.maxTokens) * config.topK;
+  const size_t nChunksPerRank = routeChunks(config.maxTokens * config.topK);
   // Equal token counts give every source the same chunks; dynamic counts use the early tokenCount packets.
-  const int nLiveChunks = FixedTokenCount ? (nTokens ? routeChunks(nTokens * c.topK) : 0) : *scratch.maxNLiveChunks;
-  const int nSegments = c.worldSize * nLiveChunks;
-  auto* headers = at<mscclpp::LL8Packet>(p.local, p.symmetric.routingHeaders);
-  auto* packets = at<mscclpp::LL8Packet>(p.local, p.symmetric.routingPackets);
+  const int nLiveChunks =
+      FixedTokenCount ? (nTokens ? routeChunks(nTokens * config.topK) : 0) : *scratch.maxNLiveChunks;
+  const int nSegments = config.worldSize * nLiveChunks;
+  auto* headers = at<mscclpp::LL8Packet>(params.local, params.symmetric.routingHeaders);
+  auto* packets = at<mscclpp::LL8Packet>(params.local, params.symmetric.routingPackets);
   for (int batch = recvBlock; batch < nSegments; batch += gridDim.x * RouteSegmentBatch) {
     if (threadIdx.x < WARP_SIZE) {
-      int segment = batch + lane * gridDim.x;
-      int source = segment % c.worldSize;
-      int chunk = segment / c.worldSize;
+      int segment = batch + laneIdx * gridDim.x;
+      int source = segment % config.worldSize;
+      int chunk = segment / config.worldSize;
       int nEntries = 0;
-      if (segment < nSegments && source != c.rank) {
+      if (segment < nSegments && source != config.rank) {
         if (FixedTokenCount || chunk < scratch.nChunksBySource[source])
           nEntries = int(headers[source * nChunksPerRank + chunk].read(uint32_t(epoch), SpinLimit));
       }
@@ -241,16 +253,16 @@ __device__ void processReceivedRouteChunks(const P& p, int nTokens, uint64_t epo
 #pragma unroll
       for (int distance = 1; distance < WARP_SIZE; distance *= 2) {
         int other = __shfl_up_sync(0xffffffff, end, distance);
-        if (lane >= distance) end += other;
+        if (laneIdx >= distance) end += other;
       }
-      scratch.segmentEnds[lane] = end;
-      scratch.segmentFirsts[lane] = uint32_t(source * nRoutesPerRank + size_t(chunk) * RouteChunk);
+      scratch.segmentEnds[laneIdx] = end;
+      scratch.segmentFirsts[laneIdx] = uint32_t(source * nRoutesPerRank + size_t(chunk) * RouteChunk);
     }
     __syncthreads();
     const int nBatchEntries = scratch.segmentEnds[RouteSegmentBatch - 1];
-    for (int first = threadIdx.x - lane; first < nBatchEntries; first += P::ThreadCount) {
-      int item = first + lane;
-      int expert = -1;
+    for (int first = threadIdx.x - laneIdx; first < nBatchEntries; first += KernelParams::ThreadCount) {
+      int item = first + laneIdx;
+      int expertIdx = -1;
       uint32_t route = 0;
       if (item < nBatchEntries) {
         // The item's segment is the first one whose inclusive end exceeds it.
@@ -261,10 +273,10 @@ __device__ void processReceivedRouteChunks(const P& p, int nTokens, uint64_t epo
         int entry = item - (segment ? scratch.segmentEnds[segment - 1] : 0);
         uint32_t base = scratch.segmentFirsts[segment];
         uint32_t data = packets[base + entry].read(uint32_t(epoch), SpinLimit);
-        expert = int(data >> 16);
+        expertIdx = int(data >> 16);
         route = base + (data & 0xffff);
       }
-      handleOwnedRoute(expert, route, lane);
+      handleOwnedRoute(expertIdx, route, laneIdx);
     }
     // The next batch reuses the segment table.
     __syncthreads();
@@ -273,35 +285,35 @@ __device__ void processReceivedRouteChunks(const P& p, int nTokens, uint64_t epo
 
 // Warp 0 of every CTA computes the expert prefixes; token-tile construction is distributed across CTAs.
 // A CTA's per-expert route offsets, when given, become absolute route positions. The caller publishes plan completion.
-template <class P>
-__device__ int buildTokenTileMetadata(const P& p, int* routeOffsets = nullptr) {
-  constexpr int RoutingTileN = P::Tiles::N;
+template <class KernelParams>
+__device__ int buildTokenTileMetadata(const KernelParams& params, int* routeOffsets = nullptr) {
+  constexpr int RoutingTileN = KernelParams::Tiles::N;
   constexpr int MaxGroupBlocks = 512 / RoutingTileN > 1 ? 512 / RoutingTileN : 1;
   constexpr int MaxGroupShift = MaxGroupBlocks == 16 ? 4 : (MaxGroupBlocks == 8 ? 3 : (MaxGroupBlocks == 4 ? 2 : 0));
-  const auto& w = p.workspace;
-  int lane = threadIdx.x % WARP_SIZE;
-  int nLocalExperts = p.config.numExperts / p.config.worldSize;
+  const auto& workspace = params.workspace;
+  int laneIdx = threadIdx.x % WARP_SIZE;
+  int nLocalExperts = params.config.numExperts / params.config.worldSize;
   int nPrecedingBlocks = 0;
   for (int base = 0; base < nLocalExperts; base += WARP_SIZE) {
-    int expert = base + lane;
-    int nExpertRows = expert < nLocalExperts ? w.counts[expert] : 0;
+    int expertIdx = base + laneIdx;
+    int nExpertRows = expertIdx < nLocalExperts ? workspace.counts[expertIdx] : 0;
     int nExpertBlocks = (nExpertRows + RoutingTileN - 1) / RoutingTileN;
     int nFullBlocks = nExpertRows / RoutingTileN;
     int scan = nExpertBlocks;
 #pragma unroll
     for (int distance = 1; distance < WARP_SIZE; distance *= 2) {
       int other = __shfl_up_sync(0xffffffff, scan, distance);
-      if (lane >= distance) scan += other;
+      if (laneIdx >= distance) scan += other;
     }
     int firstBlock = nPrecedingBlocks + scan - nExpertBlocks;
     int warpBlocks = __shfl_sync(0xffffffff, scan, WARP_SIZE - 1);
     int warpExperts = min(WARP_SIZE, nLocalExperts - base);
-    if (expert < nLocalExperts && blockIdx.x == 0) {
-      w.starts[expert] = firstBlock * RoutingTileN;
+    if (expertIdx < nLocalExperts && blockIdx.x == 0) {
+      workspace.starts[expertIdx] = firstBlock * RoutingTileN;
       // Downstream cache policies read each expert's total routed rows.
-      w.cursors[expert] = nExpertRows;
+      workspace.cursors[expertIdx] = nExpertRows;
     }
-    if (expert < nLocalExperts && routeOffsets) routeOffsets[expert] += firstBlock * RoutingTileN;
+    if (expertIdx < nLocalExperts && routeOffsets) routeOffsets[expertIdx] += firstBlock * RoutingTileN;
     const bool weightEvictNormal = nExpertRows > RoutingTileN;
     for (int block = blockIdx.x; block < nExpertBlocks; block += gridDim.x) {
       int groupShift = 0;
@@ -311,8 +323,8 @@ __device__ int buildTokenTileMetadata(const P& p, int* routeOffsets = nullptr) {
         groupShift = block < nFullBlocks ? (xorBits >= MaxGroupBlocks ? MaxGroupShift : (31 - __clz(xorBits))) : 0;
         tileIdxInGroup = block & ((1 << groupShift) - 1);
       }
-      w.tokenTiles[firstBlock + block] =
-          TokenTile::make(expert, min(int(RoutingTileN), nExpertRows - block * RoutingTileN), tileIdxInGroup,
+      workspace.tokenTiles[firstBlock + block] =
+          TokenTile::make(expertIdx, min(int(RoutingTileN), nExpertRows - block * RoutingTileN), tileIdxInGroup,
                           groupShift, weightEvictNormal);
     }
     nPrecedingBlocks += warpBlocks;
@@ -321,191 +333,234 @@ __device__ int buildTokenTileMetadata(const P& p, int* routeOffsets = nullptr) {
   return nPrecedingBlocks;
 }
 
-template <class P>
-MSCCLPP_DEVICE_INLINE void resetReadyCounters(const P& p, int nTokenTiles) {
-  const auto& w = p.workspace;
-  int stride = gridDim.x * P::ThreadCount;
-  for (int block = blockIdx.x * P::ThreadCount + threadIdx.x; block < nTokenTiles; block += stride) {
-    w.inputReady[size_t(block) * W4ReadyCounterStride] = 0;
-    w.hiddenReady[size_t(block) * W4ReadyCounterStride] = 0;
-    for (int chunk = 0; chunk < w4InputChunks<typename P::Collective>(p.config.hidden) - 1; ++chunk)
-      *w4InputChunkCounter<typename P::Collective>(w, p.config.hidden, block, chunk) = 0;
+template <class KernelParams>
+MSCCLPP_DEVICE_INLINE void resetReadyCounters(const KernelParams& params, int nTokenTiles) {
+  const auto& workspace = params.workspace;
+  int stride = gridDim.x * KernelParams::ThreadCount;
+  for (int block = blockIdx.x * KernelParams::ThreadCount + threadIdx.x; block < nTokenTiles; block += stride) {
+    workspace.inputReady[size_t(block) * W4ReadyCounterStride] = 0;
+    workspace.hiddenReady[size_t(block) * W4ReadyCounterStride] = 0;
+    for (int chunk = 0; chunk < w4InputChunks<typename KernelParams::Collective>(params.config.hidden) - 1; ++chunk)
+      *w4InputChunkCounter<typename KernelParams::Collective>(workspace, params.config.hidden, block, chunk) = 0;
   }
 }
 
-template <class P>
-__device__ void prepareLocalRoutes(const P& p, int nTokens, const int32_t* ids) {
-  using SharedStorage = typename P::SharedStorage;
-  const auto& c = p.config;
-  const auto& w = p.workspace;
-  const int nLocalExperts = c.numExperts / c.worldSize;
-  const int nRoutes = c.worldSize * nTokens * c.topK;
-  const int firstChunkExpertId = loadRouteId(p, ids, blockIdx.x * RouteChunk + threadIdx.x, nRoutes);
-  if (nTokens == 0) {
-    if (blockIdx.x == 0 && threadIdx.x < WARP_SIZE) {
-      int nTokenTiles = buildTokenTileMetadata(p);
-      if (threadIdx.x == 0) w.control->nTokenTiles = nTokenTiles;
-    }
-    syncResidentGrid(&w.control->residentGridSyncState, gridDim.x);
-    return;
-  }
-
-  extern __shared__ __align__(1024) char storage[];
-  auto& shared = *reinterpret_cast<SharedStorage*>(storage);
-  const RoutingScratch scratch = makeRoutingScratch(shared, nLocalExperts, c.worldSize);
-#pragma unroll 1
-  for (int counter = threadIdx.x; counter <= nLocalExperts + c.worldSize; counter += P::ThreadCount)
-    scratch.nRoutesByExpert[counter] = 0;
-  __syncthreads();
-
-  const int lane = threadIdx.x % WARP_SIZE;
-  const int nLiveChunks = routeChunks(nRoutes);
-  const int firstLocalExpert = c.rank * nLocalExperts;
-  auto scanRoutes = [&](auto&& handleOwnedRoute) {
-    for (int chunkIdx = blockIdx.x; chunkIdx < nLiveChunks; chunkIdx += gridDim.x) {
-      int routeIndex = chunkIdx * RouteChunk + threadIdx.x;
-      int expertId = chunkIdx == blockIdx.x ? firstChunkExpertId : loadRouteId(p, ids, routeIndex, nRoutes);
-      int localExpert = (expertId >= firstLocalExpert && expertId < firstLocalExpert + nLocalExperts)
-                            ? (expertId - firstLocalExpert)
-                            : -1;
-      handleOwnedRoute(localExpert, uint32_t(routeIndex), lane);
-    }
-  };
-  scanRoutes([&](int expert, uint32_t route, int l) { cacheRoute(scratch, expert, route, l); });
-  __syncthreads();
-#pragma unroll 1
-  for (int expert = threadIdx.x; expert < nLocalExperts; expert += P::ThreadCount) {
-    int nExpertRoutes = scratch.nRoutesByExpert[expert];
-    scratch.routeOffsets[expert] =
-        nExpertRoutes ? atomicFetchAdd<int, scopeDevice>(w.counts + expert, nExpertRoutes, memoryOrderRelaxed) : 0;
-  }
-  syncResidentGrid(&w.control->residentGridSyncState, gridDim.x);
-  if (threadIdx.x < WARP_SIZE) {
-    int nTokenTiles = buildTokenTileMetadata(p, scratch.routeOffsets);
-    if (threadIdx.x == 0) {
-      *scratch.nTokenTiles = nTokenTiles;
-      if (blockIdx.x == 0) w.control->nTokenTiles = nTokenTiles;
+template <bool FixedTokenCount, class KernelParams>
+MSCCLPP_DEVICE_INLINE uint64_t beginRoutingEpoch(const KernelParams& params, int nTokens) {
+  const auto& config = params.config;
+  const uint64_t epoch = *at<uint64_t>(params.local, params.symmetric.epoch) + 1;
+  if (blockIdx.x == 0 && threadIdx.x == 0) params.workspace.control->epoch = epoch;
+  if constexpr (!FixedTokenCount) {
+    if (config.worldSize > 1 && blockIdx.x == gridDim.x - 1) {
+      for (int peer = threadIdx.x; peer < config.worldSize; peer += KernelParams::ThreadCount) {
+        if (peer != config.rank) {
+          peerAt<mscclpp::LL8Packet>(params, peer, params.symmetric.tokenCount)[config.rank].write(uint32_t(nTokens),
+                                                                                                   uint32_t(epoch));
+        }
+      }
     }
   }
-  __syncthreads();
-  resetReadyCounters(p, *scratch.nTokenTiles);
-  const int nCachedRoutes = *scratch.nRoutes;
-  if (nCachedRoutes <= scratch.capacity) {
-#pragma unroll 1
-    for (int slot = threadIdx.x; slot < nCachedRoutes; slot += P::ThreadCount) {
-      CachedRoute entry = scratch.cachedRoutes[slot];
-      w.routes[scratch.routeOffsets[entry.expert] + entry.position] = makeRoute(p, entry.route, nTokens);
-    }
-  } else {
-    scanRoutes([&](int expert, uint32_t route, int l) {
-      int position = reserveRouteGroup(scratch.routeOffsets, expert, l);
-      if (position >= 0) w.routes[position] = makeRoute(p, route, nTokens);
-    });
-  }
-#if MSCCLPP_BULK_AVAILABLE
-  bulkFence();
-#endif
-  syncResidentGrid(&w.control->residentGridSyncState, gridDim.x);
-#pragma unroll 1
-  for (int expert = blockIdx.x * P::ThreadCount + threadIdx.x; expert < nLocalExperts;
-       expert += gridDim.x * P::ThreadCount)
-    w.counts[expert] = 0;
+  return epoch;
 }
 
-// Every CTA sends its chunks of the rank's routes to their owners and caches its local-expert routes and its share of
-// the received entries in the idle GEMM tensor storage, then reserves rows with one device atomic per CTA and expert.
-// After a grid barrier, every CTA builds the expert prefix and its token blocks and writes its cached routes; a CTA
-// whose routes exceed the scratch rescans them instead.
-template <bool FixedTokenCount = false, class P>
-__device__ void prepareRoutes(const P& p, int nTokens, const int32_t* ids = nullptr, const float* scores = nullptr) {
-  using SharedStorage = typename P::SharedStorage;
-  const auto& c = p.config;
-  const auto& w = p.workspace;
-  // Issue this CTA's first route load ahead of the routing setup, which hides its latency.
-  const int firstChunkExpertId = loadRouteId(p, ids, blockIdx.x * RouteChunk + threadIdx.x, nTokens * c.topK);
-  const int nLocalExperts = c.numExperts / c.worldSize;
-  const uint64_t epoch = *at<uint64_t>(p.local, p.symmetric.epoch) + 1;
-  if (blockIdx.x == 0 && threadIdx.x == 0) w.control->epoch = epoch;
-  if (!FixedTokenCount && c.worldSize > 1 && blockIdx.x == gridDim.x - 1) {
-    for (int peer = threadIdx.x; peer < c.worldSize; peer += P::ThreadCount) {
-      if (peer != c.rank)
-        peerAt<mscclpp::LL8Packet>(p, peer, p.symmetric.tokenCount)[c.rank].write(uint32_t(nTokens), uint32_t(epoch));
-    }
-  }
-  if ((FixedTokenCount || c.worldSize == 1) && nTokens == 0) {
-    // Every rank is empty, so nothing is exchanged.
-    if (blockIdx.x == 0 && threadIdx.x < WARP_SIZE) {
-      int nTokenTiles = buildTokenTileMetadata(p);
-      if (threadIdx.x == 0) w.control->nTokenTiles = nTokenTiles;
-    }
-    syncResidentGrid(&w.control->residentGridSyncState, gridDim.x);
-    return;
-  }
+template <bool FixedTokenCount, class KernelParams>
+MSCCLPP_DEVICE_INLINE bool isGloballyEmptyRoutingBatch(const KernelParams& params, int nTokens) {
+  return (FixedTokenCount || params.config.worldSize == 1) && nTokens == 0;
+}
 
-  extern __shared__ __align__(1024) char storage[];
-  auto& shared = *reinterpret_cast<SharedStorage*>(storage);
-  const RoutingScratch scratch = makeRoutingScratch(shared, nLocalExperts, c.worldSize);
+template <class KernelParams>
+MSCCLPP_DEVICE_INLINE void completeEmptyRoutingBatch(const KernelParams& params) {
+  if (blockIdx.x == 0 && threadIdx.x < WARP_SIZE) {
+    int nTokenTiles = buildTokenTileMetadata(params);
+    if (threadIdx.x == 0) params.workspace.control->nTokenTiles = nTokenTiles;
+  }
+  syncResidentGrid(&params.workspace.control->residentGridSyncState, gridDim.x);
+}
+
+template <class KernelParams>
+MSCCLPP_DEVICE_INLINE RoutingScratch initRoutingScratch(const KernelParams& params) {
+  using SharedStorage = typename KernelParams::SharedStorage;
+  extern __shared__ __align__(1024) char rawSharedStorage[];
+  auto& sharedStorage = *reinterpret_cast<SharedStorage*>(rawSharedStorage);
+  const int nLocalExperts = params.config.numExperts / params.config.worldSize;
+  const RoutingScratch scratch = makeRoutingScratch(sharedStorage, nLocalExperts, params.config.worldSize);
   // Each thread clears at most a few counters, so unrolling would only lengthen the setup every warp executes.
 #pragma unroll 1
-  for (int counter = threadIdx.x; counter <= nLocalExperts + c.worldSize; counter += P::ThreadCount)
+  for (int counter = threadIdx.x; counter <= nLocalExperts + params.config.worldSize;
+       counter += KernelParams::ThreadCount) {
     scratch.nRoutesByExpert[counter] = 0;
-  __syncthreads();
-  cudaGridDependencySynchronize();
-  auto cacheOwnedRoute = [&](int expert, uint32_t route, int lane) { cacheRoute(scratch, expert, route, lane); };
-  processSourceRouteChunks<true>(p, nTokens, ids, scores, epoch, scratch.nRoutesByOwner, firstChunkExpertId,
-                                 cacheOwnedRoute);
-  if (c.worldSize > 1) {
-    if constexpr (!FixedTokenCount) {
-      tabulateSourceChunks(p, epoch, scratch);
-      __syncthreads();
-    }
-    processReceivedRouteChunks<FixedTokenCount>(p, nTokens, epoch, scratch, cacheOwnedRoute);
   }
   __syncthreads();
-  // One device atomic per CTA and expert reserves the CTA's contiguous range of the expert's rows.
+  return scratch;
+}
+
+// Reserves each CTA's per-expert row range, builds token-tile metadata across the resident grid, and zeroes tile
+// readiness counters before routes are materialized.
+template <class KernelParams>
+MSCCLPP_DEVICE_INLINE void buildRoutingTilePlan(const KernelParams& params, const RoutingScratch& scratch) {
+  const auto& workspace = params.workspace;
+  const int nLocalExperts = params.config.numExperts / params.config.worldSize;
 #pragma unroll 1
-  for (int expert = threadIdx.x; expert < nLocalExperts; expert += P::ThreadCount) {
-    int nExpertRoutes = scratch.nRoutesByExpert[expert];
-    scratch.routeOffsets[expert] =
-        nExpertRoutes ? atomicFetchAdd<int, scopeDevice>(w.counts + expert, nExpertRoutes, memoryOrderRelaxed) : 0;
+  for (int expertIdx = threadIdx.x; expertIdx < nLocalExperts; expertIdx += KernelParams::ThreadCount) {
+    int nExpertRoutes = scratch.nRoutesByExpert[expertIdx];
+    scratch.routeOffsets[expertIdx] =
+        nExpertRoutes
+            ? atomicFetchAdd<int, scopeDevice>(workspace.counts + expertIdx, nExpertRoutes, memoryOrderRelaxed)
+            : 0;
   }
-  syncResidentGrid(&w.control->residentGridSyncState, gridDim.x);
+  syncResidentGrid(&workspace.control->residentGridSyncState, gridDim.x);
   if (threadIdx.x < WARP_SIZE) {
-    int nTokenTiles = buildTokenTileMetadata(p, scratch.routeOffsets);
+    int nTokenTiles = buildTokenTileMetadata(params, scratch.routeOffsets);
     if (threadIdx.x == 0) {
       *scratch.nTokenTiles = nTokenTiles;
-      if (blockIdx.x == 0) w.control->nTokenTiles = nTokenTiles;
+      if (blockIdx.x == 0) workspace.control->nTokenTiles = nTokenTiles;
     }
   }
   __syncthreads();
-  resetReadyCounters(p, *scratch.nTokenTiles);
-  const int nRoutes = *scratch.nRoutes;
-  if (nRoutes <= scratch.capacity) {
+  resetReadyCounters(params, *scratch.nTokenTiles);
+}
+
+template <class KernelParams>
+MSCCLPP_DEVICE_INLINE void writeCachedRoutes(const KernelParams& params, const RoutingScratch& scratch,
+                                             int nCachedRoutes, int nTokens = 0) {
 #pragma unroll 1
-    for (int slot = threadIdx.x; slot < nRoutes; slot += P::ThreadCount) {
-      CachedRoute entry = scratch.cachedRoutes[slot];
-      w.routes[scratch.routeOffsets[entry.expert] + entry.position] = makeRoute(p, entry.route);
-    }
-  } else {
-    // Rescan this CTA's routes and take positions directly from its absolute expert offsets.
-    auto placeOwnedRoute = [&](int expert, uint32_t route, int lane) {
-      int position = reserveRouteGroup(scratch.routeOffsets, expert, lane);
-      if (position >= 0) w.routes[position] = makeRoute(p, route);
-    };
-    processSourceRouteChunks<false>(p, nTokens, ids, scores, epoch, scratch.nRoutesByOwner, firstChunkExpertId,
-                                    placeOwnedRoute);
-    if (c.worldSize > 1) processReceivedRouteChunks<FixedTokenCount>(p, nTokens, epoch, scratch, placeOwnedRoute);
+  for (int slot = threadIdx.x; slot < nCachedRoutes; slot += KernelParams::ThreadCount) {
+    CachedRoute entry = scratch.cachedRoutes[slot];
+    params.workspace.routes[scratch.routeOffsets[entry.expert] + entry.position] =
+        makeRoute(params, entry.route, nTokens);
   }
+}
+
+// Publishes global route writes, hands the shared routing scratch back to async GEMM TMA loads, and clears per-expert
+// counts for the next launch.
+template <class KernelParams>
+MSCCLPP_DEVICE_INLINE void finalizeRoutingStage(const KernelParams& params) {
+  const auto& workspace = params.workspace;
+  const int nLocalExperts = params.config.numExperts / params.config.worldSize;
 #if MSCCLPP_BULK_AVAILABLE
-  // Hand the shared routing scratch back to the asynchronous GEMM tensor loads.
   bulkFence();
 #endif
-  syncResidentGrid(&w.control->residentGridSyncState, gridDim.x);
-  // Every prefix reader has finished. Clear counts for the next launch, which follows this kernel's completion.
+  syncResidentGrid(&workspace.control->residentGridSyncState, gridDim.x);
 #pragma unroll 1
-  for (int expert = blockIdx.x * P::ThreadCount + threadIdx.x; expert < nLocalExperts;
-       expert += gridDim.x * P::ThreadCount)
-    w.counts[expert] = 0;
+  for (int expertIdx = blockIdx.x * KernelParams::ThreadCount + threadIdx.x; expertIdx < nLocalExperts;
+       expertIdx += gridDim.x * KernelParams::ThreadCount) {
+    workspace.counts[expertIdx] = 0;
+  }
+}
+
+template <class KernelParams, class OwnedRouteHandler>
+MSCCLPP_DEVICE_INLINE void scanLocalGatherRoutes(const KernelParams& params, int nRoutes, const int32_t* ids,
+                                                 int firstChunkExpertId, OwnedRouteHandler&& handleOwnedRoute) {
+  const int laneIdx = threadIdx.x % WARP_SIZE;
+  const int nLocalExperts = params.config.numExperts / params.config.worldSize;
+  const int firstLocalExpert = params.config.rank * nLocalExperts;
+  const int nLiveChunks = routeChunks(nRoutes);
+  for (int chunkIdx = blockIdx.x; chunkIdx < nLiveChunks; chunkIdx += gridDim.x) {
+    int routeIndex = chunkIdx * RouteChunk + threadIdx.x;
+    int expertId = chunkIdx == blockIdx.x ? firstChunkExpertId : loadRouteId(params, ids, routeIndex, nRoutes);
+    int localExpert = (expertId >= firstLocalExpert && expertId < firstLocalExpert + nLocalExperts)
+                          ? (expertId - firstLocalExpert)
+                          : -1;
+    handleOwnedRoute(localExpert, uint32_t(routeIndex), laneIdx);
+  }
+}
+
+template <class KernelParams>
+MSCCLPP_DEVICE_INLINE void collectLocalGatherRoutes(const KernelParams& params, const RoutingScratch& scratch,
+                                                    int nRoutes, const int32_t* ids, int firstChunkExpertId) {
+  scanLocalGatherRoutes(params, nRoutes, ids, firstChunkExpertId, [&](int expertIdx, uint32_t route, int laneIdx) {
+    cacheRoute(scratch, expertIdx, route, laneIdx);
+  });
+  __syncthreads();
+}
+
+template <class KernelParams>
+MSCCLPP_DEVICE_INLINE void materializeLocalGatherRoutes(const KernelParams& params, const RoutingScratch& scratch,
+                                                        int nTokens, int nRoutes, const int32_t* ids,
+                                                        int firstChunkExpertId) {
+  const int nCachedRoutes = *scratch.nRoutes;
+  if (nCachedRoutes <= scratch.capacity) {
+    writeCachedRoutes(params, scratch, nCachedRoutes, nTokens);
+    return;
+  }
+  scanLocalGatherRoutes(params, nRoutes, ids, firstChunkExpertId, [&](int expertIdx, uint32_t route, int laneIdx) {
+    int position = reserveRouteGroup(scratch.routeOffsets, expertIdx, laneIdx);
+    if (position >= 0) params.workspace.routes[position] = makeRoute(params, route, nTokens);
+  });
+}
+
+template <bool FixedTokenCount, class KernelParams>
+MSCCLPP_DEVICE_INLINE void collectDistributedRoutes(const KernelParams& params, const RoutingScratch& scratch,
+                                                    int nTokens, const int32_t* ids, const float* scores,
+                                                    uint64_t epoch, int firstChunkExpertId) {
+  auto cacheOwnedRoute = [&](int expertIdx, uint32_t route, int laneIdx) {
+    cacheRoute(scratch, expertIdx, route, laneIdx);
+  };
+  processSourceRouteChunks<true>(params, nTokens, ids, scores, epoch, scratch.nRoutesByOwner, firstChunkExpertId,
+                                 cacheOwnedRoute);
+  if (params.config.worldSize > 1) {
+    if constexpr (!FixedTokenCount) {
+      tabulateSourceChunks(params, epoch, scratch);
+      __syncthreads();
+    }
+    processReceivedRouteChunks<FixedTokenCount>(params, nTokens, epoch, scratch, cacheOwnedRoute);
+  }
+  __syncthreads();
+}
+
+template <bool FixedTokenCount, class KernelParams>
+MSCCLPP_DEVICE_INLINE void materializeDistributedRoutes(const KernelParams& params, const RoutingScratch& scratch,
+                                                        int nTokens, const int32_t* ids, const float* scores,
+                                                        uint64_t epoch, int firstChunkExpertId) {
+  const int nCachedRoutes = *scratch.nRoutes;
+  if (nCachedRoutes <= scratch.capacity) {
+    writeCachedRoutes(params, scratch, nCachedRoutes);
+    return;
+  }
+  // Rescan this CTA's routes and take positions directly from its absolute expert offsets.
+  auto placeOwnedRoute = [&](int expertIdx, uint32_t route, int laneIdx) {
+    int position = reserveRouteGroup(scratch.routeOffsets, expertIdx, laneIdx);
+    if (position >= 0) params.workspace.routes[position] = makeRoute(params, route);
+  };
+  processSourceRouteChunks<false>(params, nTokens, ids, scores, epoch, scratch.nRoutesByOwner, firstChunkExpertId,
+                                  placeOwnedRoute);
+  if (params.config.worldSize > 1) {
+    processReceivedRouteChunks<FixedTokenCount>(params, nTokens, epoch, scratch, placeOwnedRoute);
+  }
+}
+
+template <class KernelParams>
+__device__ void prepareLocalRoutes(const KernelParams& params, int nTokens, const int32_t* ids) {
+  const int nRoutes = params.config.worldSize * nTokens * params.config.topK;
+  const int firstChunkExpertId = prefetchFirstChunkRouteId(params, ids, nRoutes);
+  if (nTokens == 0) {
+    completeEmptyRoutingBatch(params);
+    return;
+  }
+
+  const RoutingScratch scratch = initRoutingScratch(params);
+  collectLocalGatherRoutes(params, scratch, nRoutes, ids, firstChunkExpertId);
+  buildRoutingTilePlan(params, scratch);
+  materializeLocalGatherRoutes(params, scratch, nTokens, nRoutes, ids, firstChunkExpertId);
+  finalizeRoutingStage(params);
+}
+
+template <bool FixedTokenCount = false, class KernelParams>
+__device__ void prepareRoutes(const KernelParams& params, int nTokens, const int32_t* ids = nullptr,
+                              const float* scores = nullptr) {
+  const int firstChunkExpertId = prefetchFirstChunkRouteId(params, ids, nTokens * params.config.topK);
+  const uint64_t epoch = beginRoutingEpoch<FixedTokenCount>(params, nTokens);
+  if (isGloballyEmptyRoutingBatch<FixedTokenCount>(params, nTokens)) {
+    completeEmptyRoutingBatch(params);
+    return;
+  }
+
+  const RoutingScratch scratch = initRoutingScratch(params);
+  cudaGridDependencySynchronize();
+  collectDistributedRoutes<FixedTokenCount>(params, scratch, nTokens, ids, scores, epoch, firstChunkExpertId);
+  buildRoutingTilePlan(params, scratch);
+  materializeDistributedRoutes<FixedTokenCount>(params, scratch, nTokens, ids, scores, epoch, firstChunkExpertId);
+  finalizeRoutingStage(params);
 }
 
 }  // namespace MSCCLPP_MEGAMOE_KERNEL_NAMESPACE::detail
