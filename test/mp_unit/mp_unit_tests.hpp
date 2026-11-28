@@ -14,6 +14,7 @@
 
 #include "../framework.hpp"
 #include "ib.hpp"
+#include "mrc.hpp"
 #include "utils_internal.hpp"
 
 // Skip the current test if IBVerbs is not available in this build
@@ -48,6 +49,21 @@ class MultiProcessTest : public ::mscclpp::test::TestCase {
  protected:
   void TearDown() override;
 };
+
+#if defined(MSCCLPP_USE_MRC)
+mscclpp::Transport mrcTransportForDevice(const char* device);
+std::vector<char> exchangeMrcPeerBytes(const std::vector<char>& local);
+
+class MrcTestBase : public MultiProcessTest {
+ protected:
+  void SetUp() override;
+  void runOnBothRanks(const char* phase, const std::function<void()>& run);
+  mscclpp::MrcBuffer connectPeer(mscclpp::MrcQp& qp, const mscclpp::MrcMr& destination);
+
+  const char* mrcDevice = nullptr;
+  static constexpr int queueDepth = 8;
+};
+#endif
 
 class BootstrapTest : public MultiProcessTest {
  protected:

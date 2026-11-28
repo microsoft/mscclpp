@@ -70,4 +70,8 @@ MSCCLPP_API_CPP IbError::IbError(const std::string& message, int errorCode) : Ba
   message_ = message + " (Ib failure: " + std::strerror(errorCode) + ")";
 }
 
+MSCCLPP_API_CPP MrcError::MrcError(const std::string& message, int errorCode) : BaseError(errorCode) {
+  message_ = message + " (Mrc failure: " + std::strerror(errorCode) + ")";
+}
+
 };  // namespace mscclpp

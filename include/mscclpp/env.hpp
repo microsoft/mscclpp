@@ -45,9 +45,9 @@ class Env {
   /// Env name: `MSCCLPP_LOG_FILE`. A file path to write log messages to. Unset by default.
   const std::string logFile;
 
-  /// Env name: `MSCCLPP_HCA_DEVICES`. A comma-separated list of HCA devices to use for IB transport. i-th device
-  /// in the list will be used for the i-th GPU in the system. If unset, it will use ibverbs APIs to find the
-  /// devices automatically.
+  /// Env name: `MSCCLPP_HCA_DEVICES`. A comma-separated list of HCA devices for IB and native MRC transports.
+  /// Entry i selects IBi or MRCi. If unset, devices are selected through ibverbs; native MRC uses the
+  /// unfiltered device order without removing unsupported NICs.
   const std::string hcaDevices;
 
   /// Env name: `MSCCLPP_IBV_SO`. The path to the libibverbs shared library to use. If unset, it will use the

@@ -9,7 +9,6 @@
 #include <algorithm>
 #include <cstring>
 #include <mscclpp/gpu_utils.hpp>
-#include <unordered_map>
 
 #include "api.h"
 #include "context.hpp"
@@ -32,6 +31,13 @@
 
 namespace mscclpp {
 
+static void checkMemoryMetadataSize(std::vector<char>::const_iterator it, std::vector<char>::const_iterator end,
+                                    size_t size) {
+  if (end - it < static_cast<std::ptrdiff_t>(size)) {
+    throw Error("Truncated registered memory metadata", ErrorCode::InvalidUsage);
+  }
+}
+
 RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports, Context::Impl& contextImpl)
     : data(data),
       originalDataPtr(data),
@@ -39,6 +45,7 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports,
       hostHash(getHostHash()),
       pidHash(getPidHash()),
       transports(transports) {
+  checkMrcSupport(transports);
   if (transports.has(Transport::CudaIpc)) {
     CudaDeviceGuard deviceGuard(detail::gpuIdFromAddress(data));
 
@@ -46,27 +53,17 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports,
     TransportInfo transportInfo;
     transportInfo.transport = Transport::CudaIpc;
     transportInfo.gpuIpcMemHandle = *localGpuIpcMemHandle;
-    this->transportInfos.emplace_back(transportInfo);
+    this->transportRecords.push_back(std::move(transportInfo));
   }
-  if ((transports & AllIBTransports).any()) {
-    auto addIb = [&](Transport ibTransport) {
-      TransportInfo transportInfo;
-      transportInfo.transport = ibTransport;
-      this->ibMrMap[ibTransport] = contextImpl.getIbContext(ibTransport)->registerMr(data, size);
-      transportInfo.ibMr = this->ibMrMap[ibTransport].get();
-      transportInfo.ibLocal = true;
-      transportInfo.ibMrInfo = this->ibMrMap[ibTransport]->getInfo();
-      this->transportInfos.push_back(transportInfo);
-      INFO(NET, "IB mr for address ", data, " with size ", size, " is registered");
-    };
-    if (transports.has(Transport::IB0)) addIb(Transport::IB0);
-    if (transports.has(Transport::IB1)) addIb(Transport::IB1);
-    if (transports.has(Transport::IB2)) addIb(Transport::IB2);
-    if (transports.has(Transport::IB3)) addIb(Transport::IB3);
-    if (transports.has(Transport::IB4)) addIb(Transport::IB4);
-    if (transports.has(Transport::IB5)) addIb(Transport::IB5);
-    if (transports.has(Transport::IB6)) addIb(Transport::IB6);
-    if (transports.has(Transport::IB7)) addIb(Transport::IB7);
+  const auto rdmaTransports = transports & getRdmaTransports();
+  for (size_t i = 0; i < static_cast<size_t>(Transport::NumTransports); ++i) {
+    auto transport = static_cast<Transport>(i);
+    if (!rdmaTransports.has(transport)) continue;
+    TransportInfo transportInfo;
+    transportInfo.transport = transport;
+    transportInfo.rdmaMemory = contextImpl.getRdmaProvider(transport)->registerMemory(data, size);
+    this->transportRecords.push_back(std::move(transportInfo));
+    INFO(NET, "RDMA mr for address ", data, " with size ", size, " is registered for ", transport);
   }
 }
 
@@ -89,20 +86,20 @@ MSCCLPP_API_CPP std::vector<char> RegisteredMemory::serialize() const {
   detail::serialize(result, pimpl_->hostHash);
   detail::serialize(result, pimpl_->pidHash);
   detail::serialize(result, pimpl_->transports);
-  if (pimpl_->transportInfos.size() > static_cast<size_t>(std::numeric_limits<int8_t>::max())) {
+  if (pimpl_->transportRecords.size() > static_cast<size_t>(std::numeric_limits<int8_t>::max())) {
     throw Error("Too many transport info entries", ErrorCode::InternalError);
   }
-  int8_t transportCount = pimpl_->transportInfos.size();
+  int8_t transportCount = pimpl_->transportRecords.size();
   detail::serialize(result, transportCount);
-  for (auto& entry : pimpl_->transportInfos) {
+  for (const auto& entry : pimpl_->transportRecords) {
     detail::serialize(result, entry.transport);
     if (entry.transport == Transport::CudaIpc) {
       if (entry.gpuIpcMemHandle.typeFlags == GpuIpcMemHandle::Type::None) {
         THROW(GPU, Error, ErrorCode::InternalError, "GpuIpcMemHandle type is None");
       }
       detail::serialize(result, entry.gpuIpcMemHandle);
-    } else if (AllIBTransports.has(entry.transport)) {
-      detail::serialize(result, entry.ibMrInfo);
+    } else if (getRdmaTransports().has(entry.transport)) {
+      entry.rdmaMemory->serialize(result);
     } else {
       THROW(GPU, Error, ErrorCode::InternalError, "Unknown transport");
     }
@@ -117,26 +114,38 @@ MSCCLPP_API_CPP RegisteredMemory RegisteredMemory::deserialize(const std::vector
 RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
                              const std::vector<char>::const_iterator& end) {
   auto it = begin;
+  checkMemoryMetadataSize(it, end,
+                          sizeof(originalDataPtr) + sizeof(size) + sizeof(hostHash) + sizeof(pidHash) +
+                              sizeof(transports) + sizeof(int8_t));
   it = detail::deserialize(it, this->originalDataPtr);
   it = detail::deserialize(it, this->size);
   it = detail::deserialize(it, this->hostHash);
   it = detail::deserialize(it, this->pidHash);
   it = detail::deserialize(it, this->transports);
+  checkMrcSupport(this->transports);
   int8_t transportCount;
   it = detail::deserialize(it, transportCount);
+  if (transportCount < 0) throw Error("Invalid transport record count", ErrorCode::InvalidUsage);
+  TransportFlags seenRdma;
   for (int i = 0; i < transportCount; ++i) {
-    TransportInfo transportInfo;
+    TransportInfo transportInfo{};
+    checkMemoryMetadataSize(it, end, sizeof(transportInfo.transport));
     it = detail::deserialize(it, transportInfo.transport);
+    if (static_cast<unsigned int>(transportInfo.transport) >= static_cast<unsigned int>(Transport::NumTransports)) {
+      throw Error("Invalid memory transport identity", ErrorCode::InvalidUsage);
+    }
     if (transportInfo.transport == Transport::CudaIpc) {
+      checkMemoryMetadataSize(it, end, sizeof(transportInfo.gpuIpcMemHandle));
       it = detail::deserialize(it, transportInfo.gpuIpcMemHandle);
-    } else if (AllIBTransports.has(transportInfo.transport)) {
-      it = detail::deserialize(it, transportInfo.ibMrInfo);
-      transportInfo.ibLocal = false;
+    } else if (getRdmaTransports().has(transportInfo.transport)) {
+      transportInfo.rdmaMemory = deserializeRdmaMemory(transportInfo.transport, it, end, this->originalDataPtr,
+                                                       this->size, this->transports, seenRdma);
     } else {
       throw Error("Unknown transport", ErrorCode::InternalError);
     }
-    this->transportInfos.emplace_back(transportInfo);
+    this->transportRecords.push_back(std::move(transportInfo));
   }
+  validateRdmaMemoryRecords(this->transports, seenRdma);
   if (it != end) {
     throw Error("Serialization failed", ErrorCode::InternalError);
   }
@@ -161,23 +170,22 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
       }
     }
   } else if (transports.has(Transport::CudaIpc)) {
-    // When transports include both CudaIpc and IB (e.g., CudaIpc | IB0),
-    // try CudaIpc first and fall back to IB on failure.
+    // Try CudaIpc first and fall back to RDMA on failure.
     auto entry = getTransportInfo(Transport::CudaIpc);
-    bool hasIB = (transports & AllIBTransports).any();
+    bool hasRdma = (transports & getRdmaTransports()).any();
     try {
       auto gpuIpcMem = GpuIpcMem::create(entry.gpuIpcMemHandle);
       this->remoteMemMap = gpuIpcMem->map();
       this->data = this->remoteMemMap.get();
     } catch (const BaseError& e) {
-      if (!hasIB) {
+      if (!hasRdma) {
         throw;
       }
       bool isSameHost = (getHostHash() == this->hostHash);
       if (isSameHost) {
-        WARN(GPU, "CudaIpc import failed on same host, falling back to IB transport: ", e.what());
+        WARN(GPU, "CudaIpc import failed on same host, falling back to RDMA transport: ", e.what());
       } else {
-        INFO(GPU, "CudaIpc import failed on remote host, falling back to IB transport: ", e.what());
+        INFO(GPU, "CudaIpc import failed on remote host, falling back to RDMA transport: ", e.what());
       }
     }
   }
@@ -190,9 +198,9 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization)
     : Impl(serialization.begin(), serialization.end()) {}
 
 const TransportInfo& RegisteredMemory::Impl::getTransportInfo(Transport transport) const {
-  for (auto& entry : transportInfos) {
-    if (entry.transport == transport) {
-      return entry;
+  for (const auto& record : transportRecords) {
+    if (record.transport == transport) {
+      return record;
     }
   }
   throw Error("Transport data not found", ErrorCode::InternalError);

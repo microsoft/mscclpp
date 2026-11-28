@@ -10,22 +10,18 @@
 
 #include "communicator.hpp"
 #include "gpu_ipc_mem.hpp"
-#include "ib.hpp"
 
 namespace mscclpp {
 
+class RdmaMemory;
+
 struct TransportInfo {
   Transport transport;
-
-  // TODO: rewrite this using std::variant or something
-  bool ibLocal;
+  // Preserve raw IPC metadata bytes when records are copied or moved.
   union {
-    GpuIpcMemHandle gpuIpcMemHandle;
-    struct {
-      const IbMr* ibMr;
-      IbMrInfo ibMrInfo;
-    };
+    GpuIpcMemHandle gpuIpcMemHandle{};
   };
+  std::shared_ptr<RdmaMemory> rdmaMemory;
 };
 
 struct RegisteredMemory::Impl {
@@ -38,14 +34,13 @@ struct RegisteredMemory::Impl {
   uint64_t hostHash;
   uint64_t pidHash;
   TransportFlags transports;
-  std::vector<TransportInfo> transportInfos;
   std::shared_ptr<void> peerMemHandle;
 
   UniqueGpuIpcMemHandle localGpuIpcMemHandle;
   std::shared_ptr<void> remoteMemMap;
 
-  // Only used for IB transport
-  std::unordered_map<Transport, std::unique_ptr<const IbMr>> ibMrMap;
+  // Destroy transport resources before releasing IPC handles and mappings.
+  std::vector<TransportInfo> transportRecords;
 
   Impl(void* data, size_t size, TransportFlags transports, Context::Impl& contextImpl);
   Impl(const std::vector<char>::const_iterator& begin, const std::vector<char>::const_iterator& end);

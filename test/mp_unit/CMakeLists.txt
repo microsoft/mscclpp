@@ -15,6 +15,14 @@ target_sources(mp_unit_tests PRIVATE
     executor_tests.cc
 )
 
+if(MSCCLPP_USE_MRC)
+    target_sources(mp_unit_tests PRIVATE mrc_tests.cc)
+    if(MSCCLPP_USE_CUDA)
+        target_sources(mp_unit_tests PRIVATE mrc_gpu_tests.cu)
+    endif()
+    target_compile_definitions(mp_unit_tests PRIVATE MSCCLPP_USE_MRC)
+endif()
+
 if(TARGET mscclpp_ep)
     target_sources(mp_unit_tests PRIVATE ep_tests.cu)
     target_include_directories(mp_unit_tests PRIVATE ${PROJECT_SOURCE_DIR}/src/ext/ep ${PROJECT_SOURCE_DIR}/src/ext/ep/include)

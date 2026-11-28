@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#include <cerrno>
+#include <cstring>
 #include <mscclpp/errors.hpp>
 #include <sstream>
 
@@ -44,4 +46,18 @@ TEST(ErrorsTest, Timeout) {
   mscclpp::Error error("test", mscclpp::ErrorCode::Timeout);
   EXPECT_EQ(error.getErrorCode(), mscclpp::ErrorCode::Timeout);
   EXPECT_EQ(error.what(), std::string("test (mscclpp failure: Timeout)"));
+}
+
+TEST(ErrorsTest, MrcError) {
+  bool caught = false;
+  try {
+    throw mscclpp::MrcError("mrc_post_recv failed", EIO);
+  } catch (const mscclpp::IbError&) {
+    EXPECT_TRUE(false);
+  } catch (const mscclpp::MrcError& error) {
+    caught = true;
+    EXPECT_EQ(error.getErrorCode(), EIO);
+    EXPECT_EQ(error.what(), std::string("mrc_post_recv failed (Mrc failure: ") + std::strerror(EIO) + ")");
+  }
+  EXPECT_TRUE(caught);
 }

@@ -100,6 +100,17 @@ class IbError : public BaseError {
   virtual ~IbError() = default;
 };
 
+/// An error from the native MRC provider.
+class MrcError : public BaseError {
+ public:
+  /// Constructor.
+  /// @param message Error description.
+  /// @param errorCode Native error code.
+  MrcError(const std::string& message, int errorCode);
+  /// Destructor.
+  virtual ~MrcError() = default;
+};
+
 };  // namespace mscclpp
 
 #endif  // MSCCLPP_ERRORS_HPP_
